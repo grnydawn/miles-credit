@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "credit"
+authors = [{name = "NCAR Machine Integration and Learning for Earth Systems (MILES)", email = "miles@ucar.edu"}]
+readme = "README.md"
+license = {file = "LICENSE"}
+dynamic = ["version"]
+requires-python = ">=3.8"
+dependencies = [
+   "numpy<1.24",
+   "scipy",
+   "matplotlib",
+   "pandas",
+   "xarray",
+   "netcdf4",
+   "torch",
+   "bridgescaler",
+   ]
+
+[tool.setuptools]
+packages = ["credit"]
+
+[tool.setuptools.dynamic]
+version = {file = "credit/VERSION"}
