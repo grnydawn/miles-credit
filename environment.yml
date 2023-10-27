@@ -13,7 +13,7 @@ dependencies:
   - pytest
   - xarray
   - netcdf4
-  - torch
+  - pytorch
   - pip:
     - bridgescaler
     - .
