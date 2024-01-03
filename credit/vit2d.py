@@ -5,8 +5,12 @@ from einops import rearrange, repeat, pack, unpack
 from einops.layers.torch import Rearrange
 
 import torch.nn.functional as F
+import torch.distributed.checkpoint as DCP
+from torch.distributed.fsdp import StateDictType
+
 from credit.pe import SurfacePosEmb2D
 from vector_quantize_pytorch import VectorQuantize
+import logging
 
 
 class FeedForward(nn.Module):
@@ -306,6 +310,15 @@ class ViT2D(nn.Module):
                 kmeans_init=vq_kmeans_init,
                 use_cosine_sim=vq_use_cosine_sim
             )
+            
+#         self.visual_ssl = None
+#         self.visual_ssl_weight = conf['model']['visual_ssl_weight']
+#         if conf['model']['use_visual_ssl']:
+#             ssl_type = partial(
+#                 SimSiam,
+#                 channels = conf['model']['channels'],
+#                 surface_channels = conf['model']['surface_channels'], 
+#                 device = next(self.enc_dec.parameters()).device)
 
     def encode(self, x):
         # encode

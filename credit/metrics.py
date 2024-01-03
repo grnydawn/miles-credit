@@ -1,10 +1,11 @@
 import torch
 
+
 def anomaly_correlation_coefficient(pred, true):
-    
+
     pred = pred.float()
     true = true.float()
-    
+
     B, C, H, W = pred.size()
 
     # Flatten the spatial dimensions

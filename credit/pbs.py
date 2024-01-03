@@ -3,10 +3,9 @@ import os
 import yaml
 import shutil
 import subprocess
-from pathlib import Path
 
 
-def launch_script(config_file, script_path, launch = True):
+def launch_script(config_file, script_path, launch=True):
 
     # Load the configuration file
     with open(config_file, 'r') as file:
@@ -34,13 +33,13 @@ def launch_script(config_file, script_path, launch = True):
 
     python {script_path} -c {config_save_path}
     """
-    
+
     script = re.sub(r'^\s+', '', script, flags=re.MULTILINE)
 
     # Save the script to a file
     with open('launch.sh', 'w') as script_file:
         script_file.write(script)
-        
+
     if launch:
         jobid = subprocess.Popen(
             "qsub launch.sh",
@@ -56,10 +55,10 @@ def launch_script(config_file, script_path, launch = True):
 
 
 def launch_script_mpi(config_file, script_path, launch = True): 
-    
+
     with open(config_file) as cf:
         config = yaml.load(cf, Loader=yaml.FullLoader)
-    
+
     # Extract PBS options from the config
     pbs_options = config.get('pbs', {})
 
@@ -70,7 +69,7 @@ def launch_script_mpi(config_file, script_path, launch = True):
 
     # Create the CUDA_VISIBLE_DEVICES string
     cuda_devices = ",".join(str(i) for i in range(total_gpus))
-    
+
     config_save_path = os.path.join(config["save_loc"], "model.yml")
 
     # Generate the PBS script
@@ -110,13 +109,13 @@ def launch_script_mpi(config_file, script_path, launch = True):
     # Launch MPIs
     CUDA_VISIBLE_DEVICES="{cuda_devices}" mpiexec -n {num_nodes} --ppn 1 --cpu-bind none torchrun --nnodes={num_nodes} --nproc-per-node={num_gpus} --rdzv-backend=c10d --rdzv-endpoint=$head_node_ip {script_path} -c {config_save_path}
     '''
-    
+
     script = re.sub(r'^\s+', '', script, flags=re.MULTILINE)
 
     # Save the script to a file
     with open('launch.sh', 'w') as script_file:
         script_file.write(script)
-        
+
     if launch:
         jobid = subprocess.Popen(
             "qsub launch.sh",
@@ -130,11 +129,10 @@ def launch_script_mpi(config_file, script_path, launch = True):
         if not os.path.exists(os.path.join(config["save_loc"], "launch.sh")):
             shutil.copy(script_file, os.path.join(config["save_loc"], "launch.sh"))
 
-        
+
 if __name__ == "__main__":
     config_file = "../config/vit2d.yml"
     # Where does this script live?
     script_path = "../applications/trainer_vit2d.py"
-    
-    launch(config_file, script_path, launch = False)
-    #launch_mpi(config_file, script_path, launch = False)
+    launch_script(config_file, script_path, launch = False)
+    #launch_script_mpi(config_file, script_path, launch = False)

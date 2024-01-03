@@ -124,6 +124,7 @@ def latititude_weights(conf):
 
     return torch.from_numpy(normalized_L).float()
 
+
 def variable_weights(conf, channels, surface_channels, frames):
     # Load weights for U, V, T, Q
     weights_UVTQ = torch.tensor([

@@ -6,13 +6,9 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 import xarray as xr
-import dask.array as da
-import glob
 
 # PyTorch
 import torch
-import zarr
-from zarr.storage import KVStore
 import netCDF4 as nc
 
 
@@ -67,6 +63,7 @@ class CheckForBadData():
             if np.any(image < 0):
                 raise ValueError(f'\n{attr_name} has negative values at {image.time.values}')
         return sample
+
 
 class NormalizeState():
     def __init__(self,mean_file,std_file):
@@ -136,7 +133,6 @@ class Segment(NamedTuple):
     """Represents the start and end indicies of a segment of contiguous samples."""
     start: int
     end: int
-    
     
     
 def get_contiguous_segments(dt_index: pd.DatetimeIndex, min_timesteps: int, max_gap: pd.Timedelta) -> Iterable[Segment]:

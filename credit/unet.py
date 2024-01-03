@@ -1,15 +1,14 @@
 import segmentation_models_pytorch as smp
-import torchvision.models as models
 import torch.nn.functional as F
 import torchvision
 import torch.nn as nn
 import torch
-import numpy as np
 import logging
 import copy
 import os
 
-from credit.loss import SpectralLoss, SpectralLossSurface, WeightedMSELoss, WeightedMSELossSurface
+from vector_quantize_pytorch import VectorQuantize
+from credit.loss import SpectralLoss, SpectralLossSurface
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -53,7 +52,6 @@ class SegmentationModel(torch.nn.Module):
         self.num_atmos_vars = conf["model"]["channels"]
         self.num_levels = conf["model"]["frames"]
         self.num_single_layer = conf["model"]["surface_channels"]
-        use_codebook = False
         
         in_out_channels = int(self.num_atmos_vars*self.num_levels + self.num_single_layer)
         
@@ -147,18 +145,18 @@ class UNetEncoderDecoder(torch.nn.Module):
         # ssl -- makes more sense to move this to the model class above which contains all layers
         self.visual_ssl = None
         self.visual_ssl_weight = conf['model']['visual_ssl_weight']
-        if conf['model']['use_visual_ssl']:
-            ssl_type = partial(SimSiam, 
-                           channels = conf['model']['channels'], 
-                           surface_channels = conf['model']['surface_channels'], 
-                           device = next(self.enc_dec.parameters()).device)
+        # if conf['model']['use_visual_ssl']:
+        #     ssl_type = partial(SimSiam, 
+        #                    channels = conf['model']['channels'], 
+        #                    surface_channels = conf['model']['surface_channels'], 
+        #                    device = next(self.enc_dec.parameters()).device)
             
-            self.visual_ssl = ssl_type(
-                self.enc_dec.encode,
-                image_height = conf['model']['image_height'],
-                image_width = conf['model']['image_width'],
-                hidden_layer = -1
-            )
+        #     self.visual_ssl = ssl_type(
+        #         self.enc_dec.encode,
+        #         image_height = conf['model']['image_height'],
+        #         image_width = conf['model']['image_width'],
+        #         hidden_layer = -1
+        #     )
 
         # perceptual loss -- possibly the same here
         self.use_vgg = conf['model']['use_vgg']
@@ -191,7 +189,7 @@ class UNetEncoderDecoder(torch.nn.Module):
         return_recons = False,
         return_ssl_loss = False
     ):
-        batch, channels, frames, height, width, device = *img.shape, img.device
+        #batch, channels, frames, height, width, device = *img.shape, img.device
 
         # ssl loss (only using ERA5, not model predictions)
         

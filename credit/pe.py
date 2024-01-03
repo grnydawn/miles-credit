@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from einops import rearrange, reduce, repeat, pack, unpack
+from einops import rearrange
 
 
 class Attention(nn.Module):
