@@ -1,0 +1,498 @@
+import torch
+import torch.fft
+import torch.distributed as dist
+from collections import defaultdict
+import numpy as np
+import tqdm
+import gc
+import os
+import logging
+import pandas as pd 
+from torch.cuda.amp import autocast
+import torch.distributed.checkpoint as DCP
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+from torch.distributed.fsdp import StateDictType
+
+
+def cleanup():
+    dist.destroy_process_group()
+
+
+def cycle(dl):
+    while True:
+        for data in dl:
+            yield data
+
+
+def accum_log(log, new_logs):
+    for key, new_value in new_logs.items():
+        old_value = log.get(key, 0.)
+        log[key] = old_value + new_value
+    return log
+
+
+class Trainer:
+
+    def __init__(self, model, module = False):
+        super(Trainer, self).__init__()
+        self.model = model
+        self.device = None
+        
+        if module:
+            self.model = self.model.module
+        
+    # Training function.
+    def train_one_epoch(
+        self,
+        epoch,
+        conf,
+        trainloader, 
+        optimizer, 
+        criterion, 
+        scaler,
+        scheduler,
+        metrics
+    ):
+        
+        batches_per_epoch = conf['trainer']['batches_per_epoch']
+        grad_accum_every = conf['trainer']['grad_accum_every']
+        history_len = conf["data"]["history_len"]
+        amp = conf['trainer']['amp']
+        distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
+        teacher_forcing_ratio = conf['trainer']['teacher_forcing_ratio']
+        
+        results_dict = defaultdict(list)
+        
+        # update the learning rate if epoch-by-epoch updates
+        if conf['trainer']['epochs'] > 1: # This is here to use the raw learning rate proposed by ECHO
+            scheduler.step()
+
+        # set up a custom tqdm
+        batches_per_epoch = (
+            batches_per_epoch if 0 < batches_per_epoch < len(trainloader) else len(trainloader)
+        )
+
+        batch_group_generator = tqdm.tqdm(
+            range(batches_per_epoch), total=batches_per_epoch, leave=True
+        )
+
+        self.model.train()
+        
+        dl = cycle(trainloader)
+
+        for steps in batch_group_generator:
+
+            # logs
+
+            logs = {}
+
+            # update vae (generator)
+
+            for _ in range(grad_accum_every):
+                
+                batch = next(dl)            
+                # Initialize x and x_surf with the first time step
+                x_atmo = batch["x"][:, 0]
+                x_surf = batch["x_surf"][:, 0]
+                
+                x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
+                                
+                with autocast(enabled=amp):
+                    
+                    loss = 0.0
+                    commit_loss = 0.0
+                    if batch["x"].shape[1] > 1: # multi-step training
+                        for i in range(batch["x"].shape[1]-1):
+                            y_atmo = batch["y"][:, i]
+                            y_surf = batch["y_surf"][:, i]
+                            y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
+
+                            # The model's output y1_pred becomes the new x for the next time step
+                            if self.model.use_codebook:
+                                y_pred, cm_loss = self.model(x)
+                                commit_loss += cm_loss
+                            else:
+                                y_pred = self.model(x)
+
+                            # Teacher forcing - use true x input with probability p
+                            if torch.rand(1).item() < teacher_forcing_ratio:
+                                x_atmo = batch["x"][:, i+1]
+                                x_surf = batch["x_surf"][:, i+1]
+                                x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
+                            else:
+                                x = y_pred.detach()
+
+                            loss += criterion(y.to(y_pred.dtype), y_pred)
+                            
+                            # Metrics
+                            for name, metric in metrics.items():
+                                value = torch.Tensor([metric(y_pred.float(), y.float())]).cuda(self.device, non_blocking=True)
+                                if distributed:
+                                    dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
+                                results_dict[f"train_{name}"].append(value[0].item())
+                            
+                    else: # single-step training
+                        y_atmo = batch["y"][:, 0]
+                        y_surf = batch["y_surf"][:, 0]
+                        y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
+                        
+                        if self.model.use_codebook:
+                            y_pred, cm_loss = self.model(x)
+                            commit_loss += cm_loss
+                        else:
+                            y_pred = self.model(x)
+
+                        loss += criterion(y.to(y_pred.dtype), y_pred)
+                        
+                        # Metrics
+                        for name, metric in metrics.items():
+                            value = torch.Tensor([metric(y_pred.float(), y.float())]).cuda(self.device, non_blocking=True)
+                            if distributed:
+                                dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
+                            results_dict[f"train_{name}"].append(value[0].item())
+                        
+                    loss = loss.mean() + commit_loss
+                    
+                    scaler.scale(loss / grad_accum_every / history_len).backward()
+
+                accum_log(logs, {'loss': loss.item() / grad_accum_every / history_len})
+
+            if distributed:
+                torch.distributed.barrier()
+            
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad()
+
+            batch_loss = torch.Tensor([logs["loss"]]).cuda(self.device)
+            if distributed:
+                dist.all_reduce(batch_loss, dist.ReduceOp.AVG, async_op=False)
+            results_dict["train_loss"].append(batch_loss[0].item())
+            
+            # step the lr scheduler if its batch-by-batch
+            # scheduler.step()
+            
+            # agg the results
+            
+            to_print = "Epoch: {} train_loss: {:.6f} train_acc: {:.6f}".format(
+                epoch, 
+                np.mean(results_dict["train_loss"]),
+                np.mean(results_dict["train_acc"])
+            )
+            batch_group_generator.update(1)
+            to_print += " lr: {:.12f}".format(optimizer.param_groups[0]["lr"])
+            batch_group_generator.set_description(to_print)
+            
+        # Shutdown the progbar
+        batch_group_generator.close()
+        
+        # clear the cached memory from the gpu
+        torch.cuda.empty_cache()
+        gc.collect()
+        
+        return results_dict
+        
+       
+    def validate(
+        self,
+        epoch,
+        conf,
+        valid_loader, 
+        criterion,
+        metrics
+    ):
+        
+        self.model.eval()
+        
+        valid_batches_per_epoch = conf['trainer']['valid_batches_per_epoch']
+        history_len = conf["data"]["valid_history_len"] if "valid_history_len" in conf["data"] else conf["history_len"]
+        distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
+        
+        results_dict = defaultdict(list)
+
+        # set up a custom tqdm
+        valid_batches_per_epoch = (
+            valid_batches_per_epoch if 0 < valid_batches_per_epoch < len(valid_loader) else len(valid_loader)
+        )
+        batch_group_generator = tqdm.tqdm(
+            range(valid_batches_per_epoch), total=valid_batches_per_epoch, leave=True
+        )
+        
+        valid_dl = cycle(valid_loader)
+
+        with torch.no_grad(): 
+            for k in batch_group_generator:
+                batch = next(valid_dl)
+                # Initialize x and x_surf with the first time step
+                x_atmo = batch["x"][:, 0]
+                x_surf = batch["x_surf"][:, 0]
+                x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
+
+                loss = 0.0
+                if batch["x"].shape[1] > 1: # multi-step 
+                    for i in range(batch["x"].shape[1]-1):
+                        y_atmo = batch["y"][:, i]
+                        y_surf = batch["y_surf"][:, i]
+                        y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
+                        # The model's output y1_pred becomes the new x for the next time step
+                        if self.model.use_codebook:
+                            y_pred, cm_loss = self.model(x)
+                        else:
+                            y_pred = self.model(x)
+                        
+                        x = y_pred.detach()
+                        
+                        loss += criterion(y.to(y_pred.dtype), y_pred)
+                        
+                        # Metrics
+                        for name, metric in metrics.items():
+                            value = torch.Tensor([metric(y_pred.float(), y.float())]).cuda(self.device, non_blocking=True)
+                            if distributed:
+                                dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
+                            results_dict[f"valid_{name}"].append(value[0].item())
+                        
+                else: # single-step
+                    y_atmo = batch["y"][:, 0]
+                    y_surf = batch["y_surf"][:, 0]
+                    y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)  
+
+                    if self.model.use_codebook:
+                        y_pred, cm_loss = self.model(x)
+                    else:
+                        y_pred = self.model(x)
+
+                    loss += criterion(y.to(y_pred.dtype), y_pred) 
+                    
+                    # Metrics
+                    for name, metric in metrics.items():
+                        value = torch.Tensor([metric(y_pred.float(), y.float())]).cuda(self.device, non_blocking=True)
+                        if distributed:
+                            dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
+                        results_dict[f"valid_{name}"].append(value[0].item())
+
+                loss = loss.mean()
+
+                batch_loss = torch.Tensor([loss.item() / history_len]).cuda(self.device)
+                if distributed:
+                    torch.distributed.barrier()
+                results_dict["valid_loss"].append(batch_loss[0].item())
+
+                # print to tqdm
+                to_print = "Epoch: {} valid_loss: {:.6f} valid_acc: {:.6f}".format(
+                    epoch, 
+                    np.mean(results_dict["valid_loss"]),
+                    np.mean(results_dict["valid_acc"])
+                )
+                batch_group_generator.update(1)
+                batch_group_generator.set_description(to_print)
+
+                if k >= valid_batches_per_epoch and k > 0:
+                    break
+
+        # Shutdown the progbar
+        batch_group_generator.close()
+
+        # Wait for rank-0 process to save the checkpoint above
+        if distributed:
+            torch.distributed.barrier()
+            
+        # clear the cached memory from the gpu
+        torch.cuda.empty_cache()
+        gc.collect()
+
+        return results_dict
+    
+    
+    def fit(
+        self,
+        conf,
+        train_loader, 
+        valid_loader,  
+        optimizer, 
+        train_criterion, 
+        valid_criterion,
+        scaler,
+        scheduler,
+        metrics,
+        trial = False
+    ):
+        save_loc = conf['save_loc']
+        start_epoch = conf['trainer']['start_epoch']
+        epochs = conf['trainer']['epochs']
+        train_loader.sampler.set_epoch(start_epoch)
+        
+        # Reload the results saved in the training csv if continuing to train
+        if start_epoch == 0:
+            results_dict = defaultdict(list)
+        else:
+            results_dict = defaultdict(list)
+            saved_results = pd.read_csv(f"{save_loc}/training_log.csv")
+            for key in saved_results.columns:
+                if key == "index":
+                    continue
+                results_dict[key] = list(saved_results[key])
+        
+        for epoch in range(start_epoch, epochs):
+            
+            ############
+            #
+            # Train
+            #
+            ############
+            
+            train_results = self.train_one_epoch(
+                epoch,
+                conf,
+                train_loader, 
+                optimizer, 
+                train_criterion, 
+                scaler,
+                scheduler,
+                metrics
+            )
+            
+            ############
+            #
+            # Checkpoint
+            #
+            ############
+
+            if not trial:
+            
+                if conf["trainer"]["mode"] != "fsdp": # rank == 0 and
+
+                    # Save the current model
+
+                    logging.info(f"Saving model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
+
+                    state_dict = {
+                        "epoch": epoch,
+                        "model_state_dict": self.model.state_dict(), #self.model.module.state_dict() if conf["trainer"]["mode"] == "ddp" else self.model.state_dict(),
+                        "optimizer_state_dict": optimizer.state_dict(),
+                        'scheduler_state_dict': scheduler.state_dict(),
+                        'scaler_state_dict': scaler.state_dict()
+                    }
+
+                    torch.save(state_dict, f"{save_loc}/checkpoint_{self.device}.pt" if conf["trainer"]["mode"] == "ddp" else f"{save_loc}/checkpoint.pt")
+
+                else:
+
+                    logging.info(f"Saving FSDP model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
+
+                    # https://pytorch.org/tutorials/recipes/distributed_checkpoint_recipe.html
+                    FSDP.set_state_dict_type(
+                        self.model,
+                        StateDictType.SHARDED_STATE_DICT,
+                    )
+                    sharded_state_dict = {
+                        "model_state_dict": self.model.state_dict()
+                    }
+                    DCP.save_state_dict(
+                        state_dict=sharded_state_dict,
+                        storage_writer=DCP.FileSystemWriter(os.path.join(save_loc, "checkpoint")),
+                    )
+                    # save the optimizer
+                    optimizer_state = FSDP.full_optim_state_dict(self.model, optimizer)
+                    state_dict = {
+                        "epoch": epoch,
+                        "optimizer_state_dict": optimizer_state,
+                        'scheduler_state_dict': scheduler.state_dict(),
+                        'scaler_state_dict': scaler.state_dict()
+                    }
+
+                    torch.save(state_dict, f"{save_loc}/checkpoint.pt")
+
+            # clear the cached memory from the gpu
+            torch.cuda.empty_cache()
+            gc.collect()
+            
+            ############
+            #
+            # Validation
+            #
+            ############
+            
+            valid_results = self.validate(
+                epoch,
+                conf,
+                valid_loader, 
+                valid_criterion,
+                metrics
+            )
+            
+            # clear the cached memory from the gpu
+            torch.cuda.empty_cache()
+            gc.collect()
+            
+            #################
+            #
+            # Save and Return
+            #
+            #################
+
+            # Put things into a results dictionary -> dataframe
+            ###
+            ### This needs updated!
+            ###
+            ###
+            results_dict["epoch"].append(epoch)
+            for name in ["loss", "acc", "mae"]:
+                results_dict[f"train_{name}"].append(np.mean(train_results[f"train_{name}"]))
+                results_dict[f"valid_{name}"].append(np.mean(valid_results[f"valid_{name}"]))
+            results_dict["lr"].append(optimizer.param_groups[0]["lr"])
+
+            df = pd.DataFrame.from_dict(results_dict).reset_index()
+
+#             # Save the best model so far
+#             if not trial:
+                
+#                 # This needs updated! 
+#                 valid_loss = np.mean(valid_results["valid_loss"])
+                
+#                 # save if this is the best model seen so far
+#                 if (self.device == 'cuda:0') and (np.mean(valid_loss) == min(results_dict["valid_loss"])):
+#                     if conf["trainer"]["mode"] == "ddp":
+#                         shutil.copy(f"{save_loc}/checkpoint_{self.device}.pt", f"{save_loc}/best_{self.device}.pt")
+#                     elif conf["trainer"]["mode"] == "fsdp":
+#                         if os.path.exists(f"{save_loc}/best"):
+#                             shutil.rmtree(f"{save_loc}/best")
+#                         shutil.copytree(f"{save_loc}/checkpoint", f"{save_loc}/best")
+#                     else:
+#                         shutil.copy(f"{save_loc}/checkpoint.pt", f"{save_loc}/best.pt")
+
+            # Save the dataframe to disk
+            if trial:
+                df.to_csv(
+                    f"{save_loc}/trial_results/training_log_{trial.number}.csv",
+                    index=False,
+                )
+            else:
+                df.to_csv(f"{save_loc}/training_log.csv", index=False)
+
+
+            # Report result to the trial
+            #if trial:
+                # trial.report
+                #pass
+                 
+            # Stop training if we have not improved after X epochs (stopping patience)
+            best_epoch = [
+                i
+                for i, j in enumerate(results_dict["valid_loss"])
+                if j == min(results_dict["valid_loss"])
+            ][0]
+            offset = epoch - best_epoch
+            if offset >= conf['trainer']['stopping_patience']:
+                logging.info(f"Trial {trial.number} is stopping early")
+                break
+
+        best_epoch = [
+            i for i, j in enumerate(results_dict["valid_loss"]) if j == min(results_dict["valid_loss"])
+        ][0]
+
+        result = {k: v[best_epoch] for k,v in results_dict.items()}
+
+        if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
+            cleanup()
+
+        return result
