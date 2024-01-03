@@ -10,13 +10,11 @@ from argparse import ArgumentParser
 from pathlib import Path
 
 import numpy as np
-import subprocess
 import torch.fft
 import logging
 import shutil
 import random
 
-import optuna
 import wandb
 import glob
 import os
@@ -45,7 +43,7 @@ from torchvision import transforms
 from credit.vit2d import ViT2D, Attention, FeedForward
 from credit.loss import TotalLoss2D
 from credit.data import ERA5Dataset, ToTensor, NormalizeState
-from credit.scheduler import phased_lr_lambda, lr_lambda_phase1, CosineAnnealingWarmupRestarts
+from credit.scheduler import lr_lambda_phase1
 from credit.trainer import Trainer
 from credit.metrics import anomaly_correlation_coefficient as ACC
 from credit.pbs import launch_script, launch_script_mpi
@@ -75,9 +73,9 @@ def seed_everything(seed=1234):
 
 
 def distributed_model_wrapper(conf, vae, device):
-    
+
     if conf["trainer"]["mode"] == "fsdp":
-        
+
         # Define two policies
         auto_wrap_policy1 = functools.partial(
             transformer_auto_wrap_policy,
@@ -87,46 +85,46 @@ def distributed_model_wrapper(conf, vae, device):
         auto_wrap_policy2 = functools.partial(
             size_based_auto_wrap_policy, min_num_params=1_000
         )
-        
+
         def combined_auto_wrap_policy(module, recurse, nonwrapped_numel):
             # Define a new policy that combines the two
             return auto_wrap_policy1(module, recurse, nonwrapped_numel) or auto_wrap_policy2(module, recurse, nonwrapped_numel)
-        
+
         model = FSDP(
             vae,
-            use_orig_params=True, #needed if using torch.compile
+            use_orig_params=True,  #needed if using torch.compile
             auto_wrap_policy=combined_auto_wrap_policy,
             # mixed_precision=torch.distributed.fsdp.MixedPrecision(
-            #     param_dtype=torch.float16, 
-            #     reduce_dtype=torch.float16, 
-            #     buffer_dtype=torch.float16, 
+            #     param_dtype=torch.float16,
+            #     reduce_dtype=torch.float16,
+            #     buffer_dtype=torch.float16,
             #     #cast_forward_inputs=True
             # ),
             #sharding_strategy=ShardingStrategy.FULL_SHARD # Zero3. Zero2 = ShardingStrategy.SHARD_GRAD_OP
             cpu_offload=CPUOffload(offload_params=True)
         )
-        
+
         # activation checkpointing on the transformer blocks
         # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
-        non_reentrant_wrapper = partial(
+        non_reentrant_wrapper = functools.partial(
             checkpoint_wrapper,
             offload_to_cpu=True,
             checkpoint_impl=CheckpointImpl.NO_REENTRANT,
         )
-        
+
         check_fn = lambda submodule: (isinstance(submodule, Attention) or isinstance(submodule, FeedForward))
-        
+
         apply_activation_checkpointing(
-           model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=check_fn
-       )
-        
+            model,
+            checkpoint_wrapper_fn=non_reentrant_wrapper,
+            check_fn=check_fn
+        )
+
     elif conf["trainer"]["mode"] == "ddp":
         model = DDP(vae, device_ids=[device])
     else:
         model = vae
-        
-    #print(model)
-        
+
     return model
 
 
@@ -137,7 +135,7 @@ def load_model_and_optimizer(conf, model, device):
     learning_rate = conf['trainer']['learning_rate']
     weight_decay = conf['trainer']['weight_decay']
     amp = conf['trainer']['amp']
-    
+
     #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
     if start_epoch == 0:  # Loaded after loading model weights when reloading
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
@@ -196,10 +194,9 @@ def load_model_and_optimizer(conf, model, device):
 
         else:
             logging.info(f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-            model.load_state_dict(checkpoint["model_state_dict"]) 
+            model.load_state_dict(checkpoint["model_state_dict"])
             optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-
 
         scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda_phase1)
         scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
@@ -220,41 +217,41 @@ def trainer(rank, world_size, conf, trial=False):
     # Config settings
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
-    
+
     train_batch_size = conf['trainer']['train_batch_size']
     valid_batch_size = conf['trainer']['valid_batch_size']
     thread_workers = conf['trainer']['thread_workers']
     valid_thread_workers = conf['trainer']['valid_thread_workers'] if 'valid_thread_workers' in conf['trainer'] else thread_workers
     history_len = conf["data"]["history_len"]
     forecast_len = conf["data"]["forecast_len"]
-    
+
     if trial is not False:  # when forecast length being selected by ECHO
-        history_len = forecast_len-1 
-    
+        history_len = forecast_len-1
+
     valid_history_len = conf["data"]["valid_history_len"] if "valid_history_len" in conf["data"] else history_len
     valid_forecast_len = conf["data"]["valid_forecast_len"] if "valid_forecast_len" in conf["data"] else forecast_len
     time_step = conf["data"]["time_step"]
 
-    # datasets (zarr reader) 
-    
+    # datasets (zarr reader)
+
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
 
     # Specify the years for each set
-    
+
     train_years = [str(year) for year in range(1979, 2014)]
     valid_years = [str(year) for year in range(2014, 2018)]  # can make CV splits if we want to later on
     test_years = [str(year) for year in range(2018, 2022)]  # same as graphcast -- always hold out
 
     # Filter the files for each set
-    
+
     train_files = [file for file in all_ERA_files if any(year in file for year in train_years)]
     valid_files = [file for file in all_ERA_files if any(year in file for year in valid_years)]
     test_files = [file for file in all_ERA_files if any(year in file for year in test_years)]
 
     train_dataset = ERA5Dataset(
         filenames=train_files,
-        history_len=history_len, 
-        forecast_len=forecast_len, 
+        history_len=history_len,
+        forecast_len=forecast_len,
         skip_periods=time_step,
         transform=transforms.Compose([
             NormalizeState(
@@ -267,8 +264,8 @@ def trainer(rank, world_size, conf, trial=False):
 
     valid_dataset = ERA5Dataset(
         filenames=valid_files,
-        history_len=valid_history_len, 
-        forecast_len=valid_forecast_len, 
+        history_len=valid_history_len,
+        forecast_len=valid_forecast_len,
         skip_periods=time_step,
         transform=transforms.Compose([
             NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"]),
@@ -319,8 +316,8 @@ def trainer(rank, world_size, conf, trial=False):
         drop_last=True
     )
 
-    # model 
-    
+    # model
+
     vae = ViT2D(**conf['model'])
 
     num_params = sum(p.numel() for p in vae.parameters())
@@ -329,34 +326,34 @@ def trainer(rank, world_size, conf, trial=False):
     #summary(vae, input_size=(channels, height, width))
 
     # have to send the module to the correct device first
-    
+
     vae.to(device)
     #vae = torch.compile(vae)
 
     # Wrap in DDP or FSDP module, or none
-    
+
     model = distributed_model_wrapper(conf, vae, device)
-    
+
     # Load an optimizer, scheduler, and gradient scaler from disk if epoch > 0
-    
+
     model, optimizer, scheduler, scaler = load_model_and_optimizer(conf, model, device)
 
     # Train and validation losses
-    
+
     train_criterion = TotalLoss2D(conf)
     valid_criterion = TotalLoss2D(conf, validation=True)
-    
+
     # Set up some metrics
-    
+
     metrics = {"acc": ACC, "mae": torch.nn.L1Loss()}
-    
+
     # Initialize a trainer object
-    
-    trainer = Trainer(model, module = (conf["trainer"]["mode"] == "ddp"))
+
+    trainer = Trainer(model, module=(conf["trainer"]["mode"] == "ddp"))
     trainer.device = device
-    
+
     # Fit the model
-    
+
     result = trainer.fit(
         conf,
         train_loader,
@@ -369,7 +366,7 @@ def trainer(rank, world_size, conf, trial=False):
         metrics,
         trial=trial
     )
-        
+
     return result
 
 
@@ -414,10 +411,10 @@ if __name__ == "__main__":
         help="Submit workers to PBS.",
     )
     parser.add_argument(
-        "-w", 
-        "--world-size", 
-        type=int, 
-        default=4, 
+        "-w",
+        "--world-size",
+        type=int,
+        default=4,
         help="Number of processes (world size) for multiprocessing"
     )
     args = parser.parse_args()
@@ -463,7 +460,7 @@ if __name__ == "__main__":
 #         name=f"Worker {os.environ["RANK"]} {os.environ["WORLD_SIZE"]}"
 #         # track hyperparameters and run metadata
 #         config=conf
-#     )    
+#     )
 
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
