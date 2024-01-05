@@ -1,14 +1,12 @@
 import segmentation_models_pytorch as smp
-import torch.nn.functional as F
-import torchvision
-import torch.nn as nn
 import torch
 import logging
 import copy
 import os
+import torch.distributed.checkpoint as DCP
+from torch.distributed.fsdp import StateDictType
+from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
-from vector_quantize_pytorch import VectorQuantize
-from credit.loss import SpectralLoss, SpectralLossSurface
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -44,44 +42,28 @@ def load_model(model_conf):
 
 
 class SegmentationModel(torch.nn.Module):
-    
+
     def __init__(self, conf):
-        
+
         super(SegmentationModel, self).__init__()
-                
+
         self.num_atmos_vars = conf["model"]["channels"]
         self.num_levels = conf["model"]["frames"]
         self.num_single_layer = conf["model"]["surface_channels"]
-        
-        in_out_channels = int(self.num_atmos_vars*self.num_levels + self.num_single_layer)
-        
-        dim = 128
-        vq_codebook_size = conf['model']['vq_codebook_size']
-        vq_decay = conf['model']['vq_decay']
-        vq_commitment_weight = conf['model']['vq_commitment_weight']
-        
-        
-        self.model = smp.Unet(
-            encoder_name="resnet34",
-            encoder_weights="imagenet",
-            decoder_attention_type="scse",
-            in_channels=in_out_channels,
-            classes=in_out_channels,
-        )
-        
-        # codebook
-        self.use_codebook = conf['model']['use_codebook']
-        if  self.use_codebook:
-            self.vq = VectorQuantize(
-                dim = dim,
-                codebook_size = vq_codebook_size,     # codebook size
-                decay = vq_decay,             # the exponential moving average decay, lower means the dictionary will change faster
-                commitment_weight = vq_commitment_weight  # the weight on the commitment loss
-            )
+        self.use_codebook = False
+        self.rk4_integration = conf["model"]["rk4_integration"]
 
-    def forward(self, x, x_surface, reshape = True):
-        x = self.model(self.concat_and_reshape(x, x_surface))
-        return self.split_and_reshape(x) if reshape else x
+        in_out_channels = int(self.num_atmos_vars*self.num_levels + self.num_single_layer)
+
+        if conf['model']['architecture']['name'] == 'unet':
+            conf['model']['architecture']['decoder_attention_type'] = 'scse'
+        conf['model']['architecture']['in_channels'] = in_out_channels
+        conf['model']['architecture']['classes'] = in_out_channels
+
+        self.model = load_model(conf['model']['architecture'])
+
+    def forward(self, x):
+        return self.rk4(x) if self.rk4_integration else self.model(x)
 
     def concat_and_reshape(self, x1, x2):
         x1 = x1.view(x1.shape[0], -1, x1.shape[3], x1.shape[4])
@@ -93,174 +75,58 @@ class SegmentationModel(torch.nn.Module):
         tensor2 = tensor[:, -self.num_single_layer:, :, :]
         tensor1 = tensor1.view(tensor1.shape[0], self.num_atmos_vars, self.num_levels, tensor1.shape[2], tensor1.shape[3])
         return tensor1, tensor2
-    
-    
-class SegmentationRK4(SegmentationModel):
-        
-    def forward(self, img, img_surface, scaler_y=None):
-        k1, k1_surf = self.split_and_reshape(self.model(self.concat_and_reshape(img, img_surface)))
-        k2, k2_surf = self.split_and_reshape(self.model(self.concat_and_reshape(img + 0.5 * k1, img_surface + 0.5 * k1_surf)))
-        k3, k3_surf = self.split_and_reshape(self.model(self.concat_and_reshape(img + 0.5 * k2, img_surface + 0.5 * k2_surf)))
-        k4, k4_surf = self.split_and_reshape(self.model(self.concat_and_reshape(img + k3, img_surface + k3_surf)))
 
-        pred = (k1 + 2 * k2 + 2 * k3 + k4) / 6
-        pred_surf = (k1_surf + 2 * k2_surf + 2 * k3_surf + k4_surf) / 6
-        
-        if scaler_y is not None:
-        
-            unscaled_tend, unscaled_tend_surf = scaler_y.inverse_transform(
-                pred,
-                pred_surf
+    @classmethod
+    def load_model(cls, conf):
+        save_loc = conf['save_loc']
+        ckpt = f"{save_loc}/checkpoint.pt" if conf["trainer"]["mode"] != "ddp" else f"{save_loc}/checkpoint_cuda:0.pt"
+
+        if not os.path.isfile(ckpt):
+            raise ValueError(
+                "No saved checkpoint exists. You must train a model first. Exiting."
             )
 
-            # Step
+        logging.info(
+            f"Loading a model with pre-trained weights from path {ckpt}"
+        )
 
-            fmap = img + unscaled_tend
-            fmap_surface = img_surface + unscaled_tend_surf
+        checkpoint = torch.load(ckpt)
 
-            return fmap, fmap_surface
-        
-        return pred, pred_surf
+        model_class = cls(**conf["model"])
 
-
-class UNetEncoderDecoder(torch.nn.Module):
-    def __init__(self, conf, **kwargs):
-        super().__init__()
-        
-        self.channels = conf['model']['channels']
-        
-        self.model = SegmentationModel(conf)
-        
-        # integration type
-        self.rk4_integration = conf['model']['rk4_integration']
-
-        # reconstruction loss
-        if conf['model']['l2_recon_loss']:
-            self.recon_loss = nn.MSELoss(reduction='none')
-            self.recon_loss_surf = nn.MSELoss(reduction='none')
-        else:
-            self.recon_loss = F.l1_loss
-            self.recon_loss_surf = F.l1_loss
-
-        # ssl -- makes more sense to move this to the model class above which contains all layers
-        self.visual_ssl = None
-        self.visual_ssl_weight = conf['model']['visual_ssl_weight']
-        # if conf['model']['use_visual_ssl']:
-        #     ssl_type = partial(SimSiam, 
-        #                    channels = conf['model']['channels'], 
-        #                    surface_channels = conf['model']['surface_channels'], 
-        #                    device = next(self.enc_dec.parameters()).device)
-            
-        #     self.visual_ssl = ssl_type(
-        #         self.enc_dec.encode,
-        #         image_height = conf['model']['image_height'],
-        #         image_width = conf['model']['image_width'],
-        #         hidden_layer = -1
-        #     )
-
-        # perceptual loss -- possibly the same here
-        self.use_vgg = conf['model']['use_vgg']
-        if self.use_vgg:
-            self.vgg = torchvision.models.vgg16(pretrained = True)
-            self.vgg.features[0] = torch.nn.Conv2d(conf['model']['channels'], 64, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1))
-            self.vgg.classifier = nn.Sequential(*self.vgg.classifier[:-2])
-            
-            # Freeze the weights of the pre-trained layers
-            for param in self.vgg.parameters():
-                param.requires_grad = False
-
-        # spectral loss
-        self.use_spectral_loss = conf['model']['use_spectral_loss']
-        self.spectral_lambda_reg = conf['model']['spectral_lambda_reg'] if self.use_spectral_loss else 1.0
-        if self.use_spectral_loss:
-            self.spectral_loss = SpectralLoss(wavenum_init=conf['model']['spectral_wavenum_init'])
-            self.spectral_loss_surface = SpectralLossSurface(wavenum_init=conf['model']['spectral_wavenum_init'])
-    
-    def forward(
-        self,
-        img,
-        img_surface,
-        y_img = False,
-        y_img_surface = False,
-        tendency_scaler = None,
-        atmosphere_weights = None,
-        surface_weights = None,
-        return_loss = False,
-        return_recons = False,
-        return_ssl_loss = False
-    ):
-        #batch, channels, frames, height, width, device = *img.shape, img.device
-
-        # ssl loss (only using ERA5, not model predictions)
-        
-        if return_ssl_loss and self.visual_ssl is not None:
-            return self.visual_ssl(img, img_surface) * self.visual_ssl_weight
-
-        # autoencoder
-        # see https://github.com/qubvel/segmentation_models.pytorch/blob/master/segmentation_models_pytorch/base/model.py
-
-        if self.rk4_integration:
-            
-            # RK4 steps for encoded result
-                        
-            k1, k1_surf = self.model(img, img_surface)
-            k2, k2_surf = self.model(img + 0.5 * k1, img_surface + 0.5 * k1_surf)
-            k3, k3_surf = self.model(img + 0.5 * k2, img_surface + 0.5 * k2_surf)
-            k4, k4_surf = self.model(img + k3, img_surface + k3_surf)
-            
-            # should be z-scores of tendencies
-            
-            pred = (k1 + 2 * k2 + 2 * k3 + k4) / 6
-            pred_surf = (k1_surf + 2 * k2_surf + 2 * k3_surf + k4_surf) / 6
-            
-            # Undo the z-score output (tendency) of the model
-            
-            unscaled_tend, unscaled_tend_surf = tendency_scaler.inverse_transform(
-                pred,
-                pred_surf
+        if conf["trainer"]["mode"] == "fsdp":
+            FSDP.set_state_dict_type(
+                model_class,
+                StateDictType.SHARDED_STATE_DICT,
             )
-            
-            # Step
-            
-            fmap = img + unscaled_tend
-            fmap_surface = img_surface + unscaled_tend_surf
-
-        else:            
-            fmap, fmap_surface = self.model(img, img_surface)
-            pred, pred_surf = fmap, fmap_surface
-            
-        if not return_loss:
-            return fmap, fmap_surface
-        
-        # Convert true tendencies to z-scores
-        if self.rk4_integration:
-            true, true_surf = tendency_scaler.transform(y_img-img, y_img_surface-img_surface)
+            state_dict = {
+                "model_state_dict": model_class.state_dict(),
+            }
+            DCP.load_state_dict(
+                state_dict=state_dict,
+                storage_reader=DCP.FileSystemReader(os.path.join(save_loc, "checkpoint")),
+            )
+            model_class.load_state_dict(state_dict["model_state_dict"])
         else:
-            true, true_surf = y_img, y_img_surface
-            
-        # reconstruction loss
-        
-        if atmosphere_weights is not None and surface_weights is not None:
-            recon_loss = (self.recon_loss(true, pred) * atmosphere_weights).mean()
-            recon_loss_surface = (self.recon_loss_surf(true_surf, pred_surf) * surface_weights).mean()
-        
-        else:
-            recon_loss = self.recon_loss(true, pred).mean()
-            recon_loss_surface = self.recon_loss_surf(true_surf, pred_surf).mean()
+            model_class.load_state_dict(checkpoint["model_state_dict"])
 
-        # fourier spectral loss
-        
-        spec_loss = 0.0
-        if self.use_spectral_loss:
-            spec_loss_1 = self.spectral_loss(true, pred)
-            spec_loss_2 = self.spectral_loss_surface(true_surf, pred_surf)
-            spec_loss = 0.5 * (spec_loss_1 + spec_loss_2)
-        
-        # Add terms
-        
-        loss = self.spectral_lambda_reg * (recon_loss + recon_loss_surface) + (1 - self.spectral_lambda_reg) * spec_loss
-        
-        if return_recons:
-            return fmap, fmap_surface, loss
+        return model_class
 
-        return loss
+    def save_model(self, conf):
+        save_loc = conf['save_loc']
+        state_dict = {
+            "model_state_dict": self.state_dict(),
+        }
+        torch.save(state_dict, f"{save_loc}/checkpoint.pt")
+
+    def rk4(self, x):
+
+        def integrate_step(x, k, factor):
+            return self.model(x + k * factor)
+
+        k1 = self.model(x)
+        k2 = integrate_step(x, k1, 0.5)
+        k3 = integrate_step(x, k2, 0.5)
+        k4 = integrate_step(x, k3, 1.0)
+
+        return (k1 + 2 * k2 + 2 * k3 + k4) / 6

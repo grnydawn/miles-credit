@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import xarray as xr
-import numpy as np
 
 
 def load_loss(loss_type, reduction='mean'):
@@ -105,24 +104,56 @@ class SpectralLoss2D(nn.Module):
         return loss.to(device=device, dtype=dtype)
 
 
+class SpectralLoss3D(nn.Module):
+    def __init__(self, wavenum_init=20):
+        super(SpectralLoss3D, self).__init__()
+        self.wavenum_init = wavenum_init
+
+    def forward(self, output, target, fft_dim=4):
+        device, dtype = output.device, output.dtype
+        output = output.float()
+        target = target.float()
+
+        # Take FFT over the 'lon' dimension
+        out_fft = torch.fft.rfft(output, dim=fft_dim)
+        target_fft = torch.fft.rfft(target, dim=fft_dim)
+
+        # Take absolute value
+        out_fft_abs = torch.abs(out_fft)
+        target_fft_abs = torch.abs(target_fft)
+
+        # Average over spatial dims
+        out_fft_mean = torch.mean(out_fft_abs, dim=(fft_dim-1, fft_dim-2))
+        target_fft_mean = torch.mean(target_fft_abs, dim=(fft_dim-1, fft_dim-2))
+
+        # Calculate loss2
+        loss2 = torch.mean(torch.abs(out_fft_mean[:, 0, self.wavenum_init:] - target_fft_mean[:, 0, self.wavenum_init:]))
+
+        # Calculate loss3
+        loss3 = torch.mean(torch.abs(out_fft_mean[:, 1, self.wavenum_init:] - target_fft_mean[:, 1, self.wavenum_init:]))
+
+        # Compute total loss
+        loss = 0.5 * loss2 + 0.5 * loss3
+
+        return loss.to(device=device, dtype=dtype)
+
+
 def latititude_weights(conf):
     cos_lat = xr.open_dataset(conf["loss"]["latitude_weights"])["coslat"].values
-
-    # Compute the sum of cos(lat) over all rows
-    cos_lat_sum = cos_lat.sum(axis=0)
-
-    # Compute the latitude-weighting factor for each row
+    # Normalize over lat
+    cos_lat_sum = cos_lat.sum(axis=0) / cos_lat.shape[0]
     L = cos_lat / cos_lat_sum
-    L = L / L.sum()
+    return torch.from_numpy(L).float()
 
-    min_val = np.min(L) // 2
-    max_val = np.max(L)
-    normalized_L = (L - min_val) / (max_val - min_val)
+#     # Compute the latitude-weighting factor for each row
+#     L = cos_lat / cos_lat_sum
+#     L = L / L.sum()
 
-    # L = torch.from_numpy(L).float().unsqueeze(0)
-    # L = L / L.sum()
+#     min_val = np.min(L) // 2
+#     max_val = np.max(L)
+#     normalized_L = (L - min_val) / (max_val - min_val)
 
-    return torch.from_numpy(normalized_L).float()
+#     return torch.from_numpy(normalized_L).float()
 
 
 def variable_weights(conf, channels, surface_channels, frames):

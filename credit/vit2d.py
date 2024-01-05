@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.fft
 from torch import nn
@@ -310,14 +311,14 @@ class ViT2D(nn.Module):
                 kmeans_init=vq_kmeans_init,
                 use_cosine_sim=vq_use_cosine_sim
             )
-            
+
 #         self.visual_ssl = None
 #         self.visual_ssl_weight = conf['model']['visual_ssl_weight']
 #         if conf['model']['use_visual_ssl']:
 #             ssl_type = partial(
 #                 SimSiam,
 #                 channels = conf['model']['channels'],
-#                 surface_channels = conf['model']['surface_channels'], 
+#                 surface_channels = conf['model']['surface_channels'],
 #                 device = next(self.enc_dec.parameters()).device)
 
     def encode(self, x):
@@ -533,7 +534,6 @@ if __name__ == "__main__":
 
     from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
     import torch.distributed as dist
-    import os
 
     os.environ['MASTER_ADDR'] = '127.0.0.1'
     os.environ['MASTER_PORT'] = '29500'

@@ -9,11 +9,9 @@ from echo.src.base_objective import BaseObjective
 from argparse import ArgumentParser
 from pathlib import Path
 
-import numpy as np
 import torch.fft
 import logging
 import shutil
-import random
 
 import wandb
 import glob
@@ -42,11 +40,12 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 from torchvision import transforms
 from credit.vit2d import ViT2D, Attention, FeedForward
 from credit.loss import TotalLoss2D
-from credit.data import ERA5Dataset, ToTensor, NormalizeState
+from credit.data import ERA5Dataset, ToTensor, NormalizeState, DistributedSequentialDataset
 from credit.scheduler import lr_lambda_phase1
 from credit.trainer import Trainer
 from credit.metrics import anomaly_correlation_coefficient as ACC
 from credit.pbs import launch_script, launch_script_mpi
+from credit.seed import seed_everything
 
 
 warnings.filterwarnings("ignore")
@@ -61,15 +60,57 @@ def setup(rank, world_size, mode):
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
 
-def seed_everything(seed=1234):
-    random.seed(seed)
-    os.environ["PYTHONHASHSEED"] = str(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(seed)
-        torch.backends.cudnn.benchmark = True
-        torch.backends.cudnn.deterministic = True
+def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
+    history_len = conf["data"]["history_len"]
+    forecast_len = conf["data"]["forecast_len"]
+    valid_history_len = conf["data"]["valid_history_len"]
+    valid_forecast_len = conf["data"]["valid_forecast_len"]
+    time_step = conf["data"]["time_step"]
+
+    history_len = history_len if is_train else valid_history_len
+    forecast_len = forecast_len if is_train else valid_forecast_len
+    shuffle = is_train
+    name = "Train" if is_train else "Valid"
+
+    if history_len > 1:
+        dataset = DistributedSequentialDataset(
+            filenames=files,
+            history_len=history_len,
+            forecast_len=forecast_len,
+            skip_periods=time_step,
+            world_size=world_size,
+            rank=rank,
+            shuffle=shuffle,
+            transform=transforms.Compose([
+                NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"]),
+                ToTensor(history_len=history_len, forecast_len=forecast_len),
+            ]),
+        )
+        sampler = None
+        logging.info(
+            f"{name} (forecast length = {forecast_len}): Loaded a distributed sequential ERA dataset which contains its own distributed sampler"
+        )
+    else:
+        dataset = ERA5Dataset(
+            filenames=files,
+            history_len=history_len,
+            forecast_len=forecast_len,
+            skip_periods=time_step,
+            transform=transforms.Compose([
+                NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"]),
+                ToTensor(history_len=history_len, forecast_len=forecast_len),
+            ]),
+        )
+        sampler = DistributedSampler(
+            dataset,
+            num_replicas=world_size,
+            rank=rank,
+            seed=seed,
+            shuffle=shuffle,
+            drop_last=True
+        )
+        logging.info(f"{name} (forecast length = {forecast_len}): Loaded an ERA dataset, and a distributed sampler")
+    return dataset, sampler
 
 
 def distributed_model_wrapper(conf, vae, device):
@@ -106,19 +147,19 @@ def distributed_model_wrapper(conf, vae, device):
 
         # activation checkpointing on the transformer blocks
         # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
-        non_reentrant_wrapper = functools.partial(
-            checkpoint_wrapper,
-            offload_to_cpu=True,
-            checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-        )
 
-        check_fn = lambda submodule: (isinstance(submodule, Attention) or isinstance(submodule, FeedForward))
+#         non_reentrant_wrapper = functools.partial(
+#             checkpoint_wrapper,
+#             checkpoint_impl=CheckpointImpl.NO_REENTRANT,
+#         )
 
-        apply_activation_checkpointing(
-            model,
-            checkpoint_wrapper_fn=non_reentrant_wrapper,
-            check_fn=check_fn
-        )
+#         check_fn = lambda submodule: (isinstance(submodule, Attention) or isinstance(submodule, FeedForward))
+
+#         apply_activation_checkpointing(
+#             model,
+#             checkpoint_wrapper_fn=non_reentrant_wrapper,
+#             check_fn=check_fn
+#         )
 
     elif conf["trainer"]["mode"] == "ddp":
         model = DDP(vae, device_ids=[device])
@@ -209,6 +250,9 @@ def load_model_and_optimizer(conf, model, device):
 
 def trainer(rank, world_size, conf, trial=False):
 
+    if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
+        setup(rank, world_size, conf["trainer"]["mode"])
+
     # infer device id from rank
 
     device = torch.device(f"cuda:{rank % torch.cuda.device_count()}") if torch.cuda.is_available() else torch.device("cpu")
@@ -222,15 +266,6 @@ def trainer(rank, world_size, conf, trial=False):
     valid_batch_size = conf['trainer']['valid_batch_size']
     thread_workers = conf['trainer']['thread_workers']
     valid_thread_workers = conf['trainer']['valid_thread_workers'] if 'valid_thread_workers' in conf['trainer'] else thread_workers
-    history_len = conf["data"]["history_len"]
-    forecast_len = conf["data"]["forecast_len"]
-
-    if trial is not False:  # when forecast length being selected by ECHO
-        history_len = forecast_len-1
-
-    valid_history_len = conf["data"]["valid_history_len"] if "valid_history_len" in conf["data"] else history_len
-    valid_forecast_len = conf["data"]["valid_forecast_len"] if "valid_forecast_len" in conf["data"] else forecast_len
-    time_step = conf["data"]["time_step"]
 
     # datasets (zarr reader)
 
@@ -248,50 +283,10 @@ def trainer(rank, world_size, conf, trial=False):
     valid_files = [file for file in all_ERA_files if any(year in file for year in valid_years)]
     test_files = [file for file in all_ERA_files if any(year in file for year in test_years)]
 
-    train_dataset = ERA5Dataset(
-        filenames=train_files,
-        history_len=history_len,
-        forecast_len=forecast_len,
-        skip_periods=time_step,
-        transform=transforms.Compose([
-            NormalizeState(
-                conf["data"]["mean_path"],
-                conf["data"]["std_path"]
-            ),
-            ToTensor(history_len=history_len, forecast_len=forecast_len),
-        ]),
-    )
+    # load dataset and sampler
 
-    valid_dataset = ERA5Dataset(
-        filenames=valid_files,
-        history_len=valid_history_len,
-        forecast_len=valid_forecast_len,
-        skip_periods=time_step,
-        transform=transforms.Compose([
-            NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"]),
-            ToTensor(history_len=valid_history_len, forecast_len=valid_forecast_len),
-        ]),
-    )
-
-    # setup the distributed sampler
-
-    sampler_tr = DistributedSampler(
-        train_dataset,
-        num_replicas=world_size,
-        rank=rank,
-        shuffle=True,  # May be True
-        seed=seed,
-        drop_last=True
-    )
-
-    sampler_val = DistributedSampler(
-        valid_dataset,
-        num_replicas=world_size,
-        rank=rank,
-        seed=seed,
-        shuffle=False,
-        drop_last=True
-    )
+    train_dataset, train_sampler = load_dataset_and_sampler(conf, train_files, world_size, rank, is_train=True)
+    valid_dataset, valid_sampler = load_dataset_and_sampler(conf, valid_files, world_size, rank, is_train=False)
 
     # setup the dataloder for this process
 
@@ -299,7 +294,7 @@ def trainer(rank, world_size, conf, trial=False):
         train_dataset,
         batch_size=train_batch_size,
         shuffle=False,
-        sampler=sampler_tr,
+        sampler=train_sampler,
         pin_memory=True,
         persistent_workers=True if thread_workers > 0 else False,
         num_workers=thread_workers,
@@ -310,7 +305,7 @@ def trainer(rank, world_size, conf, trial=False):
         valid_dataset,
         batch_size=valid_batch_size,
         shuffle=False,
-        sampler=sampler_val,
+        sampler=valid_sampler,
         pin_memory=False,
         num_workers=valid_thread_workers,
         drop_last=True
@@ -446,7 +441,7 @@ if __name__ == "__main__":
     if launch:
         # Where does this script live?
         script_path = Path(__file__).absolute()
-        if conf['pbs']['nodes'] == 1:
+        if conf['pbs']['queue'] == 'casper':
             logging.info("Launching to PBS on Casper")
             launch_script(config, script_path)
         else:

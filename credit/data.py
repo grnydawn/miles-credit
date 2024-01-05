@@ -11,6 +11,9 @@ import xarray as xr
 import torch
 import netCDF4 as nc
 
+from torch.utils.data import get_worker_info
+from torch.utils.data.distributed import DistributedSampler
+
 
 def get_forward_data(filename) -> xr.DataArray:
     """Lazily opens the Zarr store on gladefilesystem.
@@ -25,7 +28,7 @@ IMAGE_ATTR_NAMES = ('historical_ERA5_images', 'target_ERA5_images')
 
 class Sample(TypedDict):
     """Simple class for structuring data for the ML model.
-    
+
     Using typing.TypedDict gives us several advantages:
       1. Single 'source of truth' for the type and documentation of each example.
       2. A static type checker can check the types are correct.
@@ -38,7 +41,7 @@ class Sample(TypedDict):
     # Shape: batch_size, seq_length, lat, lon, lev
     historical_ERA5_images: Array
     target_ERA5_images: Array
-        
+
     # METADATA
     datetime_index: Array
 
@@ -66,11 +69,11 @@ class CheckForBadData():
 
 
 class NormalizeState():
-    def __init__(self,mean_file,std_file):
+    def __init__(self, mean_file, std_file):
         self.mean_ds = xr.open_dataset(mean_file)
         self.std_ds = xr.open_dataset(std_file)
 
-    def __call__(self, sample:Sample)->Sample:
+    def __call__(self, sample: Sample) -> Sample:
         normalized_sample = {}
         for key, value in sample.items():
             if isinstance(value, xr.Dataset):
@@ -133,13 +136,12 @@ class Segment(NamedTuple):
     """Represents the start and end indicies of a segment of contiguous samples."""
     start: int
     end: int
-    
-    
+
 def get_contiguous_segments(dt_index: pd.DatetimeIndex, min_timesteps: int, max_gap: pd.Timedelta) -> Iterable[Segment]:
     """Chunk datetime index into contiguous segments, each at least min_timesteps long.
-    
+
     max_gap defines the threshold for what constitutes a 'gap' between contiguous segments.
-    
+
     Throw away any timesteps in a sequence shorter than min_timesteps long.
     """
     gap_mask = np.diff(dt_index) > max_gap
@@ -160,39 +162,39 @@ def get_contiguous_segments(dt_index: pd.DatetimeIndex, min_timesteps: int, max_
             segment = Segment(start=start_i, end=end_i)
             segments.append(segment)
         start_i = end_i
-        
+
     return segments
 
 
 def get_zarr_chunk_sequences(
-    n_chunks_per_disk_load: int, 
-    zarr_chunk_boundaries: Iterable[int], 
+    n_chunks_per_disk_load: int,
+    zarr_chunk_boundaries: Iterable[int],
     contiguous_segments: Iterable[Segment]) -> Iterable[Segment]:
     """
-    
+
     Args:
       n_chunks_per_disk_load: Maximum number of Zarr chunks to load from disk in one go.
       zarr_chunk_boundaries: The indicies into the Zarr store's time dimension which define the Zarr chunk boundaries.
         Must be sorted.
       contiguous_segments: Indicies into the Zarr store's time dimension that define contiguous timeseries.
         That is, timeseries with no gaps.
-    
+
     Returns zarr_chunk_sequences: a list of Segments representing the start and end indicies of contiguous sequences of multiple Zarr chunks,
     all exactly n_chunks_per_disk_load long (for contiguous segments at least as long as n_chunks_per_disk_load zarr chunks),
     and at least one side of the boundary will lie on a 'natural' Zarr chunk boundary.
-    
+
     For example, say that n_chunks_per_disk_load = 3, and the Zarr chunks sizes are all 5:
-    
-    
-                  0    5   10   15   20   25   30   35 
+
+
+                  0    5   10   15   20   25   30   35
                   |....|....|....|....|....|....|....|
 
     INPUTS:
                      |------CONTIGUOUS SEGMENT----|
-                     
+
     zarr_chunk_boundaries:
                   |----|----|----|----|----|----|----|
-    
+
     OUTPUT:
     zarr_chunk_sequences:
            3 to 15:  |-|----|----|
@@ -200,10 +202,10 @@ def get_zarr_chunk_sequences(
           10 to 25:         |----|----|----|
           15 to 30:              |----|----|----|
           20 to 32:                   |----|----|-|
-    
+
     """
     assert n_chunks_per_disk_load > 0
-    
+
     zarr_chunk_sequences = []
 
     for contig_segment in contiguous_segments:
@@ -212,13 +214,13 @@ def get_zarr_chunk_sequences(
         # i_of_first_zarr_chunk is the index to the element in zarr_chunk_boundaries which defines
         # the start of the current contig chunk.
         i_of_first_zarr_chunk = np.searchsorted(zarr_chunk_boundaries, contig_segment.start)
-        
+
         # i_of_first_zarr_chunk will be too large by 1 unless contig_segment.start lies
         # exactly on a Zarr chunk boundary.  Hence we must subtract 1, or else we'll
         # end up with the first contig_chunk being 1 + n_chunks_per_disk_load chunks long.
         if zarr_chunk_boundaries[i_of_first_zarr_chunk] > contig_segment.start:
             i_of_first_zarr_chunk -= 1
-            
+
         # Prepare for looping to create multiple Zarr chunk sequences for the current contig_segment.
         zarr_chunk_seq_start_i = contig_segment.start
         zarr_chunk_seq_end_i = None  # Just a convenience to allow us to break the while loop by checking if zarr_chunk_seq_end_i != contig_segment.end.
@@ -228,16 +230,17 @@ def get_zarr_chunk_sequences(
             zarr_chunk_sequences.append(Segment(start=zarr_chunk_seq_start_i, end=zarr_chunk_seq_end_i))
             i_of_first_zarr_chunk += 1
             zarr_chunk_seq_start_i = zarr_chunk_boundaries[i_of_first_zarr_chunk]
-            
+
     return zarr_chunk_sequences
 
 
 Array = Union[np.ndarray, xr.DataArray]
 IMAGE_ATTR_NAMES = ('historical_ERA5_images', 'target_ERA5_images')
 
+
 class Sample(TypedDict):
     """Simple class for structuring data for the ML model.
-    
+
     Using typing.TypedDict gives us several advantages:
       1. Single 'source of truth' for the type and documentation of each example.
       2. A static type checker can check the types are correct.
@@ -250,10 +253,9 @@ class Sample(TypedDict):
     # Shape: batch_size, seq_length, lat, lon, lev
     historical_ERA5_images: Array
     target_ERA5_images: Array
-        
+
     # METADATA
     datetime_index: Array
-
 
 
 def flatten_list(list_of_lists):
@@ -267,6 +269,7 @@ def flatten_list(list_of_lists):
     - flattened_list (list): A flattened list containing all elements from sublists.
     """
     return [item for sublist in list_of_lists for item in sublist]
+
 
 def generate_integer_list_around(number, spacing=10):
     """
@@ -284,6 +287,7 @@ def generate_integer_list_around(number, spacing=10):
     integer_list = list(range(lower_limit, upper_limit))
 
     return integer_list
+
 
 def find_key_for_number(input_number, data_dict):
     """
@@ -303,94 +307,17 @@ def find_key_for_number(input_number, data_dict):
     # Return None if the number is not within any range
     return None
 
-class ToTensorDeprecated():
-    def __init__(self,history_len=int(1),forecast_len=int(2)):
-        
-        self.hist_len = history_len
-        self.for_len = forecast_len
-        self.allvarsdo = ['U','V','T','Q','SP','t2m','V500','U500','T500','Z500','Q500']
-        self.surfvars = ['SP', 't2m','V500','U500','T500','Z500','Q500']
-        
-    def __call__(self, sample: Sample) -> Sample:
-    
-        return_dict = {}
-        if (self.hist_len==1) & (self.for_len ==2):
-            for key, value in sample.items():
-
-                if isinstance(value, xr.DataArray):
-                    value_var = value.values
-
-                elif isinstance(value, xr.Dataset):
-                    surface_vars = []
-                    concatenated_vars = []
-                    for vv in self.allvarsdo: 
-                        value_var = value[vv].values
-                        if vv in self.surfvars:
-                            surface_vars_temp = value_var
-                            surface_vars.append(surface_vars_temp)
-                        else:
-                            concatenated_vars.append(value_var)
-
-                else: 
-                    value_var = value        
-
-                if key == 'historical_ERA5_images':
-                    return_dict['x_surf'] = torch.as_tensor(surface_vars).squeeze()
-                    return_dict['x'] = torch.as_tensor(np.vstack(concatenated_vars))
-                elif key == 'target_ERA5_images':
-                    y_surf = torch.as_tensor(surface_vars)
-                    #print(y_surf)
-                    y = torch.as_tensor(np.hstack([np.expand_dims(x, axis=1) for x in concatenated_vars]))
-                    return_dict['y1_surf'] = y_surf[:,0]
-                    return_dict['y2_surf'] = y_surf[:,1]
-                    return_dict['y1'] = y[0]
-                    return_dict['y2'] = y[1]
-                    
-        else:
-            for key, value in sample.items():
-
-                if isinstance(value, xr.DataArray):
-                    value_var = value.values
-
-                elif isinstance(value, xr.Dataset):
-                    surface_vars = []
-                    concatenated_vars = []
-                    for vv in self.allvarsdo: 
-                        value_var = value[vv].values
-                        if vv in self.surfvars:
-                            surface_vars_temp = value_var
-                            surface_vars.append(surface_vars_temp)
-                        else:
-                            concatenated_vars.append(value_var)
-
-                else: 
-                    value_var = value        
-
-                if key == 'historical_ERA5_images':
-                    return_dict['x_surf'] = torch.as_tensor(surface_vars).squeeze()
-                    return_dict['x'] = torch.as_tensor(np.hstack([np.expand_dims(x, axis=1) for x in concatenated_vars]))
-                elif key == 'target_ERA5_images':
-                    y_surf = torch.as_tensor(surface_vars)
-                    #print(y_surf)
-                    y = torch.as_tensor(np.hstack([np.expand_dims(x, axis=1) for x in concatenated_vars]))
-                    # y = torch.as_tensor(np.vstack(concatenated_vars))
-                    return_dict['y_surf'] = y_surf
-                    return_dict['y'] = y
-                    
-                
-        return return_dict 
-    
 
 class ToTensor:
     def __init__(self, history_len=1, forecast_len=2):
-        
+
         self.hist_len = int(history_len)
         self.for_len = int(forecast_len)
-        self.allvarsdo = ['U','V','T','Q','SP','t2m','V500','U500','T500','Z500','Q500']
-        self.surfvars = ['SP', 't2m','V500','U500','T500','Z500','Q500']
-        
+        self.allvarsdo = ['U', 'V', 'T', 'Q', 'SP', 't2m', 'V500', 'U500', 'T500', 'Z500', 'Q500']
+        self.surfvars = ['SP', 't2m', 'V500', 'U500', 'T500', 'Z500', 'Q500']
+
     def __call__(self, sample: Sample) -> Sample:
-    
+
         return_dict = {}
 
         for key, value in sample.items():
@@ -401,7 +328,7 @@ class ToTensor:
             elif isinstance(value, xr.Dataset):
                 surface_vars = []
                 concatenated_vars = []
-                for vv in self.allvarsdo: 
+                for vv in self.allvarsdo:
                     value_var = value[vv].values
                     if vv in self.surfvars:
                         surface_vars_temp = value_var
@@ -411,28 +338,28 @@ class ToTensor:
                 surface_vars = np.array(surface_vars)
                 concatenated_vars = np.array(concatenated_vars)
 
-            else: 
-                value_var = value        
+            else:
+                value_var = value
 
-            if key == 'historical_ERA5_images':
+            if key == 'historical_ERA5_images' or key == 'x':
                 x_surf = torch.as_tensor(surface_vars).squeeze()
                 return_dict['x_surf'] = x_surf.permute(1, 0, 2, 3) if len(x_surf.shape) == 4 else x_surf.unsqueeze(0)
                 return_dict['x'] = torch.as_tensor(np.hstack([np.expand_dims(x, axis=1) for x in concatenated_vars]))
 
-            elif key == 'target_ERA5_images':
+            elif key == 'target_ERA5_images' or key == 'y':
                 y_surf = torch.as_tensor(surface_vars)
                 y = torch.as_tensor(np.hstack([np.expand_dims(x, axis=1) for x in concatenated_vars]))
                 return_dict['y_surf'] = y_surf.permute(1, 0, 2, 3)
                 return_dict['y'] = y
-                
-        return return_dict 
-    
+
+        return return_dict
+
 
 class ERA5Dataset(torch.utils.data.Dataset):
-    
+
     def __init__(
         self,
-        filenames: list = ['/glade/derecho/scratch/wchapman/STAGING/TOTAL_2012-01-01_2012-12-31_staged.zarr','/glade/derecho/scratch/wchapman/STAGING/TOTAL_2013-01-01_2013-12-31_staged.zarr'],
+        filenames: list = ['/glade/derecho/scratch/wchapman/STAGING/TOTAL_2012-01-01_2012-12-31_staged.zarr', '/glade/derecho/scratch/wchapman/STAGING/TOTAL_2013-01-01_2013-12-31_staged.zarr'],
         history_len: int = 1,
         forecast_len: int = 2,
         transform: Optional[Callable] = None,
@@ -451,20 +378,20 @@ class ERA5Dataset(torch.utils.data.Dataset):
         self.all_fils = all_fils
         self.data_array = all_fils[0]
         self.rng = np.random.default_rng(seed=SEED)
-        
-        #set data places: 
+
+        #set data places:
         indo = 0
         self.meta_data_dict = {}
         for ee,bb in enumerate(self.all_fils):
-            self.meta_data_dict[str(ee)]=[len(bb['time']),indo,indo+len(bb['time'])]
+            self.meta_data_dict[str(ee)] = [len(bb['time']), indo, indo+len(bb['time'])]
             indo += len(bb['time'])+1
-            
-        #set out of bounds indexes... 
+
+        #set out of bounds indexes...
         OOB = []
         for kk in self.meta_data_dict.keys():
             OOB.append(generate_integer_list_around(self.meta_data_dict[kk][2]))
         self.OOB = flatten_list(OOB)
-                
+
     def __post_init__(self):
         #: Total sequence length of each sample.
         self.total_seq_len = self.history_len + self.forecast_len
@@ -476,17 +403,17 @@ class ERA5Dataset(torch.utils.data.Dataset):
         return tlen
 
     def __getitem__(self, index):
-        
+
         #find the result key:
         result_key = find_key_for_number(index, self.meta_data_dict)
         #get the data selection:
-        true_ind = index-self.meta_data_dict[result_key][1] 
-        
+        true_ind = index-self.meta_data_dict[result_key][1]
+
         if true_ind > (len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+1)):
             true_ind = len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+1)
-       
-        datasel = self.all_fils[int(result_key)].isel(time=slice(true_ind, true_ind+self.history_len+self.forecast_len+1)).load()       
-        
+
+        datasel = self.all_fils[int(result_key)].isel(time=slice(true_ind, true_ind+self.history_len+self.forecast_len+1)).load()
+
         if self.skip_periods is not None:
             sample = Sample(
                 historical_ERA5_images=datasel.isel(time=slice(0, self.history_len, self.skip_periods)),
@@ -503,68 +430,124 @@ class ERA5Dataset(torch.utils.data.Dataset):
         if self.transform:
             sample = self.transform(sample)
         return sample
-    
 
-class ERA5DatasetSequence(ERA5Dataset):
-    
-    def __getitem__(self, index):
-        #find the result key:
-        result_key = find_key_for_number(index, self.meta_data_dict)
-        #get the data selection:
-        true_ind = index-self.meta_data_dict[result_key][1] 
 
-        if true_ind > (len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+1)):
-            true_ind = len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+1)
+class SequentialDataset(torch.utils.data.IterableDataset):
 
-        indices = list(range(true_ind, true_ind+self.history_len+self.forecast_len+1))
-        
-        return result_key, indices
-    
+    def __init__(self, filenames, history_len, forecast_len, skip_periods, transform=None):
 
-class SequenceBatcher(torch.utils.data.Dataset):
-    
-    def __init__(self, indices, filenames, history_len=1, forecast_len=2, skip_periods=1, transform=None):
-        self.indices = indices
-        self.filenames = filenames
+        self.dataset = ERA5Dataset(
+            filenames=filenames,
+            history_len=history_len,
+            forecast_len=forecast_len,
+            skip_periods=skip_periods,
+            transform=transform
+        )
+
+        self.meta_data_dict = self.dataset.meta_data_dict
+        self.all_fils = self.dataset.all_fils
         self.history_len = history_len
         self.forecast_len = forecast_len
-        self.skip_periods = skip_periods
+        self.filenames = filenames
         self.transform = transform
 
+    def __iter__(self):
+        for index in range(len(self.meta_data_dict)):
+            # Similar logic to ERA5DatasetSequence.__getitem__
+            result_key = find_key_for_number(index, self.meta_data_dict)
+            true_ind = index - self.meta_data_dict[result_key][1]
+            if true_ind > (len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 1)):
+                true_ind = len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 1)
+            indices = list(range(true_ind, true_ind + self.history_len + self.forecast_len + 1))
+
+            # Similar logic to SequenceBatcher.__getitem__
+            lookup_info = result_key
+            datasel_slices_list = [
+                xr.open_zarr(self.filenames[int(lookup_info)], consolidated=True).isel(time=slice(ind, ind+2, 1)) for ind in indices
+            ]
+            k = 0
+            for sliced in datasel_slices_list:
+                concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
+                sample = {
+                    'x': sliced.isel(time=slice(0, 1, 1)),
+                    'y': sliced.isel(time=slice(1, 2, 1)),
+                    't': sliced.time.values.astype('datetime64[s]').astype(int)
+                }
+                if self.transform:
+                    sample = self.transform(sample)
+                for key in concatenated_samples.keys():
+                    concatenated_samples[key].append(sample[key])
+                for key in concatenated_samples.keys():
+                    concatenated_samples[key] = np.concatenate(concatenated_samples[key])
+                concatenated_samples['forecast_hour'] = k
+
+                yield concatenated_samples
+
+                k += 1
+
+                if k == self.forecast_len:
+                    break
+
+
+class DistributedSequentialDataset(torch.utils.data.IterableDataset):
+    # https://colab.research.google.com/drive/1OFLZnX9y5QUFNONuvFsxOizq4M-tFvk-?usp=sharing#scrollTo=CxSCQPOMHgwo
+
+    def __init__(self, filenames, history_len, forecast_len, skip_periods, rank, world_size, shuffle=False, transform=None):
+
+        self.dataset = ERA5Dataset(
+            filenames=filenames,
+            history_len=history_len,
+            forecast_len=forecast_len,
+            skip_periods=skip_periods,
+            transform=transform
+        )
+        self.meta_data_dict = self.dataset.meta_data_dict
+        self.all_fils = self.dataset.all_fils
+        self.history_len = history_len
+        self.forecast_len = forecast_len
+        self.filenames = filenames
+        self.transform = transform
+        self.rank = rank
+        self.world_size = world_size
+        self.shuffle = shuffle
+
     def __len__(self):
-        return len(self.indices[1])
-    
-    def __getitem__(self, idx):
-        
-        # Retrieve lookup information and indices
-        lookup_info = self.indices[0]
-        indices = self.indices[1][idx]
-        
-        # Load slices using list comprehension
-        datasel_slices_list = [
-            xr.open_zarr(self.filenames[int(lookup)], consolidated=True).isel(time=slice(ind, ind+2, 1)) for lookup, ind in zip(lookup_info, indices)
-        ]
+        tlen = 0
+        for bb in self.all_fils:
+            tlen += (len(bb['time']) - self.forecast_len)
+        return tlen
 
-        # Initialize an empty dictionary to store the concatenated samples
-        
-        concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
+    def __iter__(self):
+        worker_info = get_worker_info()
+        num_workers = worker_info.num_workers if worker_info is not None else 1
+        worker_id = worker_info.id if worker_info is not None else 0
+        sampler = DistributedSampler(self, num_replicas=num_workers*self.world_size, rank=self.rank*num_workers+worker_id, shuffle=self.shuffle)
 
-        for sliced in datasel_slices_list:
-            sample = {
-                'x': sliced.isel(time=slice(0, 1, 1)),
-                'y': sliced.isel(time=slice(1, 2, 1)),
-                't': sliced.time.values.astype('datetime64[s]').astype(int)
-            }
+        for index in iter(sampler):
+            result_key = find_key_for_number(index, self.meta_data_dict)
+            true_ind = index - self.meta_data_dict[result_key][1]
+            if true_ind > (len(self.all_fils[int(result_key)]['time']) - self.forecast_len):
+                true_ind = len(self.all_fils[int(result_key)]['time']) - self.forecast_len
+            indices = list(range(true_ind, true_ind + self.forecast_len))
 
-            if self.transform:
-                sample = self.transform(sample)
-                
-            # Concatenate the numpy arrays for each key
-            for key in concatenated_samples.keys():
-                concatenated_samples[key].append(sample[key])
+            lookup_info = result_key
+            datasel_slices_list = [
+                xr.open_zarr(self.filenames[int(lookup_info)], consolidated=True).isel(time=slice(ind, ind+2, 1)) for ind in indices
+            ]
 
-        # Convert lists to numpy arrays
-        for key in concatenated_samples.keys():
-            concatenated_samples[key] = np.concatenate(concatenated_samples[key])
-            
-        return concatenated_samples
+            for k, sliced in enumerate(datasel_slices_list):
+                concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
+                sample = {
+                    'x': sliced.isel(time=slice(0, 1, 1)),
+                    'y': sliced.isel(time=slice(1, 2, 1)),
+                    't': sliced.time.values.astype('datetime64[s]').astype(int)
+                }
+                if self.transform:
+                    sample = self.transform(sample)
+                for key in concatenated_samples.keys():
+                    concatenated_samples[key] = sample[key].squeeze(0)
+
+                concatenated_samples['forecast_hour'] = k
+                concatenated_samples['index'] = index
+
+                yield concatenated_samples

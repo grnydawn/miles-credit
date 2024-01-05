@@ -13,7 +13,7 @@ def launch_script(config_file, script_path, launch=True):
 
     # Extract PBS options from the config
     pbs_options = config['pbs']
-    
+
     config_save_path = os.path.join(config["save_loc"], "model.yml")
 
     # Generate the PBS script
@@ -54,7 +54,7 @@ def launch_script(config_file, script_path, launch=True):
         os.remove("launch.sh")
 
 
-def launch_script_mpi(config_file, script_path, launch = True): 
+def launch_script_mpi(config_file, script_path, launch=True):
 
     with open(config_file) as cf:
         config = yaml.load(cf, Loader=yaml.FullLoader)
@@ -84,7 +84,7 @@ def launch_script_mpi(config_file, script_path, launch = True):
 
     # Load modules
     module purge
-    module load nvhpc cuda cray-mpich conda 
+    module load nvhpc cuda cray-mpich conda
     conda activate {pbs_options.get('conda', 'holodec')}
 
     # Get a list of allocated nodes
@@ -104,7 +104,6 @@ def launch_script_mpi(config_file, script_path, launch = True):
 
     # Log in to WandB if needed
     # wandb login 02d2b1af00b5df901cb2bee071872de774781520
-    pip install .
 
     # Launch MPIs
     CUDA_VISIBLE_DEVICES="{cuda_devices}" mpiexec -n {num_nodes} --ppn 1 --cpu-bind none torchrun --nnodes={num_nodes} --nproc-per-node={num_gpus} --rdzv-backend=c10d --rdzv-endpoint=$head_node_ip {script_path} -c {config_save_path}
@@ -125,14 +124,14 @@ def launch_script_mpi(config_file, script_path, launch = True):
         ).communicate()[0]
         jobid = jobid.decode("utf-8").strip("\n")
         print(jobid)
-        os.remove("launch.sh")
         if not os.path.exists(os.path.join(config["save_loc"], "launch.sh")):
-            shutil.copy(script_file, os.path.join(config["save_loc"], "launch.sh"))
+            shutil.copy("launch.sh", os.path.join(config["save_loc"], "launch.sh"))
+        os.remove("launch.sh")
 
 
 if __name__ == "__main__":
     config_file = "../config/vit2d.yml"
     # Where does this script live?
     script_path = "../applications/trainer_vit2d.py"
-    launch_script(config_file, script_path, launch = False)
+    launch_script(config_file, script_path, launch=False)
     #launch_script_mpi(config_file, script_path, launch = False)
