@@ -166,7 +166,8 @@ class Trainer:
                         y_atmo = batch["y"][i % len(batch["forecast_hour"])]
                         y_surf = batch["y_surf"][i % len(batch["forecast_hour"])]
                         y = self.model.concat_and_reshape(y_atmo.unsqueeze(0), y_surf.unsqueeze(0)).to(self.device)
-                        loss += criterion(y.to(y_pred.dtype), y_pred)
+                        
+                        loss += criterion(y.to(y_pred.dtype), y_pred).mean() + commit_loss
 
                         # Metrics
                         for name, metric in metrics.items():
@@ -175,14 +176,14 @@ class Trainer:
                                 dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
                             results_dict[f"train_{name}"].append(value[0].item())
 
-                        loss = loss.mean() + commit_loss
-
-                        scaler.scale(loss / history_len).backward()
-
-                        accum_log(logs, {'loss': loss.item() / history_len})
-
+                        if np.random.uniform() > 0.9:
+                            break
+                    
                 # only update parameters once we finish a forecast
                 if conf["data"]["history_len"] in batch["forecast_hour"]:
+
+                    scaler.scale(loss / history_len).backward()
+                    accum_log(logs, {'loss': loss.item() / history_len})
 
                     if distributed:
                         torch.distributed.barrier()
