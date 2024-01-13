@@ -176,11 +176,12 @@ class Trainer:
                                 dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
                             results_dict[f"train_{name}"].append(value[0].item())
 
-                        if np.random.uniform() > 0.9:
+                        if np.random.uniform() > conf['trainer']['stop_rollout']: # probability of stopping a forecast rollout early
                             break
                     
                 # only update parameters once we finish a forecast
                 if conf["data"]["history_len"] in batch["forecast_hour"]:
+                    # scale, accumulate, backward here
 
                     scaler.scale(loss / history_len).backward()
                     accum_log(logs, {'loss': loss.item() / history_len})
