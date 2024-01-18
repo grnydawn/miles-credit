@@ -1,4 +1,4 @@
-save_loc: "/glade/work/schreck/repos/global/miles-credit/results/"
+save_loc: "/glade/work/schreck/repos/global/miles-credit/results/no_dec_pe"
 seed: 1000
 
 data:
@@ -31,6 +31,18 @@ trainer:
     stopping_patience: 50
     teacher_forcing_ratio: 0.5 #0.9886539666794065
     stop_rollout: 0.9
+    load_weights: False
+    use_scheduler: True
+    # scheduler:
+    #     scheduler_type: cosine-annealing
+    #     first_cycle_steps: 500
+    #     cycle_mult: 6.0
+    #     max_lr: 5.0e-04
+    #     min_lr: 5.0e-07
+    #     warmup_steps: 499
+    #     gamma: 0.7
+    scheduler:
+        scheduler_type: lambda
   
 model:
     channels: 4
@@ -50,6 +62,7 @@ model:
     rk4_integration: false
     surface_channels: 7
     token_dropout: 0.0
+    use_decoder_conv_layers: false
     use_cls_tokens: false
     use_codebook: false
     use_registers: false
@@ -88,8 +101,8 @@ loss:
 # pbs: #derecho
 #     conda: "holodec"
 #     project: "NAML0001"
-#     job_name: "gwm"
-#     walltime: "00:10:00"
+#     job_name: "pe-test"
+#     walltime: "12:00:00"
 #     nodes: 1
 #     ncpus: 64
 #     ngpus: 4
@@ -98,12 +111,13 @@ loss:
     
 pbs: # casper
     conda: "/glade/work/schreck/miniconda3/envs/evidential"
-    job_name: 'gwm'
+    job_name: 'no-dec-pe'
     nodes: 1
     ncpus: 8
     ngpus: 1
     mem: '128GB'
     walltime: '12:00:00'
     gpu_type: 'a100'
+    cpu_type: 'milan'
     project: 'NAML0001'
     queue: 'casper'

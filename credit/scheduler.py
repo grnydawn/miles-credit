@@ -1,6 +1,43 @@
+import copy
 import math
 import torch
 from torch.optim.lr_scheduler import _LRScheduler
+from torch.optim.lr_scheduler import LambdaLR, ReduceLROnPlateau
+
+
+update_on_batch = ["cosine-annealing"]
+update_on_epoch = ['lambda', 'plateau']
+
+
+def load_scheduler(optimizer, conf):
+    """
+    Load a learning rate scheduler based on the configuration.
+
+    Parameters:
+    - optimizer: The PyTorch optimizer.
+    - conf: The configuration dictionary.
+
+    Returns:
+    - scheduler: The PyTorch learning rate scheduler.
+    """
+    conf = copy.deepcopy(conf)
+
+    if conf['trainer']['use_scheduler']:
+        scheduler_type = conf['trainer']['scheduler']['scheduler_type']
+        del conf['trainer']['scheduler']['scheduler_type']
+        if scheduler_type == 'lambda':
+            scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda_phase1)
+        elif scheduler_type == 'plateau':
+            scheduler = ReduceLROnPlateau(optimizer, **conf['trainer']['scheduler'])
+        elif scheduler_type == "cosine-annealing":
+            scheduler = CosineAnnealingWarmupRestarts(optimizer, **conf['trainer']['scheduler'])
+        else:
+            raise ValueError(f"Invalid scheduler_type: {scheduler_type}")
+    else:
+        scheduler = None
+
+    return scheduler
+
 
 # Define a half-cosine decay learning rate schedule for the second phase
 def lr_lambda_phase2(step, total_updates_phase2=299000):
@@ -39,30 +76,30 @@ class CosineAnnealingWarmupRestarts(_LRScheduler):
         gamma(float): Decrease rate of max learning rate by cycle. Default: 1.
         last_epoch (int): The index of last epoch. Default: -1.
     """
-    
+
     def __init__(
         self,
-        optimizer : torch.optim.Optimizer,
-        first_cycle_steps : int,
-        cycle_mult : float = 1.,
-        max_lr : float = 0.1,
-        min_lr : float = 0.001,
-        warmup_steps : int = 0,
-        gamma : float = 1.,
-        last_epoch : int = -1
+        optimizer: torch.optim.Optimizer,
+        first_cycle_steps: int,
+        cycle_mult: float = 1.,
+        max_lr: float = 0.1,
+        min_lr: float = 0.001,
+        warmup_steps: int = 0,
+        gamma: float = 1.,
+        last_epoch: int = -1
         ):
         assert warmup_steps < first_cycle_steps
-        self.first_cycle_steps = first_cycle_steps # first cycle step size
-        self.cycle_mult = cycle_mult # cycle steps magnification
-        self.base_max_lr = max_lr # first max learning rate
-        self.max_lr = max_lr # max learning rate in the current cycle
-        self.min_lr = min_lr # min learning rate
-        self.warmup_steps = warmup_steps # warmup step size
-        self.gamma = gamma # decrease rate of max learning rate by cycle
+        self.first_cycle_steps = first_cycle_steps  # first cycle step size
+        self.cycle_mult = cycle_mult  # cycle steps magnification
+        self.base_max_lr = max_lr  # first max learning rate
+        self.max_lr = max_lr  # max learning rate in the current cycle
+        self.min_lr = min_lr  # min learning rate
+        self.warmup_steps = warmup_steps  # warmup step size
+        self.gamma = gamma  # decrease rate of max learning rate by cycle
 
-        self.cur_cycle_steps = first_cycle_steps # first cycle step size
-        self.cycle = 0 # cycle count
-        self.step_in_cycle = last_epoch # step size of the current cycle
+        self.cur_cycle_steps = first_cycle_steps  # first cycle step size
+        self.cycle = 0  # cycle count
+        self.step_in_cycle = last_epoch  # step size of the current cycle
 
         super(CosineAnnealingWarmupRestarts, self).__init__(optimizer, last_epoch)
 
@@ -107,15 +144,15 @@ class CosineAnnealingWarmupRestarts(_LRScheduler):
             else:
                 self.cur_cycle_steps = self.first_cycle_steps
                 self.step_in_cycle = epoch
- 
+
         self.max_lr = self.base_max_lr * (self.gamma**self.cycle)
         self.last_epoch = math.floor(epoch)
         for param_group, lr in zip(self.optimizer.param_groups, self.get_lr()):
             param_group['lr'] = lr
- 
-         
+
+
 if __name__ == "__main__":
-    
+
     import matplotlib.pyplot as plt
 
     num_epochs = 100

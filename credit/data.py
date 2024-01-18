@@ -1,16 +1,12 @@
-# Python core
 from typing import Optional, Callable, TypedDict, Union, Iterable, NamedTuple
 from dataclasses import dataclass
-
-# Scientific python
 import numpy as np
 import pandas as pd
 import xarray as xr
-
-# PyTorch
 import torch
 import netCDF4 as nc
 
+import random
 from torch.utils.data import get_worker_info
 from torch.utils.data.distributed import DistributedSampler
 
@@ -136,6 +132,7 @@ class Segment(NamedTuple):
     """Represents the start and end indicies of a segment of contiguous samples."""
     start: int
     end: int
+
 
 def get_contiguous_segments(dt_index: pd.DatetimeIndex, min_timesteps: int, max_gap: pd.Timedelta) -> Iterable[Segment]:
     """Chunk datetime index into contiguous segments, each at least min_timesteps long.
@@ -492,7 +489,7 @@ class SequentialDataset(torch.utils.data.IterableDataset):
 class DistributedSequentialDataset(torch.utils.data.IterableDataset):
     # https://colab.research.google.com/drive/1OFLZnX9y5QUFNONuvFsxOizq4M-tFvk-?usp=sharing#scrollTo=CxSCQPOMHgwo
 
-    def __init__(self, filenames, history_len, forecast_len, skip_periods, rank, world_size, shuffle=False, transform=None):
+    def __init__(self, filenames, history_len, forecast_len, skip_periods, rank, world_size, shuffle=False, transform=None, rollout_p=1.0):
 
         self.dataset = ERA5Dataset(
             filenames=filenames,
@@ -510,6 +507,9 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
         self.rank = rank
         self.world_size = world_size
         self.shuffle = shuffle
+        self.skip_periods = skip_periods
+        self.current_epoch = 0
+        self.rollout_p = rollout_p
 
     def __len__(self):
         tlen = 0
@@ -517,37 +517,159 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
             tlen += (len(bb['time']) - self.forecast_len)
         return tlen
 
+    def set_epoch(self, epoch):
+        self.current_epoch = epoch
+
+    def set_rollout_prob(self, p):
+        self.rollout_p = p
+
+    # def __iter__(self):
+
+    #     worker_info = get_worker_info()
+    #     num_workers = worker_info.num_workers if worker_info is not None else 1
+    #     worker_id = worker_info.id if worker_info is not None else 0
+    #     sampler = DistributedSampler(self, num_replicas=num_workers*self.world_size, rank=self.rank*num_workers+worker_id, shuffle=self.shuffle)
+    #     sampler.set_epoch(self.current_epoch)
+
+    #     for index in iter(sampler):
+    #         result_key = find_key_for_number(index, self.meta_data_dict)
+    #         true_ind = index - self.meta_data_dict[result_key][1]
+
+    #         if true_ind > (len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+1)):
+    #             true_ind = len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+3)
+
+    #         indices = list(range(true_ind, true_ind+self.history_len+self.forecast_len+1))
+
+    #         self.seq_len = self.history_len + 1
+    #         indices = indices[:self.seq_len]
+
+    #         lookup_info = result_key
+    #         datasel_slices_list = [
+    #             xr.open_zarr(self.filenames[int(lookup_info)], consolidated=True).isel(time=slice(ind, ind+self.history_len+1, self.skip_periods)) for ind in indices
+    #         ]
+
+    #         stop_forecast = False
+    #         for k in range(len(datasel_slices_list)):
+
+    #             sliced = datasel_slices_list[k]
+
+    #             if stop_forecast:
+    #                 concatenated_samples = {}
+    #                 concatenated_samples['forecast_hour'] = k
+    #                 yield concatenated_samples
+
+    #                 if (k == self.history_len):
+    #                     break
+
+    #             concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
+    #             # sample = {
+    #             #     'x': sliced.isel(time=slice(0, self.history_len, self.skip_periods)),
+    #             #     'y': sliced.isel(time=slice(self.history_len, self.history_len+1, self.skip_periods)),
+    #             #     't': sliced.time.values.astype('datetime64[s]').astype(int)
+    #             # }
+
+    #             sample = {
+    #                 'x': sliced.isel(time=slice(0, 1, 1)),
+    #                 'y': sliced.isel(time=slice(1, 2, 1)),
+    #                 't': sliced.time.values.astype('datetime64[s]').astype(int)
+    #             }
+
+    #             if self.transform:
+    #                 sample = self.transform(sample)
+
+    #             for key in concatenated_samples.keys():
+    #                 concatenated_samples[key] = sample[key].squeeze()
+
+    #             stop_forecast = (torch.rand(1).item() > self.rollout_p)
+
+    #             concatenated_samples['forecast_hour'] = k
+    #             concatenated_samples['index'] = index
+    #             concatenated_samples['stop_forecast'] = stop_forecast
+
+    #             yield concatenated_samples
+
+    #             if (k == self.history_len):
+    #                 break
+
     def __iter__(self):
         worker_info = get_worker_info()
         num_workers = worker_info.num_workers if worker_info is not None else 1
         worker_id = worker_info.id if worker_info is not None else 0
         sampler = DistributedSampler(self, num_replicas=num_workers*self.world_size, rank=self.rank*num_workers+worker_id, shuffle=self.shuffle)
+        sampler.set_epoch(self.current_epoch)
 
         for index in iter(sampler):
             result_key = find_key_for_number(index, self.meta_data_dict)
             true_ind = index - self.meta_data_dict[result_key][1]
-            if true_ind > (len(self.all_fils[int(result_key)]['time']) - self.forecast_len):
-                true_ind = len(self.all_fils[int(result_key)]['time']) - self.forecast_len
-            indices = list(range(true_ind, true_ind + self.forecast_len))
 
-            lookup_info = result_key
-            datasel_slices_list = [
-                xr.open_zarr(self.filenames[int(lookup_info)], consolidated=True).isel(time=slice(ind, ind+2, 1)) for ind in indices
-            ]
+            if true_ind > (len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+1)):
+                true_ind = len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+3)
 
-            for k, sliced in enumerate(datasel_slices_list):
+            indices = list(range(true_ind, true_ind+self.history_len+self.forecast_len+1))
+            self.seq_len = self.history_len + 1
+            indices = indices[:self.seq_len]
+
+            stop_forecast = False
+            for k, ind in enumerate(indices):
+
+                if stop_forecast:
+                    concatenated_samples = {
+                        'forecast_hour': k,
+                    }
+                    yield concatenated_samples
+
+                    if (k == self.history_len):
+                        break
+
                 concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
+                sliced = xr.open_zarr(self.filenames[int(result_key)], consolidated=True).isel(time=slice(ind, ind+self.history_len+1, self.skip_periods))
+                #sliced = xr.open_zarr(self.filenames[int(result_key)], consolidated=True).isel(time=slice(ind, ind+2, self.skip_periods))
                 sample = {
                     'x': sliced.isel(time=slice(0, 1, 1)),
                     'y': sliced.isel(time=slice(1, 2, 1)),
-                    't': sliced.time.values.astype('datetime64[s]').astype(int)
+                    't': sliced.time.values.astype('datetime64[s]').astype(int),
                 }
+
                 if self.transform:
                     sample = self.transform(sample)
+
                 for key in concatenated_samples.keys():
-                    concatenated_samples[key] = sample[key].squeeze(0)
+                    concatenated_samples[key] = sample[key].squeeze()
+
+                stop_forecast = (torch.rand(1).item() > self.rollout_p)
 
                 concatenated_samples['forecast_hour'] = k
                 concatenated_samples['index'] = index
+                concatenated_samples['stop_forecast'] = stop_forecast
 
                 yield concatenated_samples
+
+                if (k == self.history_len):
+                    break
+
+    def estimate_average_length(self, max_length=100, num_simulations=1000):
+        """
+        Simulate for-loops of length max_length with termination probability p and compute the average length.
+
+        Parameters:
+        - max_length: The length of the loop.
+        - termination_probability: The termination probability (p).
+        - num_simulations: The number of simulations to perform.
+
+        Returns:
+        - average_length: The average length of the loop.
+        """
+
+        total_length = 0
+
+        for _ in range(num_simulations):
+            loop_length = 1
+
+            # Simulate the loop termination with probability p
+            while random.random() > self.rollout_p and loop_length < max_length:
+                loop_length += 1
+
+            total_length += loop_length
+
+        average_length = total_length / num_simulations
+        return average_length

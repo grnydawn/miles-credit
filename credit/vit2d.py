@@ -145,8 +145,10 @@ class PatchDropout(torch.nn.Module):
         """
         If force drop is true it will drop the tokens also during inference.
         """
-        if not self.training and not force_drop: return x
-        if self.keep_rate == 1: return x
+        if not self.training and not force_drop:
+            return x
+        if self.keep_rate == 1:
+            return x
 
         # batch, length, dim
         N, L, D = x.shape
@@ -202,6 +204,7 @@ class ViT2D(nn.Module):
             dim_head=32,
             mlp_dim=32,
             dropout=0.0,
+            use_decoder_conv_layers=False,
             use_cls_tokens=False,
             use_registers=False,
             num_register_tokens=0,
@@ -227,6 +230,7 @@ class ViT2D(nn.Module):
         self.use_codebook = use_codebook
         self.use_cls_tokens = use_cls_tokens
         self.rk4_integration = rk4_integration
+        self.use_decoder_conv_layers = use_decoder_conv_layers
 
         # Encoder-decoder layers
         if transformer_type == "pytorch":
@@ -284,6 +288,11 @@ class ViT2D(nn.Module):
         self.pos_embedding_dec = SurfacePosEmb2D(
             image_height, image_width, patch_height, patch_width, dim, cls_token=self.use_cls_tokens
         )
+
+        # Conv smoothing layer for decoder
+        if self.use_decoder_conv_layers:
+            self.conv1 = nn.Conv2d(in_channels=input_dim, out_channels=input_dim, kernel_size=3, padding=1)
+            self.conv2 = nn.Conv2d(in_channels=input_dim, out_channels=input_dim, kernel_size=3, padding=1)
 
         # CLS paramters
         if self.use_cls_tokens:
@@ -371,8 +380,8 @@ class ViT2D(nn.Module):
             cls_token = self.cls_token_dec.repeat(x.shape[0], 1, 1)
             x = torch.cat([cls_token, x], dim=1)
 
-            # Add PE
-        x = self.pos_embedding_dec(x)
+        # Add PE
+        #x = self.pos_embedding_dec(x)
 
         if self.use_registers:
             r = repeat(self.register_tokens_dec, 'n d -> b n d', b=x.shape[0])
@@ -392,6 +401,15 @@ class ViT2D(nn.Module):
             x = x[:, 1:]
 
         x = self.decoder_rearrange(x)
+
+        # Add a convolutional layer
+        if self.use_decoder_conv_layers:
+            x = self.conv1(x)
+            x = nn.ReLU()(x)
+
+            # Optionally, add a second convolutional layer
+            x = self.conv2(x)
+            x = nn.ReLU()(x)
 
         return x
 

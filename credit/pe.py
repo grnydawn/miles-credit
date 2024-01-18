@@ -110,6 +110,7 @@ class SurfacePosEmb2D(nn.Module):
         y = y.flatten()[:, None] * omega[None, :]
         x = x.flatten()[:, None] * omega[None, :]
         pe = torch.cat((x.sin(), x.cos(), y.sin(), y.cos()), dim=1)
+        #pe = F.normalize(pe, dim=1)
 
         # Add an additional row for the CLS token
         if cls_token:

@@ -1,5 +1,4 @@
 import warnings
-from torch.optim.lr_scheduler import ReduceLROnPlateau, LambdaLR
 from torch.utils.data.distributed import DistributedSampler
 import torch
 import torch.distributed as dist
@@ -41,7 +40,7 @@ from torchvision import transforms
 from credit.vit2d import ViT2D, Attention, FeedForward
 from credit.loss import TotalLoss2D
 from credit.data import ERA5Dataset, ToTensor, NormalizeState, DistributedSequentialDataset
-from credit.scheduler import lr_lambda_phase1
+from credit.scheduler import load_scheduler
 from credit.trainer import Trainer
 from credit.metrics import anomaly_correlation_coefficient as ACC
 from credit.pbs import launch_script, launch_script_mpi
@@ -173,22 +172,15 @@ def load_model_and_optimizer(conf, model, device):
 
     start_epoch = conf['trainer']['start_epoch']
     save_loc = conf['save_loc']
-    learning_rate = conf['trainer']['learning_rate']
-    weight_decay = conf['trainer']['weight_decay']
+    learning_rate = float(conf['trainer']['learning_rate'])
+    weight_decay = float(conf['trainer']['weight_decay'])
     amp = conf['trainer']['amp']
+    load_weights = False if 'load_weights' not in conf['trainer'] else conf['trainer']['load_weights']
 
     #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
-    if start_epoch == 0:  # Loaded after loading model weights when reloading
+    if start_epoch == 0 and not load_weights:  # Loaded after loading model weights when reloading
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
-        if conf['trainer']['epochs'] > 1:  # This is here to use the raw learning rate proposed by ECHO
-            scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda_phase1)
-        else:
-            scheduler = ReduceLROnPlateau(
-                optimizer,
-                patience=0,
-                min_lr=0.001 * learning_rate,
-                verbose=True
-            )
+        scheduler = load_scheduler(optimizer, conf)
         scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
 
     # load optimizer and grad scaler states
@@ -239,10 +231,11 @@ def load_model_and_optimizer(conf, model, device):
             optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
-        scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda_phase1)
+        scheduler = load_scheduler(optimizer, conf)
+        #scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda_phase1)
         scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
-
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        if scheduler is not None:
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         scaler.load_state_dict(checkpoint['scaler_state_dict'])
 
     return model, optimizer, scheduler, scaler

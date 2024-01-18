@@ -1,15 +1,16 @@
-import torch
-import torch.fft
-import torch.distributed as dist
-from collections import defaultdict
-import numpy as np
-import tqdm
 import gc
-import os
 import logging
+import os
+from collections import defaultdict
+
+import numpy as np
 import pandas as pd
-from torch.cuda.amp import autocast
+import torch
+import torch.distributed as dist
 import torch.distributed.checkpoint as DCP
+import torch.fft
+import tqdm
+from torch.cuda.amp import autocast
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import StateDictType
 from torch.utils.data import IterableDataset
@@ -61,16 +62,19 @@ class Trainer:
         amp = conf['trainer']['amp']
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
         teacher_forcing_ratio = conf['trainer']['teacher_forcing_ratio']
+        rollout_p = 1.0 if 'stop_rollout' not in conf['trainer'] else conf['trainer']['stop_rollout']
 
         results_dict = defaultdict(list)
 
         # update the learning rate if epoch-by-epoch updates
-        if conf['trainer']['epochs'] > 1:  # This is here to use the raw learning rate proposed by ECHO
+        if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "lambda":
             scheduler.step()
 
         # set up a custom tqdm
         if isinstance(trainloader.dataset, IterableDataset):
-            batches_per_epoch = history_len * batches_per_epoch  # Your logic here
+            # we sample forecast termination with probability p during training
+            trainloader.dataset.set_rollout_prob(rollout_p)
+            batches_per_epoch = int(trainloader.dataset.estimate_average_length() * batches_per_epoch)
         else:
             batches_per_epoch = (
                 batches_per_epoch if 0 < batches_per_epoch < len(trainloader) else len(trainloader)
@@ -136,83 +140,101 @@ class Trainer:
 
             else:  # multi-step training
 
-                # update vae (generator)
-                batch = next(dl)
+                loss, commit_loss = 0.0, 0.0
+                stop_forecast = False
 
                 with autocast(enabled=amp):
 
-                    for i in batch["forecast_hour"]:
+                    while not stop_forecast:
 
-                        loss, commit_loss = 0.0, 0.0
+                        batch = next(dl)
 
-                        # The model's output y1_pred becomes the new x for the next time step
-                        if i == 0:  # use true x -- initial condition time-step
-                            x_atmo = batch["x"][0:1]
-                            x_surf = batch["x_surf"][0:1]
-                            x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
-                        elif torch.rand(1).item() < teacher_forcing_ratio:  # Teacher forcing - use true x input with probability p
-                            x_atmo = batch["x"][i % len(batch["forecast_hour"])].unsqueeze(0)
-                            x_surf = batch["x_surf"][i % len(batch["forecast_hour"])].unsqueeze(0)
-                            x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
-                        else:  # use models predictions
-                            x = y_pred.detach()
+                        for i in batch["forecast_hour"]:
+                            if i == 0:  # use true x -- initial condition time-step
+                                x_atmo = batch["x"][0:1]
+                                x_surf = batch["x_surf"][0:1]
+                                x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
+                            elif torch.rand(1).item() < teacher_forcing_ratio:  # Teacher forcing - use true x input with probability p
+                                x_atmo = batch["x"][i % len(batch["forecast_hour"])].unsqueeze(0)
+                                x_surf = batch["x_surf"][i % len(batch["forecast_hour"])].unsqueeze(0)
+                                x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
+                            else:  # use models predictions
+                                x = y_pred
 
-                        if self.model.use_codebook:
-                            y_pred, cm_loss = self.model(x)
-                            commit_loss += cm_loss
-                        else:
-                            y_pred = self.model(x)
+                            if self.model.use_codebook:
+                                y_pred, cm_loss = self.model(x)
+                                commit_loss += cm_loss
+                            else:
+                                y_pred = self.model(x)
 
-                        y_atmo = batch["y"][i % len(batch["forecast_hour"])]
-                        y_surf = batch["y_surf"][i % len(batch["forecast_hour"])]
-                        y = self.model.concat_and_reshape(y_atmo.unsqueeze(0), y_surf.unsqueeze(0)).to(self.device)
-                        
-                        loss += criterion(y.to(y_pred.dtype), y_pred).mean() + commit_loss
+                            y_atmo = batch["y"][i % len(batch["forecast_hour"])]
+                            y_surf = batch["y_surf"][i % len(batch["forecast_hour"])]
+                            y = self.model.concat_and_reshape(y_atmo.unsqueeze(0), y_surf.unsqueeze(0)).to(self.device)
 
-                        # Metrics
-                        for name, metric in metrics.items():
-                            value = torch.Tensor([metric(y_pred.float(), y.float())]).cuda(self.device, non_blocking=True)         
-                            if distributed:
-                                dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
-                            results_dict[f"train_{name}"].append(value[0].item())
+                            loss += criterion(y.to(y_pred.dtype), y_pred).mean() + commit_loss
 
-                        if np.random.uniform() > conf['trainer']['stop_rollout']: # probability of stopping a forecast rollout early
-                            break
-                    
-                # only update parameters once we finish a forecast
-                if conf["data"]["history_len"] in batch["forecast_hour"]:
-                    # scale, accumulate, backward here
+                            # We dont need grad info any longer from here
+                            y_pred = y_pred.detach()
 
-                    scaler.scale(loss / history_len).backward()
-                    accum_log(logs, {'loss': loss.item() / history_len})
+                            # Metrics
+                            for name, metric in metrics.items():
+                                value = torch.Tensor([metric(y_pred.float(), y.float())]).cuda(self.device, non_blocking=True)
+                                if distributed:
+                                    dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
+                                results_dict[f"train_{name}"].append(value[0].item())
 
-                    if distributed:
-                        torch.distributed.barrier()
+                            # Explicitly delete tensors if they exist and perform garbage collection
+                            for var_name in ["x", "x_atmo", "x_surf", "y", "y_atmo", "y_surf"]:
+                                var = locals().get(var_name)
+                                if var is not None:
+                                    del var
+                            torch.cuda.empty_cache()
+                            gc.collect()
 
-                    scaler.step(optimizer)
-                    scaler.update()
-                    optimizer.zero_grad()
+                            #  probability of stopping a forecast rollout early
+                            if batch['stop_forecast']:
+                                stop_forecast = True
+                                break
+
+                            if conf["data"]["history_len"] == i:
+                                stop_forecast = True
+                                break
+
+                # scale, accumulate, backward
+                scaler.scale(loss / history_len).backward()
+                accum_log(logs, {'loss': loss.item() / history_len})
+
+                if distributed:
+                    torch.distributed.barrier()
+
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
+
+                # move on to the next sample
+                while batch["forecast_hour"] != conf["data"]["history_len"]:
+                    batch = next(dl)
 
             batch_loss = torch.Tensor([logs["loss"]]).cuda(self.device)
             if distributed:
                 dist.all_reduce(batch_loss, dist.ReduceOp.AVG, async_op=False)
             results_dict["train_loss"].append(batch_loss[0].item())
-
-            # step the lr scheduler if its batch-by-batch
-            # scheduler.step()
+            if history_len > 1:
+                results_dict["train_forecast_len"].append(i+1)
 
             # agg the results
 
-            to_print = "Epoch: {} train_loss: {:.6f} train_acc: {:.6f}".format(
+            to_print = "Epoch: {} train_loss: {:.6f} train_acc: {:.6f} forecast_len {:.6}".format(
                 epoch,
                 np.mean(results_dict["train_loss"]),
-                np.mean(results_dict["train_acc"])
+                np.mean(results_dict["train_acc"]),
+                np.mean(results_dict["train_forecast_len"])
             )
-            batch_group_generator.update(1)
             to_print += " lr: {:.12f}".format(optimizer.param_groups[0]["lr"])
+            batch_group_generator.update(1)
             batch_group_generator.set_description(to_print)
 
-        # Shutdown the progbar
+        #  Shutdown the progbar
         batch_group_generator.close()
 
         # clear the cached memory from the gpu
@@ -240,7 +262,7 @@ class Trainer:
 
         # set up a custom tqdm
         if isinstance(valid_loader.dataset, IterableDataset):
-            valid_batches_per_epoch = history_len * valid_batches_per_epoch  # Your logic here
+            valid_batches_per_epoch = history_len * valid_batches_per_epoch
         else:
             valid_batches_per_epoch = (
                 valid_batches_per_epoch if 0 < valid_batches_per_epoch < len(valid_loader) else len(valid_loader)
@@ -355,8 +377,6 @@ class Trainer:
         save_loc = conf['save_loc']
         start_epoch = conf['trainer']['start_epoch']
         epochs = conf['trainer']['epochs']
-        if train_loader.sampler is not None:
-            train_loader.sampler.set_epoch(start_epoch)
 
         # Reload the results saved in the training csv if continuing to train
         if start_epoch == 0:
@@ -370,6 +390,13 @@ class Trainer:
                 results_dict[key] = list(saved_results[key])
 
         for epoch in range(start_epoch, epochs):
+
+            if not isinstance(train_loader.dataset, IterableDataset):
+                train_loader.sampler.set_epoch(epoch)
+            else:
+                train_loader.dataset.set_epoch(epoch)
+                # Additionally set the rollout probability
+                #train_loader.dataset.set_rollout_prob(p_epoch)
 
             ############
             #
@@ -479,6 +506,11 @@ class Trainer:
             results_dict["lr"].append(optimizer.param_groups[0]["lr"])
 
             df = pd.DataFrame.from_dict(results_dict).reset_index()
+
+            # update the learning rate if epoch-by-epoch updates
+
+            if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "plateau":
+                scheduler.step(results_dict[f"valid_acc"][-1])
 
 #             # Save the best model so far
 #             if not trial:
