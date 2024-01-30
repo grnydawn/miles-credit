@@ -2,6 +2,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import xarray as xr
+import numpy as np
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 def load_loss(loss_type, reduction='mean'):
@@ -224,5 +229,81 @@ class TotalLoss2D(nn.Module):
         if not self.validation and self.use_spectral_loss:
             # Add the spectral loss to the overall loss
             loss += self.spectral_lambda_reg * self.spectral_loss_surface(target, pred).mean()
+
+        return loss
+
+
+class VariableTotalLoss2D(nn.Module):
+    def __init__(self, conf, validation=False):
+
+        super(VariableTotalLoss2D, self).__init__()
+
+        self.conf = conf
+        self.training_loss = conf["loss"]["training_loss"]
+
+        logger.info(f"Loaded {'mae' if validation else self.training_loss} as the {'validation' if validation else 'training'} loss")
+
+        lat_file = conf['loss']['latitude_weights']
+        atmos_vars = conf['data']['variables']
+        surface_vars = conf['data']['surface_variables']
+        levels = conf['model']['frames']
+
+        self.vars = [f"{v}_{k}" for v in atmos_vars for k in range(levels)]
+        self.vars += surface_vars
+
+        self.lat_weights = None
+        if conf["loss"]["use_latitude_weights"]:
+            lat = xr.open_dataset(lat_file)["latitude"].values
+            w_lat = np.cos(np.deg2rad(lat))
+            w_lat = w_lat / w_lat.mean()
+            self.lat_weights = torch.from_numpy(w_lat).unsqueeze(0).unsqueeze(-1)
+            logger.info(" ... loaded latitude weights")
+
+        self.var_weights = None
+        if conf["loss"]["use_variable_weights"]:
+            var_weights = [value if isinstance(value, list) else [value] for value in conf["loss"]["variable_weights"].values()]
+            var_weights = [item for sublist in var_weights for item in sublist]
+            self.var_weights = torch.from_numpy(var_weights).unsqueeze(0).unsqueeze(-1)
+            logger.info(" ... loaded variable weights")
+
+        self.use_spectral_loss = conf["loss"]["use_spectral_loss"]
+        if self.use_spectral_loss:
+            self.spectral_lambda_reg = conf["loss"]["spectral_lambda_reg"]
+            self.spectral_loss_surface = SpectralLoss2D(
+                wavenum_init=conf["loss"]["spectral_wavenum_init"],
+                reduction='none'
+            )
+            logger.info(" ... loaded spectral loss")
+
+        self.validation = validation
+        if self.validation:
+            self.loss_fn = nn.L1Loss(reduction='none')
+        else:
+            self.loss_fn = load_loss(self.training_loss, reduction='none')
+
+    def forward(self, target, pred):
+
+        # User defined loss
+
+        loss = self.loss_fn(target, pred)
+
+        # Add the spectral loss
+
+        if not self.validation and self.use_spectral_loss:
+            loss += self.spectral_lambda_reg * self.spectral_loss_surface(target, pred)
+
+        loss_dict = {}
+        for i, var in enumerate(self.vars):
+
+            loss_dict[f"loss_{var}"] = loss[:, i]
+
+            if self.lat_weights is not None:
+                loss_dict[f"loss_{var}"] = torch.mul(loss_dict[f"loss_{var}"], self.lat_weights.to(target.device))
+            if self.var_weights is not None:
+                loss_dict[f"loss_{var}"] = torch.mul(loss_dict[f"loss_{var}"], self.var_weights.to(target.device))
+
+            loss_dict[f"loss_{var}"] = loss_dict[f"loss_{var}"].mean()
+
+        loss = torch.mean(torch.stack([loss for loss in loss_dict.values()]))
 
         return loss

@@ -17,6 +17,7 @@ import glob
 import os
 import sys
 import yaml
+import optuna
 
 from torch.cuda.amp import GradScaler
 from torch.distributed.fsdp import StateDictType
@@ -37,12 +38,13 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
    apply_activation_checkpointing,
 )
 from torchvision import transforms
-from credit.vit2d import ViT2D, Attention, FeedForward
-from credit.loss import TotalLoss2D
+from credit.vit2d import ViT2D
+from credit.rvt import RViT
+from credit.loss import VariableTotalLoss2D
 from credit.data import ERA5Dataset, ToTensor, NormalizeState, DistributedSequentialDataset
 from credit.scheduler import load_scheduler
 from credit.trainer import Trainer
-from credit.metrics import anomaly_correlation_coefficient as ACC
+from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything
 
@@ -115,6 +117,11 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
 def distributed_model_wrapper(conf, vae, device):
 
     if conf["trainer"]["mode"] == "fsdp":
+
+        if "use_rotary" in conf["model"]:
+            from credit.rvt import Attention, FeedForward
+        else:
+            from credit.vit2d import Attention, FeedForward
 
         # Define two policies
         auto_wrap_policy1 = functools.partial(
@@ -223,16 +230,17 @@ def load_model_and_optimizer(conf, model, device):
             logging.info(f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
             model.module.load_state_dict(checkpoint["model_state_dict"])
             optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
-            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            if 'load_optimizer' in conf['trainer'] and conf['trainer']['load_optimizer']:
+                optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
         else:
             logging.info(f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
             model.load_state_dict(checkpoint["model_state_dict"])
             optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
-            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+            if 'load_optimizer' in conf['trainer'] and conf['trainer']['load_optimizer']:
+                optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
         scheduler = load_scheduler(optimizer, conf)
-        #scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda_phase1)
         scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
         if scheduler is not None:
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
@@ -306,7 +314,14 @@ def trainer(rank, world_size, conf, trial=False):
 
     # model
 
-    vae = ViT2D(**conf['model'])
+    if 'use_rotary' in conf['model'] and conf['model']['use_rotary']:
+        vae = RViT(**conf['model'])
+    else:
+        if 'use_rotary' in conf['model']:
+            del conf['model']['use_rotary']
+            del conf['model']['use_ds_conv']
+            del conf['model']['use_glu']
+        vae = ViT2D(**conf['model'])
 
     num_params = sum(p.numel() for p in vae.parameters())
     if rank == 0:
@@ -328,17 +343,16 @@ def trainer(rank, world_size, conf, trial=False):
 
     # Train and validation losses
 
-    train_criterion = TotalLoss2D(conf)
-    valid_criterion = TotalLoss2D(conf, validation=True)
+    train_criterion = VariableTotalLoss2D(conf)
+    valid_criterion = VariableTotalLoss2D(conf, validation=True)
 
     # Set up some metrics
 
-    metrics = {"acc": ACC, "mae": torch.nn.L1Loss()}
+    metrics = LatWeightedMetrics(conf)
 
     # Initialize a trainer object
 
-    trainer = Trainer(model, module=(conf["trainer"]["mode"] == "ddp"))
-    trainer.device = device
+    trainer = Trainer(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
 
     # Fit the model
 
@@ -369,12 +383,16 @@ class Objective(BaseObjective):
             return trainer(0, 1, conf, trial=trial)
 
         except Exception as E:
-            if "CUDA" in str(E):
+            if "CUDA" in str(E) or "non-singleton" in str(E):
                 logging.warning(
                     f"Pruning trial {trial.number} due to CUDA memory overflow: {str(E)}."
                 )
-                raise E
-                #raise optuna.TrialPruned()
+                raise optuna.TrialPruned()
+            elif "non-singleton" in str(E):
+                logging.warning(
+                    f"Pruning trial {trial.number} due to shape mismatch: {str(E)}."
+                )
+                raise optuna.TrialPruned()
             else:
                 logging.warning(f"Trial {trial.number} failed due to error: {str(E)}.")
                 raise E

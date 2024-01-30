@@ -1,96 +1,49 @@
 import torch
 from torch import nn
-import torch.nn.functional as F
-from einops import rearrange
 
 
-class Attention(nn.Module):
-    def __init__(self, dim, heads=8, dim_head=64, dropout=0.):
+class ChannelAttention(nn.Module):
+    def __init__(self, channel, reduction=16):
+        super(ChannelAttention, self).__init__()
+        self.avg_pool = nn.AdaptiveAvgPool2d(1)
+        self.max_pool = nn.AdaptiveMaxPool2d(1)
+        self.fc = nn.Sequential(
+            nn.Conv2d(channel, channel // reduction, 1, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(channel // reduction, channel, 1, bias=False)
+        )
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        avg_out = self.fc(self.avg_pool(x))
+        max_out = self.fc(self.max_pool(x))
+        out = avg_out + max_out
+        return x * self.sigmoid(out)
+
+
+class SpatialAttention(nn.Module):
+    def __init__(self, kernel_size=7):
+        super(SpatialAttention, self).__init__()
+        self.conv = nn.Conv2d(2, 1, kernel_size, padding=kernel_size//2, bias=False)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        avg_out = torch.mean(x, dim=1, keepdim=True)
+        max_out, _ = torch.max(x, dim=1, keepdim=True)
+        out = torch.concat([avg_out, max_out], dim=1)
+        out = self.conv(out)
+        return x * self.sigmoid(out)
+
+
+class CBAM(nn.Module):
+    def __init__(self, channel, reduction=16, kernel_size=7):
         super().__init__()
-        inner_dim = dim_head * heads
-        project_out = not (heads == 1 and dim_head == dim)
-
-        self.heads = heads
-        self.scale = dim_head ** -0.5
-
-        self.norm = nn.LayerNorm(dim)
-        self.attend = nn.Softmax(dim=-1)
-        self.dropout = nn.Dropout(dropout)
-
-        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias=False)
-
-        self.to_out = nn.Sequential(
-            nn.Linear(inner_dim, dim),
-            nn.Dropout(dropout)
-        ) if project_out else nn.Identity()
+        self.ca = ChannelAttention(channel, reduction)
+        self.sa = SpatialAttention(kernel_size)
 
     def forward(self, x):
-        x = self.norm(x)
-        qkv = self.to_qkv(x).chunk(3, dim=-1)
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.heads), qkv)
-
-        # dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
-
-        # attn = self.attend(dots)
-        # attn = self.dropout(attn)
-
-        # out = torch.matmul(attn, v)
-
-        with torch.backends.cuda.sdp_kernel(
-                enable_flash=True,
-                enable_math=False,
-                enable_mem_efficient=True
-        ):
-            out = F.scaled_dot_product_attention(
-                q, k, v,
-                attn_mask=None,
-                dropout_p=0.0
-            )
-
-        out = rearrange(out, 'b h n d -> b n (h d)')
-        return self.to_out(out)
-
-
-class TokenizationAggregation(nn.Module):
-    def __init__(self, channels, patch_height, patch_width, emb_dim):
-        super(TokenizationAggregation, self).__init__()
-
-        self.patch_height = patch_height
-        self.patch_width = patch_width
-
-        self.tokenization = nn.Linear(patch_height * patch_width, emb_dim)
-        self.aggregation = Attention(emb_dim)
-        self.query = nn.Parameter(torch.randn(emb_dim))
-
-    def forward(self, x):
-        B, V, H, W = x.shape
-
-        token_height = H // self.patch_height
-        token_width = W // self.patch_width
-
-        x = x.unfold(2, self.patch_height, self.patch_height).unfold(3, self.patch_width, self.patch_width)
-        x = x.contiguous().view(B, V, token_height, token_width, -1)
-
-        x = x.permute(0, 2, 3, 1, 4)  # Adjust permutation
-        x = x.reshape(B, token_height, token_width, V, -1)
-
-        # Linearly embed each variable independently
-        x = self.tokenization(x)
-
-        # Reshape to include token dimensions
-        x = x.reshape(B, token_height, token_width, V, -1)
-
-        B, N, M, V, D = x.shape
-
-        # Average over the color channels
-        x = x.mean(dim=3)
-
-        # Flatten the token and variable dimensions for the attention mechanism
-        x = x.reshape(B, N * M, D)
-
-        # Attention mechanism using the Attention class
-        x = self.aggregation(x)
-
+        x = self.ca(x)
+        x = self.sa(x)
         return x
 
 

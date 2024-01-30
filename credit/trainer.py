@@ -35,10 +35,11 @@ def accum_log(log, new_logs):
 
 class Trainer:
 
-    def __init__(self, model, module=False):
+    def __init__(self, model, rank, module=False):
         super(Trainer, self).__init__()
         self.model = model
-        self.device = None
+        self.rank = rank
+        self.device = torch.device(f"cuda:{rank % torch.cuda.device_count()}") if torch.cuda.is_available() else torch.device("cpu")
 
         if module:
             self.model = self.model.module
@@ -66,7 +67,7 @@ class Trainer:
 
         results_dict = defaultdict(list)
 
-        # update the learning rate if epoch-by-epoch updates
+        # update the learning rate if epoch-by-epoch updates that dont depend on a metric
         if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "lambda":
             scheduler.step()
 
@@ -88,7 +89,7 @@ class Trainer:
 
         dl = cycle(trainloader)
 
-        for steps in batch_group_generator:
+        for steps in range(batches_per_epoch):
 
             logs = {}
 
@@ -119,8 +120,9 @@ class Trainer:
                         loss = criterion(y.to(y_pred.dtype), y_pred)
 
                         # Metrics
-                        for name, metric in metrics.items():
-                            value = torch.Tensor([metric(y_pred.float(), y.float())]).cuda(self.device, non_blocking=True)
+                        metrics_dict = metrics(y_pred.float(), y.float())
+                        for name, value in metrics_dict.items():
+                            value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
                             if distributed:
                                 dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
                             results_dict[f"train_{name}"].append(value[0].item())
@@ -177,8 +179,9 @@ class Trainer:
                             y_pred = y_pred.detach()
 
                             # Metrics
-                            for name, metric in metrics.items():
-                                value = torch.Tensor([metric(y_pred.float(), y.float())]).cuda(self.device, non_blocking=True)
+                            metrics_dict = metrics(y_pred.float(), y.float())
+                            for name, value in metrics_dict.items():
+                                value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
                                 if distributed:
                                     dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
                                 results_dict[f"train_{name}"].append(value[0].item())
@@ -201,6 +204,7 @@ class Trainer:
                                 break
 
                 # scale, accumulate, backward
+
                 scaler.scale(loss / history_len).backward()
                 accum_log(logs, {'loss': loss.item() / history_len})
 
@@ -212,6 +216,7 @@ class Trainer:
                 optimizer.zero_grad()
 
                 # move on to the next sample
+
                 while batch["forecast_hour"] != conf["data"]["history_len"]:
                     batch = next(dl)
 
@@ -221,18 +226,21 @@ class Trainer:
             results_dict["train_loss"].append(batch_loss[0].item())
             if history_len > 1:
                 results_dict["train_forecast_len"].append(i+1)
+            else:
+                results_dict["train_forecast_len"].append(1)
 
             # agg the results
-
-            to_print = "Epoch: {} train_loss: {:.6f} train_acc: {:.6f} forecast_len {:.6}".format(
+            to_print = "Epoch: {} train_loss: {:.6f} train_acc: {:.6f} train_mae: {:.6f} forecast_len {:.6}".format(
                 epoch,
                 np.mean(results_dict["train_loss"]),
                 np.mean(results_dict["train_acc"]),
+                np.mean(results_dict["train_mae"]),
                 np.mean(results_dict["train_forecast_len"])
             )
             to_print += " lr: {:.12f}".format(optimizer.param_groups[0]["lr"])
-            batch_group_generator.update(1)
-            batch_group_generator.set_description(to_print)
+            if self.rank == 0:
+                batch_group_generator.update(1)
+                batch_group_generator.set_description(to_print)
 
         #  Shutdown the progbar
         batch_group_generator.close()
@@ -292,8 +300,9 @@ class Trainer:
                     loss = criterion(y.to(y_pred.dtype), y_pred)
 
                     # Metrics
-                    for name, metric in metrics.items():
-                        value = torch.Tensor([metric(y_pred.float(), y.float())]).cuda(self.device, non_blocking=True)
+                    metrics_dict = metrics(y_pred.float(), y.float())
+                    for name, value in metrics_dict.items():
+                        value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
                         if distributed:
                             dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
                         results_dict[f"valid_{name}"].append(value[0].item())
@@ -325,8 +334,9 @@ class Trainer:
                         loss = criterion(y.to(y_pred.dtype), y_pred)
 
                         # Metrics
-                        for name, metric in metrics.items():
-                            value = torch.Tensor([metric(y_pred.float(), y.float())]).cuda(self.device, non_blocking=True)
+                        metrics_dict = metrics(y_pred.float(), y.float())
+                        for name, value in metrics_dict.items():
+                            value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
                             if distributed:
                                 dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
                             results_dict[f"valid_{name}"].append(value[0].item())
@@ -337,13 +347,15 @@ class Trainer:
                         results_dict["valid_loss"].append(batch_loss[0].item())
 
                 # print to tqdm
-                to_print = "Epoch: {} valid_loss: {:.6f} valid_acc: {:.6f}".format(
+                to_print = "Epoch: {} valid_loss: {:.6f} valid_acc: {:.6f} valid_mae: {:.6f}".format(
                     epoch,
                     np.mean(results_dict["valid_loss"]),
-                    np.mean(results_dict["valid_acc"])
+                    np.mean(results_dict["valid_acc"]),
+                    np.mean(results_dict["valid_mae"])
                 )
-                batch_group_generator.update(1)
-                batch_group_generator.set_description(to_print)
+                if self.rank == 0:
+                    batch_group_generator.update(1)
+                    batch_group_generator.set_description(to_print)
 
                 if k >= valid_batches_per_epoch and k > 0:
                     break
