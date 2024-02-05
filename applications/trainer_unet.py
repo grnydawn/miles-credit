@@ -33,9 +33,9 @@ from credit.loss import TotalLoss2D
 from credit.data import ERA5Dataset, ToTensor, NormalizeState, DistributedSequentialDataset
 from credit.scheduler import lr_lambda_phase1
 from credit.trainer import Trainer
-from credit.metrics import anomaly_correlation_coefficient as ACC
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything
+from credit.metrics import LatWeightedMetrics
 
 
 warnings.filterwarnings("ignore")
@@ -77,6 +77,25 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
             ]),
         )
         sampler = None
+        # dataset = SequentialDataset(
+        #     filenames=files,
+        #     history_len=history_len,
+        #     forecast_len=forecast_len,
+        #     skip_periods=time_step,
+        #     random_forecast=True,
+        #     transform=transforms.Compose([
+        #         NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"]),
+        #         ToTensor(history_len=history_len, forecast_len=forecast_len),
+        #     ]),
+        # )
+        # sampler = DistributedSampler(
+        #     dataset,
+        #     num_replicas=world_size,
+        #     rank=rank,
+        #     seed=seed,
+        #     shuffle=shuffle,
+        #     drop_last=True
+        # )
         logging.info(
             f"{name} (forecast length = {forecast_len}): Loaded a distributed sequential ERA dataset which contains its own distributed sampler"
         )
@@ -150,7 +169,7 @@ def load_model_and_optimizer(conf, model, device):
 
     # load optimizer and grad scaler states
     else:
-        ckpt = f"{save_loc}/checkpoint.pt" if conf["trainer"]["mode"] != "ddp" else f"{save_loc}/checkpoint_{device}.pt"
+        ckpt = f"{save_loc}/checkpoint.pt" #if conf["trainer"]["mode"] != "ddp" else f"{save_loc}/checkpoint_{device}.pt"
         checkpoint = torch.load(ckpt, map_location=device)
 
         if conf["trainer"]["mode"] == "fsdp":
@@ -223,8 +242,6 @@ def trainer(rank, world_size, conf, trial=False):
     valid_batch_size = conf['trainer']['valid_batch_size']
     thread_workers = conf['trainer']['thread_workers']
     valid_thread_workers = conf['trainer']['valid_thread_workers'] if 'valid_thread_workers' in conf['trainer'] else thread_workers
-    history_len = conf["data"]["history_len"]
-    forecast_len = conf["data"]["forecast_len"]
 
     # datasets (zarr reader)
 
@@ -298,12 +315,12 @@ def trainer(rank, world_size, conf, trial=False):
 
     # Set up some metrics
 
-    metrics = {"acc": ACC, "mae": torch.nn.L1Loss()}
+    #metrics = {"acc": ACC, "mae": torch.nn.L1Loss()}
+    metrics = LatWeightedMetrics(conf)
 
     # Initialize a trainer object
 
-    trainer = Trainer(model, module=(conf["trainer"]["mode"] == "ddp"))
-    trainer.device = device
+    trainer = Trainer(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
 
     # Fit the model
 
