@@ -64,7 +64,7 @@ class Trainer:
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
         teacher_forcing_ratio = conf['trainer']['teacher_forcing_ratio']
         rollout_p = 1.0 if 'stop_rollout' not in conf['trainer'] else conf['trainer']['stop_rollout']
-
+        trainloader.dataset.set_rollout_prob(rollout_p)
         results_dict = defaultdict(list)
 
         # update the learning rate if epoch-by-epoch updates that dont depend on a metric
@@ -258,7 +258,7 @@ class Trainer:
 
         # set up a custom tqdm
         if isinstance(valid_loader.dataset, IterableDataset):
-            valid_batches_per_epoch = history_len * valid_batches_per_epoch
+            valid_batches_per_epoch = valid_batches_per_epoch
         else:
             valid_batches_per_epoch = (
                 valid_batches_per_epoch if 0 < valid_batches_per_epoch < len(valid_loader) else len(valid_loader)
@@ -268,6 +268,7 @@ class Trainer:
             range(valid_batches_per_epoch), total=valid_batches_per_epoch, leave=True
         )
 
+        stop_forecast = False
         with torch.no_grad():
             for k, batch in enumerate(valid_loader):
 
@@ -303,24 +304,28 @@ class Trainer:
                 else:  # multi-step
 
                     for i in batch["forecast_hour"]:
-                        # The model's output y1_pred becomes the new x for the next time step
-                        if i == 0:
+
+                        if batch["forecast_hour"] == 0:  # use true x -- initial condition time-step
                             x_atmo = batch["x"][0:1]
                             x_surf = batch["x_surf"][0:1]
                             x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
-                        else:
-                            x = y_pred.detach()
+                        else:  # use model's predictions
+                            x = y_pred
 
+                        commit_loss = 0
                         if self.model.use_codebook:
                             y_pred, cm_loss = self.model(x)
+                            commit_loss += cm_loss
                         else:
                             y_pred = self.model(x)
 
-                        if batch['stop_forecast'] or conf["data"]["history_len"] == i:
-                            y_atmo = batch["y"][i % len(batch["forecast_hour"])]
-                            y_surf = batch["y_surf"][i % len(batch["forecast_hour"])]
-                            y = self.model.concat_and_reshape(y_atmo.unsqueeze(0), y_surf.unsqueeze(0)).to(self.device)
-                            loss = criterion(y.to(y_pred.dtype), y_pred)
+                        # stop after user-defined number of steps
+                        if batch["forecast_hour"] == (history_len - 1):
+                            y_atmo = batch["y"][i % len(batch["forecast_hour"])].unsqueeze(0)
+                            y_surf = batch["y_surf"][i % len(batch["forecast_hour"])].unsqueeze(0)
+                            y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
+
+                            loss = criterion(y.to(y_pred.dtype), y_pred).mean() + commit_loss
 
                             # Metrics
                             metrics_dict = metrics(y_pred.float(), y.float())
@@ -329,12 +334,20 @@ class Trainer:
                                 if distributed:
                                     dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
                                 results_dict[f"valid_{name}"].append(value[0].item())
-
-                            batch_loss = torch.Tensor([loss.item()]).cuda(self.device)
-                            if distributed:
-                                torch.distributed.barrier()
-                            results_dict["valid_loss"].append(batch_loss[0].item())
+                            stop_forecast = True
                             break
+
+                        else:
+                            y_pred = y_pred.detach()
+
+                if not stop_forecast:
+                    continue
+
+                batch_loss = torch.Tensor([loss.item() / history_len]).cuda(self.device)
+                if distributed:
+                    torch.distributed.barrier()
+                results_dict["valid_loss"].append(batch_loss[0].item())
+                stop_forecast = False
 
                 # print to tqdm
                 to_print = "Epoch: {} valid_loss: {:.6f} valid_acc: {:.6f} valid_mae: {:.6f}".format(
@@ -347,7 +360,7 @@ class Trainer:
                     batch_group_generator.update(1)
                     batch_group_generator.set_description(to_print)
 
-                if k >= valid_batches_per_epoch and k > 0:
+                if k // history_len >= valid_batches_per_epoch and k > 0:
                     break
 
         # Shutdown the progbar
@@ -374,6 +387,7 @@ class Trainer:
         scaler,
         scheduler,
         metrics,
+        rollout_scheduler=None,
         trial=False
     ):
         save_loc = conf['save_loc']
@@ -393,12 +407,15 @@ class Trainer:
 
         for epoch in range(start_epoch, epochs):
 
+            logging.info(f"Beginning epoch {epoch}")
+
             if not isinstance(train_loader.dataset, IterableDataset):
                 train_loader.sampler.set_epoch(epoch)
             else:
                 train_loader.dataset.set_epoch(epoch)
-                # Additionally set the rollout probability
-                #train_loader.dataset.set_rollout_prob(p_epoch)
+                if rollout_scheduler is not None:
+                    conf['trainer']['stop_rollout'] = rollout_scheduler(epoch, epochs)
+                    train_loader.dataset.set_rollout_prob(conf['trainer']['stop_rollout'])
 
             ############
             #
@@ -512,7 +529,7 @@ class Trainer:
             # update the learning rate if epoch-by-epoch updates
 
             if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "plateau":
-                scheduler.step(results_dict[f"valid_acc"][-1])
+                scheduler.step(results_dict["valid_acc"][-1])
 
 #             # Save the best model so far
 #             if not trial:

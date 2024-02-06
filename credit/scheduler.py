@@ -151,6 +151,31 @@ class CosineAnnealingWarmupRestarts(_LRScheduler):
             param_group['lr'] = lr
 
 
+def annealed_probability(epoch, max_epochs=100, min_probability=0.01, max_probability=1.0):
+    """
+    Anneal the termination probability from 1 to a small value.
+
+    Parameters:
+    - epoch: The current epoch.
+    - max_epochs: The maximum number of epochs for annealing.
+    - min_probability: The minimum termination probability.
+    - max_probability: The maximum termination probability.
+
+    Returns:
+    - termination_probability: The annealed termination probability.
+    """
+
+    # Linear annealing schedule
+    termination_probability = 1.0 - (epoch / max_epochs) * (1.0 - min_probability)
+
+    # Ensure termination_probability is between min_probability and max_probability
+    termination_probability = max(termination_probability, min_probability)
+    termination_probability = min(termination_probability, max_probability)
+
+    return termination_probability
+
+
+
 if __name__ == "__main__":
 
     import matplotlib.pyplot as plt

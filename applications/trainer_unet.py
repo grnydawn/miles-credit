@@ -31,7 +31,7 @@ from torchvision import transforms
 from credit.unet import SegmentationModel
 from credit.loss import TotalLoss2D
 from credit.data import ERA5Dataset, ToTensor, NormalizeState, DistributedSequentialDataset
-from credit.scheduler import lr_lambda_phase1
+from credit.scheduler import load_scheduler, annealed_probability
 from credit.trainer import Trainer
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything
@@ -77,25 +77,6 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
             ]),
         )
         sampler = None
-        # dataset = SequentialDataset(
-        #     filenames=files,
-        #     history_len=history_len,
-        #     forecast_len=forecast_len,
-        #     skip_periods=time_step,
-        #     random_forecast=True,
-        #     transform=transforms.Compose([
-        #         NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"]),
-        #         ToTensor(history_len=history_len, forecast_len=forecast_len),
-        #     ]),
-        # )
-        # sampler = DistributedSampler(
-        #     dataset,
-        #     num_replicas=world_size,
-        #     rank=rank,
-        #     seed=seed,
-        #     shuffle=shuffle,
-        #     drop_last=True
-        # )
         logging.info(
             f"{name} (forecast length = {forecast_len}): Loaded a distributed sequential ERA dataset which contains its own distributed sampler"
         )
@@ -156,15 +137,7 @@ def load_model_and_optimizer(conf, model, device):
     #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
     if start_epoch == 0:  # Loaded after loading model weights when reloading
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
-        if conf['trainer']['epochs'] > 1:  # This is here to use the raw learning rate proposed by ECHO
-            scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda_phase1)
-        else:
-            scheduler = ReduceLROnPlateau(
-                optimizer,
-                patience=0,
-                min_lr=0.001 * learning_rate,
-                verbose=True
-            )
+        scheduler = load_scheduler(optimizer, conf)
         scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
 
     # load optimizer and grad scaler states
@@ -215,10 +188,10 @@ def load_model_and_optimizer(conf, model, device):
             optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
             optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
-        scheduler = LambdaLR(optimizer, lr_lambda=lr_lambda_phase1)
+        scheduler = load_scheduler(optimizer, conf)
         scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
-
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        if scheduler is not None:
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         scaler.load_state_dict(checkpoint['scaler_state_dict'])
 
     return model, optimizer, scheduler, scaler
@@ -334,6 +307,7 @@ def trainer(rank, world_size, conf, trial=False):
         scaler,
         scheduler,
         metrics,
+        rollout_scheduler=annealed_probability,
         trial=trial
     )
 

@@ -500,7 +500,7 @@ class SequentialDataset(torch.utils.data.Dataset):
 class DistributedSequentialDataset(torch.utils.data.IterableDataset):
     # https://colab.research.google.com/drive/1OFLZnX9y5QUFNONuvFsxOizq4M-tFvk-?usp=sharing#scrollTo=CxSCQPOMHgwo
 
-    def __init__(self, filenames, history_len, forecast_len, skip_periods, rank, world_size, shuffle=False, transform=None, rollout_p=1.0):
+    def __init__(self, filenames, history_len, forecast_len, skip_periods, rank, world_size, shuffle=False, transform=None, rollout_p=0.0):
 
         self.dataset = ERA5Dataset(
             filenames=filenames,
@@ -549,7 +549,7 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
                 true_ind = len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+3)
 
             indices = list(range(true_ind, true_ind+self.history_len+self.forecast_len+1))
-            self.seq_len = self.history_len + 1
+            self.seq_len = self.history_len
             indices = indices[:self.seq_len]
 
             stop_forecast = False
@@ -569,7 +569,7 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
                 for key in concatenated_samples.keys():
                     concatenated_samples[key] = sample[key].squeeze()
 
-                stop_forecast = (torch.rand(1).item() > self.rollout_p)
+                stop_forecast = (torch.rand(1).item() < self.rollout_p)
 
                 concatenated_samples['forecast_hour'] = k
                 concatenated_samples['index'] = index

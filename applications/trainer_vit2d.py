@@ -42,7 +42,7 @@ from credit.vit2d import ViT2D
 from credit.rvt import RViT
 from credit.loss import VariableTotalLoss2D
 from credit.data import ERA5Dataset, ToTensor, NormalizeState, DistributedSequentialDataset
-from credit.scheduler import load_scheduler
+from credit.scheduler import load_scheduler, annealed_probability
 from credit.trainer import Trainer
 from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
@@ -346,6 +346,8 @@ def trainer(rank, world_size, conf, trial=False):
     train_criterion = VariableTotalLoss2D(conf)
     valid_criterion = VariableTotalLoss2D(conf, validation=True)
 
+    ## Optional load stopping probability annealer
+
     # Set up some metrics
 
     metrics = LatWeightedMetrics(conf)
@@ -366,6 +368,7 @@ def trainer(rank, world_size, conf, trial=False):
         scaler,
         scheduler,
         metrics,
+        rollout_scheduler=annealed_probability,
         trial=trial
     )
 
