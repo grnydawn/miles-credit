@@ -2,7 +2,7 @@ name: credit
 channels:
   - conda-forge
 dependencies:
-  - python=3.10
+  - python
   - pip
   - numpy
   - pandas
@@ -16,5 +16,7 @@ dependencies:
   - pytorch
   - pip:
     - bridgescaler
+    - rotary-embedding-torch
+    - cartopy
     - .
 

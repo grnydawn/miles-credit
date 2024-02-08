@@ -10,6 +10,7 @@ import random
 from torch.utils.data import get_worker_info
 from torch.utils.data.distributed import DistributedSampler
 import torch.utils.data
+import datetime
 
 
 def get_forward_data(filename) -> xr.DataArray:
@@ -609,3 +610,134 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
 
         average_length = total_length / num_simulations
         return average_length
+
+
+class PredictForecast(torch.utils.data.IterableDataset):
+    def __init__(self,
+                 filenames,
+                 forecasts,
+                 history_len,
+                 forecast_len,
+                 skip_periods,
+                 rank,
+                 world_size,
+                 shuffle=False,
+                 transform=None,
+                 rollout_p=0.0,
+                 start_time=None,
+                 stop_time=None):
+
+        self.dataset = ERA5Dataset(
+            filenames=filenames,
+            history_len=history_len,
+            forecast_len=forecast_len,
+            skip_periods=skip_periods,
+            transform=transform
+        )
+        self.meta_data_dict = self.dataset.meta_data_dict
+        self.all_files = self.dataset.all_fils
+        self.history_len = history_len
+        self.forecast_len = forecast_len
+        self.filenames = filenames
+        self.transform = transform
+        self.rank = rank
+        self.world_size = world_size
+        self.shuffle = shuffle
+        self.skip_periods = skip_periods
+        self.current_epoch = 0
+        self.rollout_p = rollout_p
+        self.forecasts = forecasts
+
+    def find_start_stop_indices(self, index):
+        datetime_objs = [np.datetime64(date) for date in self.forecasts[index]]
+        start_time, stop_time = [str(datetime_obj) + '.000000000' for datetime_obj in datetime_objs]
+        self.start_time = np.datetime64(start_time).astype(datetime.datetime)
+        self.stop_time = np.datetime64(stop_time).astype(datetime.datetime)
+
+        info = {}
+
+        for idx, dataset in enumerate(self.all_files):
+            start_time = np.datetime64(dataset['time'].min().values).astype(datetime.datetime)
+            stop_time = np.datetime64(dataset['time'].max().values).astype(datetime.datetime)
+            track_start = False
+            track_stop = False
+
+            #print(self.start_time, self.stop_time, start_time, stop_time)
+
+            if start_time <= self.start_time <= stop_time:
+                # Start time is in this file, use start time index
+                dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
+                start_idx = np.searchsorted(dataset, self.start_time)
+                start_idx = max(0, min(start_idx, len(dataset)-1))
+                track_start = True
+
+            elif start_time < self.stop_time and stop_time > self.start_time:
+                # File overlaps time range, use full file
+                start_idx = 0
+                track_start = True
+
+            if start_time <= self.stop_time <= stop_time:
+                # Stop time is in this file, use stop time index
+                if isinstance(dataset, np.ndarray):
+                    pass
+                else:
+                    dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
+                stop_idx = np.searchsorted(dataset, self.stop_time)
+                stop_idx = max(0, min(stop_idx, len(dataset)-1))
+                track_stop = True
+
+            elif start_time < self.stop_time and stop_time > self.start_time:
+                # File overlaps time range, use full file
+                stop_idx = len(dataset) - 1
+                track_stop = True
+
+            # Only include files that overlap the time range
+            if track_start and track_stop:
+                info[idx] = ((idx, start_idx), (idx, stop_idx))
+
+        indices = []
+        for dataset_idx, (start, stop) in info.items():
+            for i in range(start[1], stop[1]+1):
+                indices.append((start[0], i))
+        return indices
+
+    def __len__(self):
+        return len(self.forecasts)
+
+    def __iter__(self):
+        worker_info = get_worker_info()
+        num_workers = worker_info.num_workers if worker_info is not None else 1
+        worker_id = worker_info.id if worker_info is not None else 0
+        sampler = DistributedSampler(self, num_replicas=num_workers*self.world_size, rank=self.rank*num_workers+worker_id, shuffle=self.shuffle)
+
+        for index in sampler:
+            data_lookup = self.find_start_stop_indices(index)
+
+            for k, (file_key, time_key) in enumerate(data_lookup):
+                concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
+                sliced_x = xr.open_zarr(self.filenames[file_key], consolidated=True).isel(time=slice(time_key, time_key+1, self.skip_periods))
+                sample_x = {
+                    'x': sliced_x.isel(time=slice(0, 1, 1)),
+                    #'t': sliced_x.time.values.astype('datetime64[s]').astype(int),
+                }
+                # Fetch the next pair to create the y tensor
+                next_k = k + 1
+                if next_k < len(data_lookup):
+                    next_file_key, next_time_key = data_lookup[next_k]
+                    sliced_y = xr.open_zarr(self.filenames[next_file_key], consolidated=True).isel(time=slice(next_time_key, next_time_key+1, self.skip_periods))
+                    sample_x['y'] = sliced_y.isel(time=slice(0, 1, 1))
+
+                if self.transform:
+                    sample_x = self.transform(sample_x)
+
+                for key in concatenated_samples.keys():
+                    concatenated_samples[key] = sample_x[key].squeeze()
+
+                concatenated_samples['forecast_hour'] = k
+                concatenated_samples['stop_forecast'] = (k == (len(data_lookup)-2))
+                concatenated_samples['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[0]
+
+                yield concatenated_samples
+
+                if concatenated_samples['stop_forecast']:
+                    break

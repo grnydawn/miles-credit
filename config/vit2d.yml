@@ -1,12 +1,12 @@
-save_loc: "/glade/work/schreck/repos/global/miles-credit/results/no_dec_pe"
+save_loc: "/glade/work/schreck/repos/global/miles-credit/results/echo/"
 seed: 1000
 
 data:
     variables: ['U','V','T','Q']
     surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
-    save_loc: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/TOTAL_*'
-    mean_path: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/All_2010_staged.SLO.mean.nc'
-    std_path: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/All_2010_staged.SLO.std.nc'
+    save_loc: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
+    mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.SLO.mean.nc'
+    std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.SLO.std.nc'
     history_len: 1
     forecast_len: 2
     valid_history_len: 1
@@ -15,34 +15,28 @@ data:
     
 trainer:
     mode: none # none, ddp, fsdp
-    train_batch_size: 8
-    valid_batch_size: 8
-    batches_per_epoch: 500 # Set to 0 to use len(dataloader)
-    valid_batches_per_epoch: 10
+    train_batch_size: 4
+    valid_batch_size: 4
+    batches_per_epoch: 2000 # Set to 0 to use len(dataloader)
+    valid_batches_per_epoch: 100
     learning_rate: 5.0e-04
     weight_decay: 1.0e-05
     start_epoch: 0
-    epochs: 100
+    epochs: 1
     amp: False
     grad_accum_every: 1
     grad_max_norm: 1.0
-    thread_workers: 4
+    thread_workers: 0
     valid_thread_workers: 0
     stopping_patience: 50
     teacher_forcing_ratio: 0.5 #0.9886539666794065
     stop_rollout: 0.9
     load_weights: False
-    use_scheduler: True
-    # scheduler:
-    #     scheduler_type: cosine-annealing
-    #     first_cycle_steps: 500
-    #     cycle_mult: 6.0
-    #     max_lr: 5.0e-04
-    #     min_lr: 5.0e-07
-    #     warmup_steps: 499
-    #     gamma: 0.7
-    scheduler:
-        scheduler_type: lambda
+    load_optimizer: False
+    use_scheduler: False
+    #scheduler: {'scheduler_type': 'cosine-annealing', first_cycle_steps: 500, cycle_mult: 6.0, max_lr: 5.0e-04, min_lr: 5.0e-07, warmup_steps: 499, gamma: 0.7}
+    # scheduler: {scheduler_type: plateau, mode: min, factor: 0.1, patience: 5, cooldown: 2, min_lr: 1e-6, epsilon: 1e-8, verbose: true, threshold: 1e-4}
+    scheduler: {'scheduler_type': 'lambda'}
   
 model:
     channels: 4
@@ -59,6 +53,9 @@ model:
     num_register_tokens: 6
     patch_height: 16
     patch_width: 16
+    use_rotary: True
+    use_ds_conv: True
+    use_glu: True
     rk4_integration: false
     surface_channels: 7
     token_dropout: 0.0
@@ -75,6 +72,7 @@ model:
     vq_kmeans_init: true
     vq_use_cosine_sim: true
     transformer_type: "lucidrains"  # choose between pytorch or lucidrains
+    static_variables: {"cos_lat": "/glade/u/home/wchapman/MLWPS/DataLoader/static_variables_ERA5_zhght.nc"}
     
 loss: 
     training_loss: "mse"
@@ -82,7 +80,7 @@ loss:
     use_spectral_loss: False
     spectral_wavenum_init: 15
     spectral_lambda_reg: 0.025791372491084097
-    use_latitude_weights: False
+    use_latitude_weights: True
     latitude_weights: "/glade/u/home/wchapman/MLWPS/DataLoader/static_variables_ERA5_zhght.nc"
     use_variable_weights: False
     variable_weights:
@@ -98,20 +96,26 @@ loss:
         Z500: 0.1
         Q500: 0.1
 
+predict:
+    forecasts: [
+        ["1989-12-31 00:00:00", "1990-01-02 00:00:00"],
+        ["2018-06-01 00:00:00", "2018-06-07 00:00:00"]
+    ]
+
 # pbs: #derecho
 #     conda: "holodec"
 #     project: "NAML0001"
-#     job_name: "pe-test"
+#     job_name: "rotary-large"
 #     walltime: "12:00:00"
-#     nodes: 1
+#     nodes: 8
 #     ncpus: 64
 #     ngpus: 4
 #     mem: '480GB'
-#     queue: 'preempt'
+#     queue: 'main' #'preempt'
     
 pbs: # casper
     conda: "/glade/work/schreck/miniconda3/envs/evidential"
-    job_name: 'no-dec-pe'
+    job_name: 'latlon'
     nodes: 1
     ncpus: 8
     ngpus: 1

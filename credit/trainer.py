@@ -129,9 +129,9 @@ class Trainer:
 
                         loss = loss.mean() + commit_loss
 
-                        scaler.scale(loss / grad_accum_every / history_len).backward()
+                        scaler.scale(loss / grad_accum_every).backward()
 
-                    accum_log(logs, {'loss': loss.item() / grad_accum_every / history_len})
+                    accum_log(logs, {'loss': loss.item() / grad_accum_every})
 
                 if distributed:
                     torch.distributed.barrier()
@@ -151,9 +151,9 @@ class Trainer:
 
                         batch = next(dl)
 
-                        for i in batch["forecast_hour"]:
+                        for i, forecast_hour in enumerate(batch["forecast_hour"]):
 
-                            if batch["forecast_hour"] == 0:  # use true x -- initial condition time-step
+                            if forecast_hour == 0:  # use true x -- initial condition time-step
                                 x_atmo = batch["x"][0:1]
                                 x_surf = batch["x_surf"][0:1]
                                 x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
@@ -171,7 +171,7 @@ class Trainer:
                                 y_pred = self.model(x)
 
                             # probability of stopping a forecast rollout early
-                            if batch['stop_forecast']:
+                            if batch['stop_forecast'][i]:
                                 y_atmo = batch["y"][i % len(batch["forecast_hour"])].unsqueeze(0)
                                 y_surf = batch["y_surf"][i % len(batch["forecast_hour"])].unsqueeze(0)
                                 y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
@@ -193,8 +193,8 @@ class Trainer:
 
                 # scale, accumulate, backward
 
-                scaler.scale(loss / history_len).backward()
-                accum_log(logs, {'loss': loss.item() / history_len})
+                scaler.scale(loss).backward()
+                accum_log(logs, {'loss': loss.item()})
 
                 if distributed:
                     torch.distributed.barrier()
@@ -296,7 +296,7 @@ class Trainer:
                             dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
                         results_dict[f"valid_{name}"].append(value[0].item())
 
-                    batch_loss = torch.Tensor([loss.item() / history_len]).cuda(self.device)
+                    batch_loss = torch.Tensor([loss.item()]).cuda(self.device)
                     if distributed:
                         torch.distributed.barrier()
                     results_dict["valid_loss"].append(batch_loss[0].item())
@@ -305,7 +305,7 @@ class Trainer:
 
                     for i in batch["forecast_hour"]:
 
-                        if batch["forecast_hour"] == 0:  # use true x -- initial condition time-step
+                        if i == 0:  # use true x -- initial condition time-step
                             x_atmo = batch["x"][0:1]
                             x_surf = batch["x_surf"][0:1]
                             x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
@@ -320,7 +320,7 @@ class Trainer:
                             y_pred = self.model(x)
 
                         # stop after user-defined number of steps
-                        if batch["forecast_hour"] == (history_len - 1):
+                        if i == (history_len - 1):
                             y_atmo = batch["y"][i % len(batch["forecast_hour"])].unsqueeze(0)
                             y_surf = batch["y_surf"][i % len(batch["forecast_hour"])].unsqueeze(0)
                             y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
@@ -343,7 +343,7 @@ class Trainer:
                 if not stop_forecast:
                     continue
 
-                batch_loss = torch.Tensor([loss.item() / history_len]).cuda(self.device)
+                batch_loss = torch.Tensor([loss.item()]).cuda(self.device)
                 if distributed:
                     torch.distributed.barrier()
                 results_dict["valid_loss"].append(batch_loss[0].item())

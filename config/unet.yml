@@ -67,25 +67,31 @@ loss:
         Z500: 0.1
         Q500: 0.1
 
-# pbs: #derecho
-#     conda: "holodec"
-#     project: "NAML0001"
-#     job_name: "gwm"
-#     walltime: "01:00:00"
-#     nodes: 1
-#     ncpus: 64
-#     ngpus: 4
-#     mem: '480GB'
-#     queue: 'preempt'
-    
-pbs: # casper
-    conda: "/glade/work/schreck/miniconda3/envs/evidential"
-    job_name: 'unet'
+predict:
+    forecasts: [
+        ["1989-12-31 00:00:00", "1990-01-02 00:00:00"],
+        ["2018-06-01 00:00:00", "2018-06-07 00:00:00"]
+    ]
+
+pbs: #derecho
+    conda: "holodec"
+    project: "NAML0001"
+    job_name: "holodec"
+    walltime: "01:00:00"
     nodes: 1
-    ncpus: 8
-    ngpus: 1
-    mem: '128GB'
-    walltime: '12:00:00'
-    gpu_type: 'a100'
-    project: 'NAML0001'
-    queue: 'casper'
+    ncpus: 64
+    ngpus: 4
+    mem: '480GB'
+    queue: 'preempt'
+    
+# pbs: # casper
+#     conda: "/glade/work/schreck/miniconda3/envs/evidential"
+#     job_name: 'unet'
+#     nodes: 1
+#     ncpus: 8
+#     ngpus: 1
+#     mem: '128GB'
+#     walltime: '12:00:00'
+#     gpu_type: 'a100'
+#     project: 'NAML0001'
+#     queue: 'casper'
