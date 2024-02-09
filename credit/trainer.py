@@ -64,8 +64,6 @@ class Trainer:
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
         teacher_forcing_ratio = conf['trainer']['teacher_forcing_ratio']
         rollout_p = 1.0 if 'stop_rollout' not in conf['trainer'] else conf['trainer']['stop_rollout']
-        trainloader.dataset.set_rollout_prob(rollout_p)
-        results_dict = defaultdict(list)
 
         # update the learning rate if epoch-by-epoch updates that dont depend on a metric
         if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "lambda":
@@ -88,6 +86,8 @@ class Trainer:
         self.model.train()
 
         dl = cycle(trainloader)
+
+        results_dict = defaultdict(list)
 
         for steps in range(batches_per_epoch):
 
@@ -202,11 +202,6 @@ class Trainer:
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad()
-
-                # move on to the next sample
-
-                #while batch["forecast_hour"] != conf["data"]["history_len"]:
-                #    batch = next(dl)
 
             batch_loss = torch.Tensor([logs["loss"]]).cuda(self.device)
             if distributed:
@@ -340,8 +335,8 @@ class Trainer:
                         else:
                             y_pred = y_pred.detach()
 
-                if not stop_forecast:
-                    continue
+                    if not stop_forecast:
+                        continue
 
                 batch_loss = torch.Tensor([loss.item()]).cuda(self.device)
                 if distributed:
@@ -436,6 +431,52 @@ class Trainer:
 
             ############
             #
+            # Validation
+            #
+            ############
+
+            valid_results = self.validate(
+                epoch,
+                conf,
+                valid_loader,
+                valid_criterion,
+                metrics
+            )
+
+            #################
+            #
+            # Save results
+            #
+            #################
+
+            # update the learning rate if epoch-by-epoch updates
+
+            if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "plateau":
+                scheduler.step(results_dict["valid_acc"][-1])
+
+            # Put things into a results dictionary -> dataframe
+
+            results_dict["epoch"].append(epoch)
+            for name in ["loss", "acc", "mae"]:
+                results_dict[f"train_{name}"].append(np.mean(train_results[f"train_{name}"]))
+                results_dict[f"valid_{name}"].append(np.mean(valid_results[f"valid_{name}"]))
+            results_dict['train_forecast_len'].append(np.mean(train_results['train_forecast_len']))
+            results_dict["lr"].append(optimizer.param_groups[0]["lr"])
+
+            df = pd.DataFrame.from_dict(results_dict).reset_index()
+
+            # Save the dataframe to disk
+
+            if trial:
+                df.to_csv(
+                    os.path.join(f"{save_loc}", "trial_results", f"training_log_{trial.number}.csv"),
+                    index=False,
+                )
+            else:
+                df.to_csv(os.path.join(f"{save_loc}", "training_log.csv"), index=False)
+
+            ############
+            #
             # Checkpoint
             #
             ############
@@ -444,19 +485,20 @@ class Trainer:
 
                 if conf["trainer"]["mode"] != "fsdp":
 
-                    # Save the current model
+                    if self.rank == 0:
 
-                    logging.info(f"Saving model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
+                        # Save the current model
 
-                    state_dict = {
-                        "epoch": epoch,
-                        "model_state_dict": self.model.module.state_dict() if conf["trainer"]["mode"] == "ddp" else self.model.state_dict(),
-                        "optimizer_state_dict": optimizer.state_dict(),
-                        'scheduler_state_dict': scheduler.state_dict() if conf["trainer"]["use_scheduler"] else None,
-                        'scaler_state_dict': scaler.state_dict()
-                    }
+                        logging.info(f"Saving model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
 
-                    torch.save(state_dict, f"{save_loc}/checkpoint_{self.device}.pt" if conf["trainer"]["mode"] == "ddp" else f"{save_loc}/checkpoint.pt")
+                        state_dict = {
+                            "epoch": epoch,
+                            "model_state_dict": self.model.state_dict(),
+                            "optimizer_state_dict": optimizer.state_dict(),
+                            'scheduler_state_dict': scheduler.state_dict() if conf["trainer"]["use_scheduler"] else None,
+                            'scaler_state_dict': scaler.state_dict()
+                        }
+                        torch.save(state_dict, f"{save_loc}/checkpoint.pt")
 
                 else:
 
@@ -485,82 +527,26 @@ class Trainer:
 
                     torch.save(state_dict, f"{save_loc}/checkpoint.pt")
 
-            # clear the cached memory from the gpu
-            torch.cuda.empty_cache()
-            gc.collect()
-
-            ############
-            #
-            # Validation
-            #
-            ############
-
-            valid_results = self.validate(
-                epoch,
-                conf,
-                valid_loader,
-                valid_criterion,
-                metrics
-            )
+                # This needs updated!
+                # valid_loss = np.mean(valid_results["valid_loss"])
+                # # save if this is the best model seen so far
+                # if (self.rank == 0) and (np.mean(valid_loss) == min(results_dict["valid_loss"])):
+                #     if conf["trainer"]["mode"] == "ddp":
+                #         shutil.copy(f"{save_loc}/checkpoint_{self.device}.pt", f"{save_loc}/best_{self.device}.pt")
+                #     elif conf["trainer"]["mode"] == "fsdp":
+                #         if os.path.exists(f"{save_loc}/best"):
+                #             shutil.rmtree(f"{save_loc}/best")
+                #         shutil.copytree(f"{save_loc}/checkpoint", f"{save_loc}/best")
+                #     else:
+                #         shutil.copy(f"{save_loc}/checkpoint.pt", f"{save_loc}/best.pt")
 
             # clear the cached memory from the gpu
             torch.cuda.empty_cache()
             gc.collect()
-
-            #################
-            #
-            # Save and Return
-            #
-            #################
-
-            # Put things into a results dictionary -> dataframe
-            ###
-            ### This needs updated!
-            ###
-            ###
-            results_dict["epoch"].append(epoch)
-            for name in ["loss", "acc", "mae"]:
-                results_dict[f"train_{name}"].append(np.mean(train_results[f"train_{name}"]))
-                results_dict[f"valid_{name}"].append(np.mean(valid_results[f"valid_{name}"]))
-            results_dict["lr"].append(optimizer.param_groups[0]["lr"])
-
-            df = pd.DataFrame.from_dict(results_dict).reset_index()
-
-            # update the learning rate if epoch-by-epoch updates
-
-            if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "plateau":
-                scheduler.step(results_dict["valid_acc"][-1])
-
-#             # Save the best model so far
-#             if not trial:
-
-#                 # This needs updated!
-#                 valid_loss = np.mean(valid_results["valid_loss"])
-
-#                 # save if this is the best model seen so far
-#                 if (self.device == 'cuda:0') and (np.mean(valid_loss) == min(results_dict["valid_loss"])):
-#                     if conf["trainer"]["mode"] == "ddp":
-#                         shutil.copy(f"{save_loc}/checkpoint_{self.device}.pt", f"{save_loc}/best_{self.device}.pt")
-#                     elif conf["trainer"]["mode"] == "fsdp":
-#                         if os.path.exists(f"{save_loc}/best"):
-#                             shutil.rmtree(f"{save_loc}/best")
-#                         shutil.copytree(f"{save_loc}/checkpoint", f"{save_loc}/best")
-#                     else:
-#                         shutil.copy(f"{save_loc}/checkpoint.pt", f"{save_loc}/best.pt")
-
-            # Save the dataframe to disk
-            if trial:
-                df.to_csv(
-                    f"{save_loc}/trial_results/training_log_{trial.number}.csv",
-                    index=False,
-                )
-            else:
-                df.to_csv(f"{save_loc}/training_log.csv", index=False)
 
             # Report result to the trial
-            #if trial:
-                # trial.report
-                #pass
+            if trial:
+                trial.report(results_dict["valid_loss"], step=epoch)
 
             # Stop training if we have not improved after X epochs (stopping patience)
             best_epoch = [
@@ -572,6 +558,11 @@ class Trainer:
             if offset >= conf['trainer']['stopping_patience']:
                 logging.info(f"Trial {trial.number} is stopping early")
                 break
+
+            # Stop training if we get too close to the wall time
+            if 'stop_after_epoch' in conf['trainer']:
+                if conf['trainer']['stop_after_epoch']:
+                    break
 
         best_epoch = [
             i for i, j in enumerate(results_dict["valid_loss"]) if j == min(results_dict["valid_loss"])

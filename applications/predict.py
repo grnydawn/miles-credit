@@ -14,7 +14,6 @@ import os
 import sys
 import yaml
 
-from torch.cuda.amp import GradScaler
 from torch.distributed.fsdp import StateDictType
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision import transforms
@@ -52,13 +51,11 @@ def setup(rank, world_size, mode):
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
 
-def draw_forecast(data, times=None, forecast_count=None, save_location=None):
-
-    lat_lon_weights = xr.open_dataset('/glade/u/home/wchapman/MLWPS/DataLoader/static_variables_ERA5_zhght.nc')
-    means = xr.open_dataset("/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/All_2010_staged.SLO.mean.nc")
-    sds = xr.open_dataset("/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/All_2010_staged.SLO.std.nc")
-
+def draw_forecast(data, conf=None, times=None, forecast_count=None, save_location=None):
     k, fn = data
+    lat_lon_weights = xr.open_dataset(conf['loss']['latitude_weights'])
+    means = xr.open_dataset(conf['data']['mean_path'])
+    sds = xr.open_dataset(conf['data']['std_path'])
     pred = np.load(fn)
     t = times[k]
     pred = pred[0, 59, :, :]
@@ -84,7 +81,7 @@ def draw_forecast(data, times=None, forecast_count=None, save_location=None):
     return k, filename
 
 
-def predict(rank, world_size, conf, trial=False):
+def predict(rank, world_size, conf):
 
     if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
         setup(rank, world_size, conf["trainer"]["mode"])
@@ -130,7 +127,7 @@ def predict(rank, world_size, conf, trial=False):
         shuffle=False,
         pin_memory=True,
         num_workers=0,
-        drop_last=True
+        drop_last=False
     )
 
     # load model
@@ -142,6 +139,10 @@ def predict(rank, world_size, conf, trial=False):
             del conf['model']['use_ds_conv']
             del conf['model']['use_glu']
         model = ViT2D.load_model(conf).to(device)
+
+    # Warning -- see next line
+    if conf["trainer"]["mode"] == "ddp":  # A new field needs to be added to predict
+        model = DDP(model, device_ids=[device])
 
     model.eval()
 
@@ -225,6 +226,7 @@ def predict(rank, world_size, conf, trial=False):
                 with Pool(processes=8) as pool:
                     f = partial(
                         draw_forecast,
+                        conf=conf,
                         times=forecast_datetimes,
                         forecast_count=forecast_count,
                         save_location=save_location

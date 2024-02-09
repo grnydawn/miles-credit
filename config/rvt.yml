@@ -1,26 +1,26 @@
-save_loc: "/glade/work/schreck/repos/global/miles-credit/results/best_rvt"
+save_loc: "/glade/work/schreck/repos/global/miles-credit/results/rvt_zscore_multi"
 seed: 1000
 
 data:
     variables: ['U','V','T','Q']
     surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
     save_loc: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
-    mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.SLO.mean.nc'
-    std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.SLO.std.nc'
-    history_len: 12
+    mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
+    std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
+    history_len: 23
     forecast_len: 24
-    valid_history_len: 12
-    valid_forecast_len: 24
+    valid_history_len: 2
+    valid_forecast_len: 3
     time_step: 1
     
 trainer:
     mode: ddp # none, ddp, fsdp
     train_batch_size: 1
     valid_batch_size: 1
-    batches_per_epoch: 500 # Set to 0 to use len(dataloader)
-    valid_batches_per_epoch: 1
-    learning_rate: 0.00022009538048998494
-    weight_decay: 0.0
+    batches_per_epoch: 1000 # Set to 0 to use len(dataloader)
+    valid_batches_per_epoch: 100
+    learning_rate: 5.0e-04
+    weight_decay: 1.0e-05
     start_epoch: 0
     epochs: 100
     amp: False
@@ -28,8 +28,8 @@ trainer:
     grad_max_norm: 1.0
     thread_workers: 0
     valid_thread_workers: 0
-    stopping_patience: 50
-    teacher_forcing_ratio: 0.5 #0.9886539666794065
+    stopping_patience: 100
+    teacher_forcing_ratio: 0.0
     stop_rollout: 0.9
     load_weights: False
     load_optimizer: False
@@ -51,26 +51,26 @@ model:
     static_variables: {
         "cos_lat": "/glade/u/home/wchapman/MLWPS/DataLoader/static_variables_ERA5_zhght.nc"
     }
-    dim: 768
-    dim_head: 96
-    dropout: 0.7164920514728398
+    dim: 1024
+    dim_head: 1024
+    dropout: 0.0
     frame_patch_size: 3
     frames: 15
     heads: 8
     image_height: 640
     image_width: 1280
-    mlp_dim: 880
+    mlp_dim: 1024
     num_register_tokens: 6
     patch_height: 16
     patch_width: 16
     rk4_integration: false
     surface_channels: 7
-    token_dropout: 0.025495344206564907
+    token_dropout: 0.0
     use_rotary: True
     use_ds_conv: True
     use_glu: True
     use_decoder_conv_layers: false
-    use_cls_tokens: false
+    use_cls_tokens: true
     use_codebook: false
     use_registers: false
     use_visual_ssl: false
@@ -114,13 +114,14 @@ predict:
 pbs: #derecho
     conda: "holodec"
     project: "NAML0001"
-    job_name: "rvt-opt"
+    job_name: "rvt-multi"
     walltime: "12:00:00"
     nodes: 8
     ncpus: 64
     ngpus: 4
     mem: '480GB'
-    queue: 'preempt'
+    queue: 'main'
+    #queue: 'preempt'
     
 # pbs: # casper
 #     conda: "/glade/work/schreck/miniconda3/envs/evidential"

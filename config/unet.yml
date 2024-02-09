@@ -5,8 +5,8 @@ data:
     variables: ['U','V','T','Q']
     surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
     save_loc: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/TOTAL_*'
-    mean_path: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/All_2010_staged.SLO.mean.nc'
-    std_path: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/All_2010_staged.SLO.std.nc'
+    mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
+    std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
     history_len: 1
     forecast_len: 2
     valid_history_len: 1
