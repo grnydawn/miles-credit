@@ -1,10 +1,11 @@
 name: credit
 channels:
   - conda-forge
+  - pytorch
 dependencies:
-  - python
+  - python=3.11
   - pip
-  - numpy
+  - numpy<1.24
   - pandas
   - matplotlib
   - cartopy
@@ -14,9 +15,21 @@ dependencies:
   - xarray
   - netcdf4
   - pytorch
+  - torchvision
+  - wandb
+  - pyyaml
+  - cartopy
+  - dask
+  - distributed
+  - dask-jobqueue
+  - zarr
+  - jupyter
   - pip:
+    - einops
+    - echo-opt
     - bridgescaler
     - rotary-embedding-torch
-    - cartopy
+    - segmentation-models-pytorch
+    - vector_quantize_pytorch
     - .
 
