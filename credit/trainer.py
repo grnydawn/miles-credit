@@ -208,7 +208,8 @@ class Trainer:
                 dist.all_reduce(batch_loss, dist.ReduceOp.AVG, async_op=False)
             results_dict["train_loss"].append(batch_loss[0].item())
             if history_len > 1:
-                results_dict["train_forecast_len"].append(i+1)
+                forecast_hour_stop = batch['forecast_hour'][-1].item()
+                results_dict["train_forecast_len"].append(forecast_hour_stop+1)
             else:
                 results_dict["train_forecast_len"].append(1)
 

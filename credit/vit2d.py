@@ -499,11 +499,11 @@ class ViT2D(nn.Module):
     @classmethod
     def load_model(cls, conf):
         save_loc = conf['save_loc']
-        ckpt = f"{save_loc}/checkpoint.pt"
+        ckpt = os.path.join(f"{save_loc}", "checkpoint.pt")
 
         if conf["trainer"]["mode"] == "ddp":
             if not os.path.isfile(ckpt):
-                ckpt = f"{save_loc}/checkpoint_cuda:0.pt"
+                ckpt = os.path.join(f"{save_loc}", "checkpoint_cuda:0.pt")
 
         if not os.path.isfile(ckpt):
             raise ValueError(
