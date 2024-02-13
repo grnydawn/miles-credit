@@ -28,6 +28,7 @@ varlist = ['U','V','T','Q','t2m','SP','Q500','Z500','T500','V500','U500']
 
 # Dask
 if 'client' in locals():
+    client = locals()["client"]
     client.shutdown()
     print('...shutdown client...')
 else:
