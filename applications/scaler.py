@@ -1,4 +1,5 @@
 import os
+import numpy as np
 import xarray as xr
 import pandas as pd
 import yaml
@@ -38,6 +39,7 @@ def main():
 
 
 def fit_era5_scaler_year(era5_file):
+    n_times = 300
     eds = xr.open_zarr(era5_file)
     vars_3d = ['U', 'V', 'T', 'Q']
     vars_surf = ['SP', 't2m', 'V500', 'U500', 'T500', 'Z500', 'Q500']
@@ -48,7 +50,8 @@ def fit_era5_scaler_year(era5_file):
             var_levels.append(f"{var}_{level:d}")
     dqs_3d = DQuantileTransformer(distribution="normal")
     dqs_surf = DQuantileTransformer(distribution="normal")
-    for time in eds["time"]:
+    rand_times = np.sort(np.random.choice(eds["time"].values, size=n_times, replace=False))
+    for time in rand_times:
         print(time)
         var_slices = []
         for var in vars_3d:
