@@ -57,7 +57,7 @@ def fit_era5_scaler_year(era5_file):
         e3d = xr.concat(var_slices, pd.Index(var_levels, name="variable")
                         ).transpose("latitude", "longitude", "variable")
         dqs_3d.fit(e3d)
-        e_surf = xr.concat([eds[v] for v in vars_surf], pd.Index(vars_surf, name="variable")
+        e_surf = xr.concat([eds[v].sel(time=time) for v in vars_surf], pd.Index(vars_surf, name="variable")
                            ).transpose("latitude", "longitude", "variable")
         dqs_surf.fit(e_surf)
     dqs_3d_json = print_scaler(dqs_3d)
