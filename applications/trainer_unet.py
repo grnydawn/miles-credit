@@ -1,5 +1,4 @@
 import warnings
-from torch.optim.lr_scheduler import ReduceLROnPlateau, LambdaLR
 from torch.utils.data.distributed import DistributedSampler
 import torch
 import torch.distributed as dist
@@ -30,7 +29,8 @@ from torch.distributed.fsdp.wrap import (
 from torchvision import transforms
 from credit.unet import SegmentationModel
 from credit.loss import TotalLoss2D
-from credit.data import ERA5Dataset, ToTensor, NormalizeState, DistributedSequentialDataset
+from credit.data import ERA5Dataset, DistributedSequentialDataset
+from credit.transforms import ToTensor, NormalizeState
 from credit.scheduler import load_scheduler, annealed_probability
 from credit.trainer import Trainer
 from credit.pbs import launch_script, launch_script_mpi

@@ -20,7 +20,8 @@ from torchvision import transforms
 from credit.vit2d import ViT2D
 from credit.rvt import RViT
 from credit.loss import VariableTotalLoss2D
-from credit.data import ToTensor, NormalizeState, PredictForecast
+from credit.data import PredictForecast
+from credit.transforms import ToTensor, NormalizeState
 from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything
@@ -54,11 +55,9 @@ def setup(rank, world_size, mode):
 def draw_forecast(data, conf=None, times=None, forecast_count=None, save_location=None):
     k, fn = data
     lat_lon_weights = xr.open_dataset(conf['loss']['latitude_weights'])
-    means = xr.open_dataset(conf['data']['mean_path'])
-    sds = xr.open_dataset(conf['data']['std_path'])
     pred = np.load(fn)
     t = times[k]
-    pred = pred[0, 59, :, :]
+    pred = pred[8]
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(1, 1, 1, projection=ccrs.EckertIII())
     ax.set_global()
@@ -67,10 +66,10 @@ def draw_forecast(data, conf=None, times=None, forecast_count=None, save_locatio
     pout = ax.pcolormesh(
         lat_lon_weights["longitude"],
         lat_lon_weights["latitude"],
-        (pred * sds["Q"].values + means["Q"].values) * 1000,
+        pred,  #(pred * sds["U"].values[8] + means["U"].values[8]),
         transform=ccrs.PlateCarree(),
-        vmin=0,
-        vmax=20,
+        vmin=-30,
+        vmax=30,
         cmap='RdBu'
     )
     plt.colorbar(pout, ax=ax, orientation="horizontal", fraction=0.05, pad=0.01)
@@ -103,8 +102,9 @@ def predict(rank, world_size, conf):
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
 
     # Preprocessing transformations
+    state_transformer = NormalizeState(conf["data"]["mean_path"],conf["data"]["std_path"])
     transform = transforms.Compose([
-        NormalizeState(conf["data"]["mean_path"],conf["data"]["std_path"]),
+        state_transformer,
         ToTensor(history_len=history_len, forecast_len=forecast_len)
     ])
 
@@ -203,7 +203,8 @@ def predict(rank, world_size, conf):
             print(print_str)
 
             # Save as numpy arrays for now
-            np.save(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_pred.npy"), y_pred.cpu())
+            save_arr = state_transformer.inverse_transform(y_pred.cpu()).squeeze(0)
+            np.save(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_pred.npy"), save_arr)
             #np.save(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_true.npy"), y.cpu())
 
             pred_files.append(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_pred.npy"))
@@ -233,32 +234,8 @@ def predict(rank, world_size, conf):
                     )
                     video_files = pool.map(f, file_list)
 
-                # for k, fn in enumerate(sorted(glob.glob(forecast_paths))):
-                #     pred = np.load(fn)
-                #     t = forecast_datetimes[k]
-                #     pred = pred[0, 59, :, :]
-                #     fig = plt.figure(figsize=(10, 8))
-                #     ax = fig.add_subplot(1, 1, 1, projection=ccrs.EckertIII())
-                #     ax.set_global()
-                #     ax.coastlines('110m', alpha=0.5)
-
-                #     pout = ax.pcolormesh(
-                #         lat_lon_weights["longitude"],
-                #         lat_lon_weights["latitude"],
-                #         (pred * sds["Q"].values + means["Q"].values) * 1000,
-                #         transform=ccrs.PlateCarree(),
-                #         vmin=0,
-                #         vmax=20,
-                #         cmap='RdBu'
-                #     )
-                #     plt.colorbar(pout, ax=ax, orientation="horizontal", fraction=0.05, pad=0.01)
-                #     plt.title(f"Q (g/kg) F ({t})")
-                #     video_files.append(join(f"{save_location}", f"global_q_{forecast_count}_{k}.png"))
-                #     plt.savefig(join(f"{save_location}", f"global_q_{forecast_count}_{k}.png"), dpi=300, bbox_inches="tight")
-                #     plt.close()
-
                 video_files = [x[1] for x in sorted(video_files)]
-                command_str = f'convert -delay 20 -loop 0 {" ".join(video_files)} {save_location}/global_q_fixed.gif'
+                command_str = f'convert -delay 20 -loop 0 {" ".join(video_files)} {save_location}/global.gif'
                 out = subprocess.Popen(command_str, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
                 print(out)
 

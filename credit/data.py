@@ -4,9 +4,6 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 import torch
-import netCDF4 as nc
-
-import random
 from torch.utils.data import get_worker_info
 from torch.utils.data.distributed import DistributedSampler
 import torch.utils.data
@@ -66,68 +63,20 @@ class CheckForBadData():
         return sample
 
 
-class NormalizeState():
-    def __init__(self, mean_file, std_file):
-        self.mean_ds = xr.open_dataset(mean_file)
-        self.std_ds = xr.open_dataset(std_file)
+# class NormalizeState():
+#     def __init__(self, mean_file, std_file):
+#         self.mean_ds = xr.open_dataset(mean_file)
+#         self.std_ds = xr.open_dataset(std_file)
 
-    def __call__(self, sample: Sample) -> Sample:
-        normalized_sample = {}
-        for key, value in sample.items():
-            if isinstance(value, xr.Dataset):
-                #key_change = key
-                #value_change = (value - self.mean_ds)/self.std_ds
-                #sample[key]=value_change
-                normalized_sample[key] = (value - self.mean_ds) / self.std_ds
-        return normalized_sample
-
-
-class NormalizeTendency:
-    def __init__(self, variables, surface_variables, base_path):
-        self.variables = variables
-        self.surface_variables = surface_variables
-        self.base_path = base_path
-
-        # Load the NetCDF files and store the data
-        self.mean = {}
-        self.std = {}
-        for name in self.variables + self.surface_variables:
-            mean_dataset = nc.Dataset(f'{self.base_path}/All_NORMtend_{name}_2010_staged.mean.nc')
-            std_dataset = nc.Dataset(f'{self.base_path}/All_NORMtend_{name}_2010_staged.STD.nc')
-            self.mean[name] = torch.from_numpy(mean_dataset.variables[name][:])
-            self.std[name] = torch.from_numpy(std_dataset.variables[name][:])
-
-    def transform(self, tensor, surface_tensor):
-        device = tensor.device
-
-        # Apply z-score normalization using the pre-loaded mean and std
-        for name in self.variables:
-            mean = self.mean[name].view(1, 1, self.mean[name].size(0), 1, 1).to(device)
-            std = self.std[name].view(1, 1, self.std[name].size(0), 1, 1).to(device)
-            transformed_tensor = (tensor - mean) / std
-
-        for name in self.surface_variables:
-            mean = self.mean[name].view(1, 1, 1, 1).to(device)
-            std = self.std[name].view(1, 1, 1, 1).to(device)
-            transformed_surface_tensor = (surface_tensor - mean) / std
-
-        return transformed_tensor, transformed_surface_tensor
-
-    def inverse_transform(self, tensor, surface_tensor):
-        device = tensor.device
-
-        # Reverse z-score normalization using the pre-loaded mean and std
-        for name in self.variables:
-            mean = self.mean[name].view(1, 1, self.mean[name].size(0), 1, 1).to(device)
-            std = self.std[name].view(1, 1, self.std[name].size(0), 1, 1).to(device)
-            transformed_tensor = tensor * std + mean
-
-        for name in self.surface_variables:
-            mean = self.mean[name].view(1, 1, 1, 1).to(device)
-            std = self.std[name].view(1, 1, 1, 1).to(device)
-            transformed_surface_tensor = surface_tensor * std + mean
-
-        return transformed_tensor, transformed_surface_tensor
+#     def __call__(self, sample: Sample) -> Sample:
+#         normalized_sample = {}
+#         for key, value in sample.items():
+#             if isinstance(value, xr.Dataset):
+#                 #key_change = key
+#                 #value_change = (value - self.mean_ds)/self.std_ds
+#                 #sample[key]=value_change
+#                 normalized_sample[key] = (value - self.mean_ds) / self.std_ds
+#         return normalized_sample
 
 
 class Segment(NamedTuple):
@@ -307,53 +256,6 @@ def find_key_for_number(input_number, data_dict):
     return None
 
 
-class ToTensor:
-    def __init__(self, history_len=1, forecast_len=2):
-
-        self.hist_len = int(history_len)
-        self.for_len = int(forecast_len)
-        self.allvarsdo = ['U', 'V', 'T', 'Q', 'SP', 't2m', 'V500', 'U500', 'T500', 'Z500', 'Q500']
-        self.surfvars = ['SP', 't2m', 'V500', 'U500', 'T500', 'Z500', 'Q500']
-
-    def __call__(self, sample: Sample) -> Sample:
-
-        return_dict = {}
-
-        for key, value in sample.items():
-
-            if isinstance(value, xr.DataArray):
-                value_var = value.values
-
-            elif isinstance(value, xr.Dataset):
-                surface_vars = []
-                concatenated_vars = []
-                for vv in self.allvarsdo:
-                    value_var = value[vv].values
-                    if vv in self.surfvars:
-                        surface_vars_temp = value_var
-                        surface_vars.append(surface_vars_temp)
-                    else:
-                        concatenated_vars.append(value_var)
-                surface_vars = np.array(surface_vars)
-                concatenated_vars = np.array(concatenated_vars)
-
-            else:
-                value_var = value
-
-            if key == 'historical_ERA5_images' or key == 'x':
-                x_surf = torch.as_tensor(surface_vars).squeeze()
-                return_dict['x_surf'] = x_surf.permute(1, 0, 2, 3) if len(x_surf.shape) == 4 else x_surf.unsqueeze(0)
-                return_dict['x'] = torch.as_tensor(np.hstack([np.expand_dims(x, axis=1) for x in concatenated_vars]))
-
-            elif key == 'target_ERA5_images' or key == 'y':
-                y_surf = torch.as_tensor(surface_vars)
-                y = torch.as_tensor(np.hstack([np.expand_dims(x, axis=1) for x in concatenated_vars]))
-                return_dict['y_surf'] = y_surf.permute(1, 0, 2, 3)
-                return_dict['y'] = y
-
-        return return_dict
-
-
 class ERA5Dataset(torch.utils.data.Dataset):
 
     def __init__(
@@ -378,34 +280,34 @@ class ERA5Dataset(torch.utils.data.Dataset):
         self.data_array = all_fils[0]
         self.rng = np.random.default_rng(seed=seed)
 
-        #set data places:
+        # set data places:
         indo = 0
         self.meta_data_dict = {}
-        for ee,bb in enumerate(self.all_fils):
+        for ee, bb in enumerate(self.all_fils):
             self.meta_data_dict[str(ee)] = [len(bb['time']), indo, indo+len(bb['time'])]
             indo += len(bb['time'])+1
 
-        #set out of bounds indexes...
+        # set out of bounds indexes...
         OOB = []
         for kk in self.meta_data_dict.keys():
             OOB.append(generate_integer_list_around(self.meta_data_dict[kk][2]))
         self.OOB = flatten_list(OOB)
 
     def __post_init__(self):
-        #: Total sequence length of each sample.
+        # Total sequence length of each sample.
         self.total_seq_len = self.history_len + self.forecast_len
 
     def __len__(self):
         tlen = 0
         for bb in self.all_fils:
-            tlen+=len(bb['time']) - self.total_seq_len + 1
+            tlen += len(bb['time']) - self.total_seq_len + 1
         return tlen
 
     def __getitem__(self, index):
 
-        #find the result key:
+        # find the result key:
         result_key = find_key_for_number(index, self.meta_data_dict)
-        #get the data selection:
+        # get the data selection:
         true_ind = index-self.meta_data_dict[result_key][1]
 
         if true_ind > (len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+1)):
@@ -584,33 +486,6 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
                 if (k == self.history_len):
                     break
 
-    def estimate_average_length(self, max_length=100, num_simulations=1000):
-        """
-        Simulate for-loops of length max_length with termination probability p and compute the average length.
-
-        Parameters:
-        - max_length: The length of the loop.
-        - termination_probability: The termination probability (p).
-        - num_simulations: The number of simulations to perform.
-
-        Returns:
-        - average_length: The average length of the loop.
-        """
-
-        total_length = 0
-
-        for _ in range(num_simulations):
-            loop_length = 1
-
-            # Simulate the loop termination with probability p
-            while random.random() > self.rollout_p and loop_length < max_length:
-                loop_length += 1
-
-            total_length += loop_length
-
-        average_length = total_length / num_simulations
-        return average_length
-
 
 class PredictForecast(torch.utils.data.IterableDataset):
     def __init__(self,
@@ -661,8 +536,6 @@ class PredictForecast(torch.utils.data.IterableDataset):
             stop_time = np.datetime64(dataset['time'].max().values).astype(datetime.datetime)
             track_start = False
             track_stop = False
-
-            #print(self.start_time, self.stop_time, start_time, stop_time)
 
             if start_time <= self.start_time <= stop_time:
                 # Start time is in this file, use start time index

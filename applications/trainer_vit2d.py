@@ -41,7 +41,8 @@ from torchvision import transforms
 from credit.vit2d import ViT2D
 from credit.rvt import RViT
 from credit.loss import VariableTotalLoss2D
-from credit.data import ERA5Dataset, ToTensor, NormalizeState, DistributedSequentialDataset
+from credit.data import ERA5Dataset, DistributedSequentialDataset
+from credit.transforms import ToTensor, NormalizeState
 from credit.scheduler import load_scheduler, annealed_probability
 from credit.trainer import Trainer
 from credit.metrics import LatWeightedMetrics

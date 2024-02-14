@@ -73,7 +73,7 @@ class Trainer:
         if isinstance(trainloader.dataset, IterableDataset):
             # we sample forecast termination with probability p during training
             trainloader.dataset.set_rollout_prob(rollout_p)
-            batches_per_epoch = int(trainloader.dataset.estimate_average_length() * batches_per_epoch)
+            batches_per_epoch = int(batches_per_epoch / rollout_p)
         else:
             batches_per_epoch = (
                 batches_per_epoch if 0 < batches_per_epoch < len(trainloader) else len(trainloader)
