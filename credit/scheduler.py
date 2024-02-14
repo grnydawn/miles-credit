@@ -1,7 +1,7 @@
 import copy
 import math
 import torch
-from torch.optim.lr_scheduler import _LRScheduler
+from torch.optim.lr_scheduler import LRScheduler
 from torch.optim.lr_scheduler import LambdaLR, ReduceLROnPlateau
 
 
@@ -65,7 +65,7 @@ def lr_lambda_phase1(epoch, num_epochs=100, warmup_epochs=10):
         return 0.5 * (1 + math.cos(math.pi * progress))
 
 
-class CosineAnnealingWarmupRestarts(_LRScheduler):
+class CosineAnnealingWarmupRestarts(LRScheduler):
     """
         optimizer (Optimizer): Wrapped optimizer.
         first_cycle_steps (int): First cycle step size.

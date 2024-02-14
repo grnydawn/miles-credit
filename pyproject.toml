@@ -10,14 +10,31 @@ license = {file = "LICENSE"}
 dynamic = ["version"]
 requires-python = ">=3.8"
 dependencies = [
-   "numpy<1.24",
-   "scipy",
-   "matplotlib",
-   "pandas",
-   "xarray",
-   "netcdf4",
-   "torch",
-   "bridgescaler",
+    "numpy<1.24",
+    "pandas",
+    "matplotlib",
+    "cartopy",
+    "scikit-learn",
+    "pyarrow",
+    "pytest",
+    "xarray",
+    "netcdf4",
+    "torch",
+    "torchvision",
+    "wandb",
+    "pyyaml",
+    "cartopy",
+    "dask",
+    "distributed",
+    "dask-jobqueue",
+    "zarr",
+    "jupyter",
+    "einops",
+    "echo-opt",
+    "bridgescaler",
+    "rotary-embedding-torch",
+    "segmentation-models-pytorch",
+    "vector-quantize-pytorch"
    ]
 
 [tool.setuptools]

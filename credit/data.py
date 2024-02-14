@@ -362,7 +362,7 @@ class ERA5Dataset(torch.utils.data.Dataset):
         history_len: int = 1,
         forecast_len: int = 2,
         transform: Optional[Callable] = None,
-        SEED=42,
+        seed=42,
         skip_periods=None,
     ):
         self.history_len = history_len
@@ -376,7 +376,7 @@ class ERA5Dataset(torch.utils.data.Dataset):
             all_fils.append(get_forward_data(filename=fn))
         self.all_fils = all_fils
         self.data_array = all_fils[0]
-        self.rng = np.random.default_rng(seed=SEED)
+        self.rng = np.random.default_rng(seed=seed)
 
         #set data places:
         indo = 0

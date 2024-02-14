@@ -97,6 +97,7 @@ varout_l = ['t2m','T500','V500','U500','Q500','Z500'] #what should the variable 
 # ### ++++++ dask NCAR client: 
 print('...setting up dask client...')
 if 'client' in locals():
+    client = locals()["client"]
     client.shutdown()
     print('...shutdown client...')
 else:
