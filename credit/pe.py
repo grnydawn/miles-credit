@@ -73,4 +73,7 @@ class SurfacePosEmb2D(nn.Module):
         self.embedding = nn.Parameter(pe)
 
     def forward(self, x):
-        return x + self.embedding[:, :x.size(1)].to(dtype=x.dtype, device=x.device)
+        #if x.size(1) == 217:
+        return x + self.embedding.to(dtype=x.dtype, device=x.device)
+        #return x + self.embedding[:, :x.size(1)].to(dtype=x.dtype, device=x.device)
+        
