@@ -32,8 +32,13 @@ trainer:
     stopping_patience: 50
     teacher_forcing_ratio: 0.7
     stop_rollout: 0.9
+    use_scheduler: False
+    #scheduler: {'scheduler_type': 'cosine-annealing', first_cycle_steps: 500, cycle_mult: 6.0, max_lr: 5.0e-04, min_lr: 5.0e-07, warmup_steps: 499, gamma: 0.7}
+    # scheduler: {scheduler_type: plateau, mode: min, factor: 0.1, patience: 5, cooldown: 2, min_lr: 1e-6, epsilon: 1e-8, verbose: true, threshold: 1e-4}
+    scheduler: {'scheduler_type': 'lambda'}
 
 model:
+    type: "unet"
     image_height: 640
     image_width: 1280
     frames: 15

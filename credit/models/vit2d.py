@@ -1,68 +1,33 @@
-from torch import nn, einsum
-
 import os
+import logging
+
 import torch
 import torch.fft
-from einops import rearrange, repeat, pack, unpack
-from einops.layers.torch import Rearrange
-
 import torch.nn.functional as F
+from torch import nn
 import torch.distributed.checkpoint as DCP
 from torch.distributed.fsdp import StateDictType
 
+import xarray as xr
+
+from einops import rearrange, repeat, pack, unpack
+from einops.layers.torch import Rearrange
+from rotary_embedding_torch import RotaryEmbedding
 from credit.pe import SurfacePosEmb2D
 from vector_quantize_pytorch import VectorQuantize
-import logging
-import xarray as xr
-from rotary_embedding_torch import RotaryEmbedding
 
 
 logger = logging.getLogger(__name__)
 
 
-class DepthWiseConv2d(nn.Module):
-    def __init__(self, dim_in, dim_out, kernel_size, padding, stride=1, bias=True):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Conv2d(dim_in, dim_in, kernel_size=kernel_size, padding=padding, groups=dim_in, stride=stride, bias=bias),
-            nn.Conv2d(dim_in, dim_out, kernel_size=1, bias=bias)
-        )
-
-    def forward(self, x):
-        return self.net(x)
-
-
-# helper classes
-
-
-class SpatialConv(nn.Module):
-    def __init__(self, dim_in, dim_out, kernel, bias=False):
-        super().__init__()
-        self.conv = DepthWiseConv2d(dim_in, dim_out, kernel, padding=kernel // 2, bias=False)
-        self.cls_proj = nn.Linear(dim_in, dim_out) if dim_in != dim_out else nn.Identity()
-
-    def forward(self, x, fmap_dims):
-        cls_token, x = x[:, :1], x[:, 1:]
-        x = rearrange(x, 'b (h w) d -> b d h w', **fmap_dims)
-        x = self.conv(x)
-        x = rearrange(x, 'b d h w -> b (h w) d')
-        cls_token = self.cls_proj(cls_token)
-        return torch.cat((cls_token, x), dim=1)
-
-
-class GEGLU(nn.Module):
-    def forward(self, x):
-        x, gates = x.chunk(2, dim=-1)
-        return F.gelu(gates) * x
-
-
 class FeedForward(nn.Module):
-    def __init__(self, dim, hidden_dim, dropout=0., use_glu=True):
+
+    def __init__(self, dim, hidden_dim, dropout=0.):
         super().__init__()
         self.net = nn.Sequential(
             nn.LayerNorm(dim),
-            nn.Linear(dim, hidden_dim * 2 if use_glu else hidden_dim),
-            GEGLU() if use_glu else nn.GELU(),
+            nn.Linear(dim, hidden_dim),
+            nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, dim),
             nn.Dropout(dropout)
@@ -73,70 +38,108 @@ class FeedForward(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, dim, heads=8, dim_head=64, dropout=0., use_rotary=True, use_ds_conv=True, conv_query_kernel=5):
+    def __init__(self, dim, heads=8, dim_head=64, dropout=0., rotary_emb=None):
         super().__init__()
         inner_dim = dim_head * heads
-        self.use_rotary = use_rotary
+        project_out = not (heads == 1 and dim_head == dim)
+
         self.heads = heads
         self.scale = dim_head ** -0.5
+        self.rotary_emb = rotary_emb
 
         self.norm = nn.LayerNorm(dim)
         self.attend = nn.Softmax(dim=-1)
         self.dropout = nn.Dropout(dropout)
 
-        self.use_ds_conv = use_ds_conv
-
-        self.to_q = SpatialConv(dim, inner_dim, conv_query_kernel, bias=False) if use_ds_conv else nn.Linear(dim, inner_dim, bias=False)
-
-        self.to_kv = nn.Linear(dim, inner_dim * 2, bias=False)
+        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias=False)
 
         self.to_out = nn.Sequential(
             nn.Linear(inner_dim, dim),
             nn.Dropout(dropout)
-        )
+        ) if project_out else nn.Identity()
 
-        self.pos_emb = RotaryEmbedding(dim=dim_head, freqs_for="pixel", max_freq=1280)
+        self.dr = dropout
 
-    def forward(self, x, fmap_dims):
-        b, n, _, h = *x.shape, self.heads
+        if self.rotary_emb is not None:
+            self.rotary_emb = RotaryEmbedding(dim=dim)
 
-        to_q_kwargs = {'fmap_dims': fmap_dims} if self.use_ds_conv else {}
-
+    def forward(self, x):
         x = self.norm(x)
+        qkv = self.to_qkv(x).chunk(3, dim=-1)
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.heads), qkv)
 
-        q = self.to_q(x, **to_q_kwargs)
+        if self.rotary_emb is not None:
+            q = self.rotary_emb.rotate_queries_or_keys(q)
+            k = self.rotary_emb.rotate_queries_or_keys(k)
 
-        qkv = (q, *self.to_kv(x).chunk(2, dim=-1))
+        # dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
 
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), qkv)
+        # attn = self.attend(dots)
+        # attn = self.dropout(attn)
 
-        q = self.pos_emb.rotate_queries_or_keys(q)
-        k = self.pos_emb.rotate_queries_or_keys(k)
+        # out = torch.matmul(attn, v)
 
-        dots = einsum('b i d, b j d -> b i j', q, k) * self.scale
+        with torch.backends.cuda.sdp_kernel(
+                enable_flash=True,
+                enable_math=False,
+                enable_mem_efficient=True  # should be false but bug somewhere on my end
+        ):
+            out = F.scaled_dot_product_attention(
+                q, k, v,
+                attn_mask=None,
+                dropout_p=self.dr
+            )
 
-        attn = self.attend(dots)
-        attn = self.dropout(attn)
-
-        out = einsum('b i j, b j d -> b i d', attn, v)
-        out = rearrange(out, '(b h) n d -> b n (h d)', h=h)
+        out = rearrange(out, 'b h n d -> b n (h d)')
         return self.to_out(out)
 
 
-class Transformer(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim, image_size, dropout=0., use_rotary=True, use_ds_conv=True, use_glu=True):
+class LRTransformer(nn.Module):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout=0.0, rotary_emb=True):
         super().__init__()
+        torch._C._log_api_usage_once(f"torch.nn.modules.{self.__class__.__name__}")
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout, use_rotary=use_rotary, use_ds_conv=use_ds_conv),
-                FeedForward(dim, mlp_dim, dropout=dropout, use_glu=use_glu)
+                Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout, rotary_emb=rotary_emb),
+                FeedForward(dim, mlp_dim, dropout=dropout)
             ]))
 
-    def forward(self, x, fmap_dims):
+    def forward(self, x):
         for attn, ff in self.layers:
-            x = attn(x, fmap_dims=fmap_dims) + x
+            x = attn(x) + x
             x = ff(x) + x
+        return x
+
+
+class TransformerBlock(nn.Module):
+    def __init__(self, dim, heads, dim_head, mlp_dim, dropout=0.):
+        super().__init__()
+        torch._C._log_api_usage_once(f"torch.nn.modules.{self.__class__.__name__}")
+        self.encoder = nn.TransformerEncoderLayer(
+            dim,
+            heads,
+            mlp_dim,
+            dropout,
+            batch_first=True
+        )
+
+    def forward(self, x):
+        return self.encoder(x)
+
+
+class Transformer(nn.Module):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout=0., rotary_emb=True):
+        super().__init__()
+        if rotary_emb:
+            logger.warning("You specified to use rotary embedding but this transformer class does not use it. Only lucidrains transformers are supported")
+        self.layers = nn.ModuleList([])
+        for _ in range(depth):
+            self.layers.append(TransformerBlock(dim, heads, dim_head, mlp_dim, dropout))
+
+    def forward(self, x):
+        for block in self.layers:
+            x = block(x)
         return x
 
 
@@ -200,9 +203,7 @@ class PatchDropout(torch.nn.Module):
         return patch_mask
 
 
-# Rotary Vision Transformer
-
-class RViT(nn.Module):
+class ViT2D(nn.Module):
     def __init__(
             self,
             image_height,
@@ -219,11 +220,8 @@ class RViT(nn.Module):
             dim_head=32,
             mlp_dim=32,
             dropout=0.0,
-            emb_dropout=0.,
-            use_rotary=True,
-            use_ds_conv=True,
-            use_glu=True,
             use_decoder_conv_layers=False,
+            use_rotary=True,
             use_cls_tokens=False,
             use_registers=False,
             num_register_tokens=0,
@@ -236,8 +234,6 @@ class RViT(nn.Module):
             vq_kmeans_init=True,
             vq_use_cosine_sim=True,
             rk4_integration=False,
-            use_visual_ssl=False,  # not implemented
-            visual_ssl_weight=0.0,  # not implemented
             transformer_type="lucidrains",
             static_variables=None
     ):
@@ -254,35 +250,34 @@ class RViT(nn.Module):
         self.static_variables = static_variables
 
         # Encoder-decoder layers
+        if transformer_type == "pytorch":
+            transformer = Transformer
+        elif transformer_type == "lucidrains":
+            transformer = LRTransformer
+        else:
+            raise ValueError("Transformer type {} is not supposed. Choose from pytorch or lucidrains")
 
-        self.transformer_encoder = Transformer(
+        self.transformer_encoder = transformer(
             dim=dim,
             depth=depth,
             dim_head=dim_head,
             heads=heads,
             mlp_dim=mlp_dim,
-            image_size=image_width,
             dropout=dropout,
-            use_rotary=use_rotary,
-            use_ds_conv=use_ds_conv,
-            use_glu=use_glu
+            rotary_emb=use_rotary
         )
-        self.transformer_decoder = Transformer(
+        self.transformer_decoder = transformer(
             dim=dim,
             depth=depth,
             dim_head=dim_head,
             heads=heads,
             mlp_dim=mlp_dim,
-            image_size=image_width,
             dropout=dropout,
-            use_rotary=use_rotary,
-            use_ds_conv=use_ds_conv,
-            use_glu=use_glu
+            rotary_emb=use_rotary
         )
 
         # Input/output dimensions
         self.num_patches = int((image_height // patch_height) * (image_width // patch_width))
-        self.fmap_dims = {'h': image_height // patch_height, 'w': image_width // patch_width}
         input_channels = channels * frames + surface_channels
         input_dim = input_channels * patch_height * patch_width
 
@@ -312,6 +307,7 @@ class RViT(nn.Module):
                                            p2=patch_width)
 
         # Positional embeddings
+        # self.pos_embedding_enc = TokenizationAggregation(channels, patch_height, patch_width, dim)
         self.pos_embedding_enc = SurfacePosEmb2D(
             image_height, image_width, patch_height, patch_width, dim, cls_token=self.use_cls_tokens
         )
@@ -321,7 +317,12 @@ class RViT(nn.Module):
 
         # Conv smoothing layer for decoder
         if self.use_decoder_conv_layers:
-            self.conv = nn.Conv2d(in_channels=input_channels, out_channels=input_channels, kernel_size=3, padding=1)
+            self.conv = nn.Conv2d(
+                in_channels=input_channels,
+                out_channels=input_channels,
+                kernel_size=3,
+                padding=1
+            )
 
         # CLS paramters
         if self.use_cls_tokens:
@@ -350,23 +351,12 @@ class RViT(nn.Module):
                 use_cosine_sim=vq_use_cosine_sim
             )
 
-#         self.visual_ssl = None
-#         self.visual_ssl_weight = conf['model']['visual_ssl_weight']
-#         if conf['model']['use_visual_ssl']:
-#             ssl_type = partial(
-#                 SimSiam,
-#                 channels = conf['model']['channels'],
-#                 surface_channels = conf['model']['surface_channels'],
-#                 device = next(self.enc_dec.parameters()).device)
-
-        #self.cbam = CBAM(channels * frames + surface_channels)
-
         if self.static_variables is not None:
             self.static_vars = torch.from_numpy(
                 xr.open_dataset(self.static_variables["cos_lat"])["coslat"].values
             ).float().unsqueeze(0).unsqueeze(0)
 
-        logger.info("Loaded a ViT with a rotary embedding in each attention layer")
+        logger.info(f"... loaded a {transformer_type} ViT. Rotary embedding: {use_rotary}")
 
     def encode(self, x):
 
@@ -392,7 +382,7 @@ class RViT(nn.Module):
             r = repeat(self.register_tokens_enc, 'n d -> b n d', b=x.shape[0])
             x, ps = pack([x, r], 'b * d')
 
-        x = self.transformer_encoder(x, fmap_dims=self.fmap_dims)
+        x = self.transformer_encoder(x)
 
         if self.use_registers:
             x, _ = unpack(x, ps, 'b * d')
@@ -425,7 +415,7 @@ class RViT(nn.Module):
         if self.use_registers:
             r = repeat(self.register_tokens_dec, 'n d -> b n d', b=x.shape[0])
             x, ps = pack([x, r], 'b * d')
-        x = self.transformer_decoder(x, fmap_dims=self.fmap_dims)
+        x = self.transformer_decoder(x)
         if self.use_registers:
             x, _ = unpack(x, ps, 'b * d')
 
@@ -513,11 +503,11 @@ class RViT(nn.Module):
     @classmethod
     def load_model(cls, conf):
         save_loc = conf['save_loc']
-        ckpt = f"{save_loc}/checkpoint.pt"
+        ckpt = os.path.join(f"{save_loc}", "checkpoint.pt")
 
         if conf["trainer"]["mode"] == "ddp":
             if not os.path.isfile(ckpt):
-                ckpt = f"{save_loc}/checkpoint_cuda:0.pt"
+                ckpt = os.path.join(f"{save_loc}", "checkpoint_cuda:0.pt")
 
         if not os.path.isfile(ckpt):
             raise ValueError(
@@ -529,6 +519,9 @@ class RViT(nn.Module):
         )
 
         checkpoint = torch.load(ckpt)
+
+        if "type" in conf["model"]:
+            del conf["model"]["type"]
 
         model_class = cls(**conf["model"])
 
@@ -576,7 +569,7 @@ if __name__ == "__main__":
 
     input_tensor = torch.randn(1, channels * frames + surface_channels, image_height, image_width)
 
-    model = RViT(
+    model = ViT2D(
         image_height,
         patch_height,
         image_width,
