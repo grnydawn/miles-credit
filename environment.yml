@@ -2,6 +2,7 @@ name: credit
 channels:
   - conda-forge
   - pytorch
+  - pyg
 dependencies:
   - python=3.11
   - pip
@@ -24,6 +25,7 @@ dependencies:
   - dask-jobqueue
   - zarr
   - jupyter
+  - pyg
   - pip:
     - einops
     - echo-opt
@@ -31,5 +33,6 @@ dependencies:
     - rotary-embedding-torch
     - segmentation-models-pytorch
     - vector_quantize_pytorch
+    - haversine
     - .
 

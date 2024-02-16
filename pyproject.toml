@@ -34,7 +34,9 @@ dependencies = [
     "bridgescaler",
     "rotary-embedding-torch",
     "segmentation-models-pytorch",
-    "vector-quantize-pytorch"
+    "vector-quantize-pytorch",
+    "torch-geometric",
+    "haversine"
    ]
 
 [tool.setuptools]
