@@ -1,13 +1,13 @@
 log: True
-save_path: "/glade/work/schreck/repos/global/miles-credit/results/echo/"
+save_path: "/glade/work/schreck/repos/global/miles-credit/results/ONEdegTest/echo/"
 
 pbs:
-  jobs: 1
+  jobs: 30
   tasks_per_worker: 1
   gpus_per_node: 1
   bash: [
       "source ~/.bashrc", 
-      "conda activate /glade/work/schreck/miniconda3/envs/evidential"
+      "conda activate holodec"
         ]
   batch:
     N: "echo-vit"
@@ -21,7 +21,7 @@ optuna:
   storage: "study.db"
   study_name: "gwm"
   storage_type: "sqlite"
-  objective: "/glade/u/home/schreck/schreck/repos/global/miles-credit/applications/trainer_vit2d.py"
+  objective: "/glade/u/home/schreck/schreck/repos/global/miles-credit/applications/train.py"
   direction: "maximize"
   metric: "valid_acc"
   n_trials: 1000
@@ -70,23 +70,48 @@ optuna:
       type: "int"
       settings:
         name: "dim"
-        low: 16
-        high: 1024
-        step: 16
+        low: 64
+        high: 256
+        step: 64
     model:dim_head:
       type: "int"
       settings:
         name: "dim_head"
-        low: 16
-        high: 1024
-        step: 16
-    model:mlp_dim:
+        low: 64
+        high: 256
+        step: 64
+    model:heads:
       type: "int"
       settings:
-        name: "mlp_dim"
-        low: 16
+        name: "heads"
+        low: 1
+        high: 32
+    model:vq_codebook_size:
+      type: "int"
+      settings:
+        name: "vq_codebook_size"
+        low: 64
         high: 1024
-        step: 16
+        step: 64
+    model:num_register_tokens:
+      type: "int"
+      settings:
+        name: "num_register_tokens"
+        low: 0
+        high: 16
+    # model:mlp_dim:
+    #   type: "int"
+    #   settings:
+    #     name: "mlp_dim"
+    #     low: 64
+    #     high: 256
+    #     step: 64
+    model:depth:
+      type: "int"
+      settings:
+        name: "depth"
+        low: 1
+        high: 16
     loss:training_loss:
       type: "categorical"
       settings:
@@ -99,9 +124,9 @@ optuna:
         low: 0
         high: 50
     loss:spectral_lambda_reg:
-      type: "float"
+      type: "loguniform"
       settings:
         name: "spectral_lambda_reg"
-        low: 0.0
-        high: 1.0
+        low: 1.0e-06
+        high: 1.0e-00
     
