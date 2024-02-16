@@ -1,7 +1,8 @@
+from torch import nn, einsum
+
 import os
 import torch
 import torch.fft
-from torch import nn
 from einops import rearrange, repeat, pack, unpack
 from einops.layers.torch import Rearrange
 
@@ -13,19 +14,55 @@ from credit.pe import SurfacePosEmb2D
 from vector_quantize_pytorch import VectorQuantize
 import logging
 import xarray as xr
+from rotary_embedding_torch import RotaryEmbedding
 
 
 logger = logging.getLogger(__name__)
 
 
-class FeedForward(nn.Module):
+class DepthWiseConv2d(nn.Module):
+    def __init__(self, dim_in, dim_out, kernel_size, padding, stride=1, bias=True):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(dim_in, dim_in, kernel_size=kernel_size, padding=padding, groups=dim_in, stride=stride, bias=bias),
+            nn.Conv2d(dim_in, dim_out, kernel_size=1, bias=bias)
+        )
 
-    def __init__(self, dim, hidden_dim, dropout=0.):
+    def forward(self, x):
+        return self.net(x)
+
+
+# helper classes
+
+
+class SpatialConv(nn.Module):
+    def __init__(self, dim_in, dim_out, kernel, bias=False):
+        super().__init__()
+        self.conv = DepthWiseConv2d(dim_in, dim_out, kernel, padding=kernel // 2, bias=False)  # lucid rains padding
+        self.cls_proj = nn.Linear(dim_in, dim_out) if dim_in != dim_out else nn.Identity()
+
+    def forward(self, x, fmap_dims):
+        cls_token, x = x[:, :1], x[:, 1:]
+        x = rearrange(x, 'b (h w) d -> b d h w', **fmap_dims)
+        x = self.conv(x)
+        x = rearrange(x, 'b d h w -> b (h w) d')
+        cls_token = self.cls_proj(cls_token)
+        return torch.cat((cls_token, x), dim=1)
+
+
+class GEGLU(nn.Module):
+    def forward(self, x):
+        x, gates = x.chunk(2, dim=-1)
+        return F.gelu(gates) * x
+
+
+class FeedForward(nn.Module):
+    def __init__(self, dim, hidden_dim, dropout=0., use_glu=True):
         super().__init__()
         self.net = nn.Sequential(
             nn.LayerNorm(dim),
-            nn.Linear(dim, hidden_dim),
-            nn.GELU(),
+            nn.Linear(dim, hidden_dim * 2 if use_glu else hidden_dim),
+            GEGLU() if use_glu else nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_dim, dim),
             nn.Dropout(dropout)
@@ -36,11 +73,10 @@ class FeedForward(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, dim, heads=8, dim_head=64, dropout=0.):
+    def __init__(self, dim, heads=8, dim_head=64, dropout=0., use_rotary=True, use_ds_conv=True, conv_query_kernel=5):
         super().__init__()
         inner_dim = dim_head * heads
-        project_out = not (heads == 1 and dim_head == dim)
-
+        self.use_rotary = use_rotary
         self.heads = heads
         self.scale = dim_head ** -0.5
 
@@ -48,86 +84,59 @@ class Attention(nn.Module):
         self.attend = nn.Softmax(dim=-1)
         self.dropout = nn.Dropout(dropout)
 
-        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias=False)
+        self.use_ds_conv = use_ds_conv
+
+        self.to_q = SpatialConv(dim, inner_dim, conv_query_kernel, bias=False) if use_ds_conv else nn.Linear(dim, inner_dim, bias=False)
+
+        self.to_kv = nn.Linear(dim, inner_dim * 2, bias=False)
 
         self.to_out = nn.Sequential(
             nn.Linear(inner_dim, dim),
             nn.Dropout(dropout)
-        ) if project_out else nn.Identity()
+        )
 
-        self.dr = dropout
+        self.pos_emb = RotaryEmbedding(dim=dim_head, freqs_for="pixel", max_freq=1280)
 
-    def forward(self, x):
+    def forward(self, x, fmap_dims):
+        _, _, _, h = *x.shape, self.heads
+
+        to_q_kwargs = {'fmap_dims': fmap_dims} if self.use_ds_conv else {}
+
         x = self.norm(x)
-        qkv = self.to_qkv(x).chunk(3, dim=-1)
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=self.heads), qkv)
 
-        # dots = torch.matmul(q, k.transpose(-1, -2)) * self.scale
+        q = self.to_q(x, **to_q_kwargs)
 
-        # attn = self.attend(dots)
-        # attn = self.dropout(attn)
+        qkv = (q, *self.to_kv(x).chunk(2, dim=-1))
 
-        # out = torch.matmul(attn, v)
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> (b h) n d', h=h), qkv)
 
-        with torch.backends.cuda.sdp_kernel(
-                enable_flash=True,
-                enable_math=False,
-                enable_mem_efficient=True  # should be false but bug somewhere on my end
-        ):
-            out = F.scaled_dot_product_attention(
-                q, k, v,
-                attn_mask=None,
-                dropout_p=self.dr
-            )
+        q = self.pos_emb.rotate_queries_or_keys(q)
+        k = self.pos_emb.rotate_queries_or_keys(k)
 
-        out = rearrange(out, 'b h n d -> b n (h d)')
+        dots = einsum('b i d, b j d -> b i j', q, k) * self.scale
+
+        attn = self.attend(dots)
+        attn = self.dropout(attn)
+
+        out = einsum('b i j, b j d -> b i d', attn, v)
+        out = rearrange(out, '(b h) n d -> b n (h d)', h=h)
         return self.to_out(out)
 
 
-class LRTransformer(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout=0.0):
+class Transformer(nn.Module):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, image_size, dropout=0., use_rotary=True, use_ds_conv=True, use_glu=True):
         super().__init__()
-        torch._C._log_api_usage_once(f"torch.nn.modules.{self.__class__.__name__}")
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout),
-                FeedForward(dim, mlp_dim, dropout=dropout)
+                Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout, use_rotary=use_rotary, use_ds_conv=use_ds_conv),
+                FeedForward(dim, mlp_dim, dropout=dropout, use_glu=use_glu)
             ]))
 
-    def forward(self, x):
+    def forward(self, x, fmap_dims):
         for attn, ff in self.layers:
-            x = attn(x) + x
+            x = attn(x, fmap_dims=fmap_dims) + x
             x = ff(x) + x
-        return x
-
-
-class TransformerBlock(nn.Module):
-    def __init__(self, dim, heads, dim_head, mlp_dim, dropout=0.):
-        super().__init__()
-        torch._C._log_api_usage_once(f"torch.nn.modules.{self.__class__.__name__}")
-        self.encoder = nn.TransformerEncoderLayer(
-            dim,
-            heads,
-            mlp_dim,
-            dropout,
-            batch_first=True
-        )
-
-    def forward(self, x):
-        return self.encoder(x)
-
-
-class Transformer(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout=0.):
-        super().__init__()
-        self.layers = nn.ModuleList([])
-        for _ in range(depth):
-            self.layers.append(TransformerBlock(dim, heads, dim_head, mlp_dim, dropout))
-
-    def forward(self, x):
-        for block in self.layers:
-            x = block(x)
         return x
 
 
@@ -191,7 +200,9 @@ class PatchDropout(torch.nn.Module):
         return patch_mask
 
 
-class ViT2D(nn.Module):
+# Rotary Vision Transformer
+
+class RViT(nn.Module):
     def __init__(
             self,
             image_height,
@@ -208,6 +219,10 @@ class ViT2D(nn.Module):
             dim_head=32,
             mlp_dim=32,
             dropout=0.0,
+            emb_dropout=0.,
+            use_rotary=True,
+            use_ds_conv=True,
+            use_glu=True,
             use_decoder_conv_layers=False,
             use_cls_tokens=False,
             use_registers=False,
@@ -239,32 +254,35 @@ class ViT2D(nn.Module):
         self.static_variables = static_variables
 
         # Encoder-decoder layers
-        if transformer_type == "pytorch":
-            transformer = Transformer
-        elif transformer_type == "lucidrains":
-            transformer = LRTransformer
-        else:
-            raise ValueError("Transformer type {} is not supposed. Choose from pytorch or lucidrains")
 
-        self.transformer_encoder = transformer(
+        self.transformer_encoder = Transformer(
             dim=dim,
             depth=depth,
             dim_head=dim_head,
             heads=heads,
             mlp_dim=mlp_dim,
-            dropout=dropout
+            image_size=image_width,
+            dropout=dropout,
+            use_rotary=use_rotary,
+            use_ds_conv=use_ds_conv,
+            use_glu=use_glu
         )
-        self.transformer_decoder = transformer(
+        self.transformer_decoder = Transformer(
             dim=dim,
             depth=depth,
             dim_head=dim_head,
             heads=heads,
             mlp_dim=mlp_dim,
-            dropout=dropout
+            image_size=image_width,
+            dropout=dropout,
+            use_rotary=use_rotary,
+            use_ds_conv=use_ds_conv,
+            use_glu=use_glu
         )
 
         # Input/output dimensions
         self.num_patches = int((image_height // patch_height) * (image_width // patch_width))
+        self.fmap_dims = {'h': image_height // patch_height, 'w': image_width // patch_width}
         input_channels = channels * frames + surface_channels
         input_dim = input_channels * patch_height * patch_width
 
@@ -294,7 +312,6 @@ class ViT2D(nn.Module):
                                            p2=patch_width)
 
         # Positional embeddings
-        # self.pos_embedding_enc = TokenizationAggregation(channels, patch_height, patch_width, dim)
         self.pos_embedding_enc = SurfacePosEmb2D(
             image_height, image_width, patch_height, patch_width, dim, cls_token=self.use_cls_tokens
         )
@@ -304,12 +321,7 @@ class ViT2D(nn.Module):
 
         # Conv smoothing layer for decoder
         if self.use_decoder_conv_layers:
-            self.conv = nn.Conv2d(
-                in_channels=input_channels,
-                out_channels=input_channels,
-                kernel_size=3,
-                padding=1
-            )
+            self.conv = nn.Conv2d(in_channels=input_channels, out_channels=input_channels, kernel_size=3, padding=1)
 
         # CLS paramters
         if self.use_cls_tokens:
@@ -338,21 +350,12 @@ class ViT2D(nn.Module):
                 use_cosine_sim=vq_use_cosine_sim
             )
 
-#         self.visual_ssl = None
-#         self.visual_ssl_weight = conf['model']['visual_ssl_weight']
-#         if conf['model']['use_visual_ssl']:
-#             ssl_type = partial(
-#                 SimSiam,
-#                 channels = conf['model']['channels'],
-#                 surface_channels = conf['model']['surface_channels'],
-#                 device = next(self.enc_dec.parameters()).device)
-
         if self.static_variables is not None:
             self.static_vars = torch.from_numpy(
                 xr.open_dataset(self.static_variables["cos_lat"])["coslat"].values
             ).float().unsqueeze(0).unsqueeze(0)
 
-        logger.info(f"Loaded a {transformer_type} ViT")
+        logger.info("... loaded a ViT with a rotary embedding in each attention layer")
 
     def encode(self, x):
 
@@ -378,7 +381,7 @@ class ViT2D(nn.Module):
             r = repeat(self.register_tokens_enc, 'n d -> b n d', b=x.shape[0])
             x, ps = pack([x, r], 'b * d')
 
-        x = self.transformer_encoder(x)
+        x = self.transformer_encoder(x, fmap_dims=self.fmap_dims)
 
         if self.use_registers:
             x, _ = unpack(x, ps, 'b * d')
@@ -411,7 +414,7 @@ class ViT2D(nn.Module):
         if self.use_registers:
             r = repeat(self.register_tokens_dec, 'n d -> b n d', b=x.shape[0])
             x, ps = pack([x, r], 'b * d')
-        x = self.transformer_decoder(x)
+        x = self.transformer_decoder(x, fmap_dims=self.fmap_dims)
         if self.use_registers:
             x, _ = unpack(x, ps, 'b * d')
 
@@ -450,7 +453,6 @@ class ViT2D(nn.Module):
         return None
 
     def forward(self, x):
-
         # add grid here to the inputs
         if self.static_variables is not None:
             x = torch.cat([x, self.static_vars.expand(x.size(0), -1, -1, -1).to(x.device)], dim=1)
@@ -499,11 +501,11 @@ class ViT2D(nn.Module):
     @classmethod
     def load_model(cls, conf):
         save_loc = conf['save_loc']
-        ckpt = os.path.join(f"{save_loc}", "checkpoint.pt")
+        ckpt = f"{save_loc}/checkpoint.pt"
 
         if conf["trainer"]["mode"] == "ddp":
             if not os.path.isfile(ckpt):
-                ckpt = os.path.join(f"{save_loc}", "checkpoint_cuda:0.pt")
+                ckpt = f"{save_loc}/checkpoint_cuda:0.pt"
 
         if not os.path.isfile(ckpt):
             raise ValueError(
@@ -515,6 +517,9 @@ class ViT2D(nn.Module):
         )
 
         checkpoint = torch.load(ckpt)
+
+        if "type" in conf["model"]:
+            del conf["model"]["type"]
 
         model_class = cls(**conf["model"])
 
@@ -562,7 +567,7 @@ if __name__ == "__main__":
 
     input_tensor = torch.randn(1, channels * frames + surface_channels, image_height, image_width)
 
-    model = ViT2D(
+    model = RViT(
         image_height,
         patch_height,
         image_width,

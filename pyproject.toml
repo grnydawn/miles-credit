@@ -40,7 +40,7 @@ dependencies = [
    ]
 
 [tool.setuptools]
-packages = ["credit"]
+packages = ["credit", "credit.models"]
 
 [tool.setuptools.dynamic]
 version = {file = "credit/VERSION"}

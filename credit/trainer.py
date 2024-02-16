@@ -14,6 +14,7 @@ from torch.cuda.amp import autocast
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import StateDictType
 from torch.utils.data import IterableDataset
+import optuna
 
 
 def cleanup():
@@ -73,7 +74,6 @@ class Trainer:
         if isinstance(trainloader.dataset, IterableDataset):
             # we sample forecast termination with probability p during training
             trainloader.dataset.set_rollout_prob(rollout_p)
-            batches_per_epoch = int(batches_per_epoch / rollout_p)
         else:
             batches_per_epoch = (
                 batches_per_epoch if 0 < batches_per_epoch < len(trainloader) else len(trainloader)
@@ -175,7 +175,6 @@ class Trainer:
                                 y_atmo = batch["y"][i % len(batch["forecast_hour"])].unsqueeze(0)
                                 y_surf = batch["y_surf"][i % len(batch["forecast_hour"])].unsqueeze(0)
                                 y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
-
                                 loss += criterion(y.to(y_pred.dtype), y_pred).mean() + commit_loss
 
                                 # Metrics
@@ -213,6 +212,12 @@ class Trainer:
             else:
                 results_dict["train_forecast_len"].append(1)
 
+            if not np.isfinite(np.mean(results_dict["train_loss"])):
+                try:
+                    raise optuna.TrialPruned()
+                except Exception as E:
+                    raise E
+
             # agg the results
             to_print = "Epoch: {} train_loss: {:.6f} train_acc: {:.6f} train_mae: {:.6f} forecast_len {:.6}".format(
                 epoch,
@@ -225,6 +230,9 @@ class Trainer:
             if self.rank == 0:
                 batch_group_generator.update(1)
                 batch_group_generator.set_description(to_print)
+
+            if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "cosine-annealing":
+                scheduler.step()
 
         #  Shutdown the progbar
         batch_group_generator.close()
@@ -547,7 +555,7 @@ class Trainer:
 
             # Report result to the trial
             if trial:
-                trial.report(results_dict["valid_loss"], step=epoch)
+                trial.report(results_dict["valid_loss"][-1], step=epoch)
 
             # Stop training if we have not improved after X epochs (stopping patience)
             best_epoch = [

@@ -96,6 +96,9 @@ class SegmentationModel(torch.nn.Module):
 
         checkpoint = torch.load(ckpt)
 
+        if "type" in conf["model"]:
+            del conf["model"]["type"]
+
         model_class = cls(**conf["model"])
 
         if conf["trainer"]["mode"] == "fsdp":

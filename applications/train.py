@@ -38,8 +38,7 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
    apply_activation_checkpointing,
 )
 from torchvision import transforms
-from credit.vit2d import ViT2D
-from credit.rvt import RViT
+from credit.models import load_model
 from credit.loss import VariableTotalLoss2D
 from credit.data import ERA5Dataset, DistributedSequentialDataset
 from credit.transforms import ToTensor, NormalizeState
@@ -250,7 +249,7 @@ def load_model_and_optimizer(conf, model, device):
     return model, optimizer, scheduler, scaler
 
 
-def trainer(rank, world_size, conf, trial=False):
+def main(rank, world_size, conf, trial=False):
 
     if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
         setup(rank, world_size, conf["trainer"]["mode"])
@@ -272,12 +271,22 @@ def trainer(rank, world_size, conf, trial=False):
     # datasets (zarr reader)
 
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
+    #filenames = list(map(os.path.basename, all_ERA_files))
+    #all_years = sorted([re.findall(r'(?:_)(\d{4})', fn)[0] for fn in filenames])
 
     # Specify the years for each set
+    #if conf["data"][train_test_split]:
+    #    normalized_split = conf["data"][train_test_split] / sum(conf["data"][train_test_split])
+    #    n_years = len(all_years)
+    #    train_years, sklearn.model_selection.train_test_split¶
 
-    train_years = [str(year) for year in range(1979, 2014)]
-    valid_years = [str(year) for year in range(2014, 2018)]  # can make CV splits if we want to later on
-    test_years = [str(year) for year in range(2018, 2022)]  # same as graphcast -- always hold out
+    # train_years = [str(year) for year in range(1979, 2014)]
+    # valid_years = [str(year) for year in range(2014, 2018)]  # can make CV splits if we want to later on
+    # test_years = [str(year) for year in range(2018, 2022)]  # same as graphcast -- always hold out
+    
+    train_years = [str(year) for year in range(1995, 2013) if year != 2007]
+    valid_years = [str(year) for year in range(2014, 2015)]  # can make CV splits if we want to later on
+    test_years = [str(year) for year in range(2015, 2016)]  # same as graphcast -- always hold out
 
     # Filter the files for each set
 
@@ -315,14 +324,7 @@ def trainer(rank, world_size, conf, trial=False):
 
     # model
 
-    if 'use_rotary' in conf['model'] and conf['model']['use_rotary']:
-        vae = RViT(**conf['model'])
-    else:
-        if 'use_rotary' in conf['model']:
-            del conf['model']['use_rotary']
-            del conf['model']['use_ds_conv']
-            del conf['model']['use_glu']
-        vae = ViT2D(**conf['model'])
+    vae = load_model(conf)
 
     num_params = sum(p.numel() for p in vae.parameters())
     if rank == 0:
@@ -383,8 +385,12 @@ class Objective(BaseObjective):
         BaseObjective.__init__(self, config, metric, device)
 
     def train(self, trial, conf):
+
+        conf['model']['dim_head'] = conf['model']['dim']
+        conf['model']['vq_codebook_dim'] = conf['model']['dim']
+        
         try:
-            return trainer(0, 1, conf, trial=trial)
+            return main(0, 1, conf, trial=trial)
 
         except Exception as E:
             if "CUDA" in str(E) or "non-singleton" in str(E):
@@ -476,6 +482,6 @@ if __name__ == "__main__":
     seed_everything(seed)
 
     if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
-        trainer(int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf)
+        main(int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf)
     else:
-        trainer(0, 1, conf)
+        main(0, 1, conf)

@@ -1,4 +1,4 @@
-save_loc: "/glade/work/schreck/repos/global/miles-credit/results/echo/"
+save_loc: "/glade/work/schreck/repos/global/miles-credit/results/unet-testing/"
 seed: 1000
 
 data:
@@ -17,7 +17,7 @@ trainer:
     mode: none # none, ddp, fsdp
     train_batch_size: 4
     valid_batch_size: 4
-    batches_per_epoch: 2000 # Set to 0 to use len(dataloader)
+    batches_per_epoch: 0 # Set to 0 to use len(dataloader)
     valid_batches_per_epoch: 100
     learning_rate: 5.0e-04
     weight_decay: 1.0e-05
@@ -39,23 +39,22 @@ trainer:
     scheduler: {'scheduler_type': 'lambda'}
   
 model:
+    type: "vit"
     channels: 4
     depth: 4
     dim: 1024
     dim_head: 1024
+    mlp_dim: 1024
     dropout: 0.0
     frame_patch_size: 3
     frames: 15
     heads: 8
     image_height: 640
     image_width: 1280
-    mlp_dim: 1024
     num_register_tokens: 6
     patch_height: 16
     patch_width: 16
     use_rotary: True
-    use_ds_conv: True
-    use_glu: True
     rk4_integration: false
     surface_channels: 7
     token_dropout: 0.0
@@ -63,8 +62,6 @@ model:
     use_cls_tokens: false
     use_codebook: false
     use_registers: false
-    use_visual_ssl: false
-    visual_ssl_weight: 0.0
     vq_codebook_dim: 768
     vq_codebook_size: 512
     vq_commitment_weight: 0.8265613175117377
