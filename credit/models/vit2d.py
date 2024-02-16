@@ -61,7 +61,7 @@ class Attention(nn.Module):
         self.dr = dropout
 
         if self.rotary_emb is not None:
-            self.rotary_emb = RotaryEmbedding(dim=dim)
+            self.rotary_emb = RotaryEmbedding(dim=dim, freqs_for="pixel", max_freq=1280)
 
     def forward(self, x):
         x = self.norm(x)
