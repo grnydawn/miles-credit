@@ -73,7 +73,7 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
     shuffle = is_train
     name = "Train" if is_train else "Valid"
 
-    if history_len > 1:
+    if history_len > 1 and forecast_len > 0:
         dataset = DistributedSequentialDataset(
             filenames=files,
             history_len=history_len,
@@ -280,13 +280,13 @@ def main(rank, world_size, conf, trial=False):
     #    n_years = len(all_years)
     #    train_years, sklearn.model_selection.train_test_split¶
 
-    # train_years = [str(year) for year in range(1979, 2014)]
-    # valid_years = [str(year) for year in range(2014, 2018)]  # can make CV splits if we want to later on
-    # test_years = [str(year) for year in range(2018, 2022)]  # same as graphcast -- always hold out
-    
-    train_years = [str(year) for year in range(1995, 2013) if year != 2007]
-    valid_years = [str(year) for year in range(2014, 2015)]  # can make CV splits if we want to later on
-    test_years = [str(year) for year in range(2015, 2016)]  # same as graphcast -- always hold out
+    train_years = [str(year) for year in range(1979, 2014)]
+    valid_years = [str(year) for year in range(2014, 2018)]  # can make CV splits if we want to later on
+    test_years = [str(year) for year in range(2018, 2022)]  # same as graphcast -- always hold out
+
+    # train_years = [str(year) for year in range(1995, 2013) if year != 2007]
+    # valid_years = [str(year) for year in range(2014, 2015)]  # can make CV splits if we want to later on
+    # test_years = [str(year) for year in range(2015, 2016)]  # same as graphcast -- always hold out
 
     # Filter the files for each set
 

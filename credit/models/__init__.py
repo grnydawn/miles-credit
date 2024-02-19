@@ -1,5 +1,7 @@
 from credit.models.unet import SegmentationModel
+from credit.models.simple_vit import SimpleViT
 from credit.models.vit2d import ViT2D
+from credit.models.vit3d import ViT3D
 from credit.models.rvt import RViT
 import logging
 
@@ -22,9 +24,17 @@ def load_model(conf):
         logger.info("Loading a Vision transformer architecture ...")
         return ViT2D(**model_conf)
 
+    elif model_type == "vit3d":
+        logger.info("Loading a Vision transformer architecture ...")
+        return ViT3D(**model_conf)
+
     elif model_type == "rvt":
         logger.info("Loading a custom rotary transformer architecture with conv attention ...")
         return RViT(**model_conf)
+
+    elif model_type == "simple-vit":
+        logger.info("Loading a simplified vit rotary transformer architecture ...")
+        return SimpleViT(**model_conf)
 
     elif model_type == "unet":
         logger.info("Loading a segmentation model ...")
