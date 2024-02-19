@@ -266,11 +266,13 @@ class ERA5Dataset(torch.utils.data.Dataset):
         transform: Optional[Callable] = None,
         seed=42,
         skip_periods=None,
+        one_shot=None
     ):
         self.history_len = history_len
         self.forecast_len = forecast_len
         self.transform = transform
         self.skip_periods = skip_periods
+        self.one_shot = one_shot
         self.total_seq_len = self.history_len + self.forecast_len
         all_fils = []
         filenames = sorted(filenames)
@@ -319,6 +321,12 @@ class ERA5Dataset(torch.utils.data.Dataset):
             sample = Sample(
                 historical_ERA5_images=datasel.isel(time=slice(0, self.history_len, self.skip_periods)),
                 target_ERA5_images=datasel.isel(time=slice(self.history_len, len(datasel['time']), self.skip_periods)),
+                datetime_index=datasel.time.values.astype('datetime64[s]').astype(int)
+            )
+        elif self.one_shot is not None:
+            sample = Sample(
+                historical_ERA5_images=datasel.isel(time=slice(0, self.history_len)),
+                target_ERA5_images=datasel.isel(time=-1),
                 datetime_index=datasel.time.values.astype('datetime64[s]').astype(int)
             )
         else:
