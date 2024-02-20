@@ -1,10 +1,22 @@
-from credit.models.unet import SegmentationModel
-from credit.models.vit2d import ViT2D
-from credit.models.rvt import RViT
 import logging
 
+# Import model classes
+from credit.models.simple_vit import SimpleViT
+from credit.models.vit2d import ViT2D
+from credit.models.vit3d import ViT3D
+from credit.models.fuxi import Fuxi
+from credit.models.rvt import RViT
 
 logger = logging.getLogger(__name__)
+
+# Define model types and their corresponding classes
+model_types = {
+    "vit": (ViT2D, "Loading a Vision transformer architecture ..."),
+    "vit3d": (ViT3D, "Loading a Vision transformer architecture ..."),
+    "rvt": (RViT, "Loading a custom rotary transformer architecture with conv attention ..."),
+    "simple-vit": (SimpleViT, "Loading a simplified vit rotary transformer architecture ..."),
+    "fuxi": (Fuxi, "Loading the FuXi model ...")
+}
 
 
 def load_model(conf):
@@ -15,20 +27,21 @@ def load_model(conf):
         logger.warning(msg)
         raise ValueError(msg)
 
-    model_type = model_conf["type"]
-    del model_conf["type"]
+    model_type = model_conf.pop("type")
 
-    if model_type == "vit":
-        logger.info("Loading a Vision transformer architecture ...")
-        return ViT2D(**model_conf)
-
-    elif model_type == "rvt":
-        logger.info("Loading a custom rotary transformer architecture with conv attention ...")
-        return RViT(**model_conf)
-
-    elif model_type == "unet":
+    if model_type == "unet":
         logger.info("Loading a segmentation model ...")
-        return SegmentationModel(conf)
+        try:
+            from credit.models.unet import SegmentationModel
+            return SegmentationModel(conf)
+        except ModuleNotFoundError as E:
+            msg = "timm version 6 is required for using pytorch-segmentation-models. Please pip install timm==0.6.12."
+            raise ImportError(E)
+
+    elif model_type in model_types:
+        model, message = model_types[model_type]
+        logger.info(message)
+        return model(**model_conf)
 
     else:
         msg = f"Model type {model_type} not supported. Exiting."

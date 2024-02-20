@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
 
 
 class ChannelAttention(nn.Module):
@@ -73,7 +74,30 @@ class SurfacePosEmb2D(nn.Module):
         self.embedding = nn.Parameter(pe)
 
     def forward(self, x):
-        #if x.size(1) == 217:
         return x + self.embedding.to(dtype=x.dtype, device=x.device)
-        #return x + self.embedding[:, :x.size(1)].to(dtype=x.dtype, device=x.device)
-        
+
+
+class PosEmb3D(nn.Module):
+    def __init__(self, frames, image_height, image_width, frame_patch_size, patch_height, patch_width, dim, temperature=10000):
+        super(PosEmb3D, self).__init__()
+        z, y, x = torch.meshgrid(
+            torch.arange(frames // frame_patch_size),
+            torch.arange(image_height // patch_height),
+            torch.arange(image_width // patch_width),
+            indexing='ij'
+        )
+
+        fourier_dim = dim // 6
+        omega = torch.arange(fourier_dim) / (fourier_dim - 1)
+        omega = 1. / (temperature ** omega)
+
+        z = z.flatten()[:, None] * omega[None, :]
+        y = y.flatten()[:, None] * omega[None, :]
+        x = x.flatten()[:, None] * omega[None, :]
+
+        pe = torch.cat((x.sin(), x.cos(), y.sin(), y.cos(), z.sin(), z.cos()), dim=1)
+        pe = F.pad(pe, (0, dim - (fourier_dim * 6)))  # pad if feature dimension not cleanly divisible by 6
+        self.embedding = pe
+
+    def forward(self, x):
+        return x + self.embedding.to(dtype=x.dtype, device=x.device)

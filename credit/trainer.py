@@ -61,6 +61,7 @@ class Trainer:
         batches_per_epoch = conf['trainer']['batches_per_epoch']
         grad_accum_every = conf['trainer']['grad_accum_every']
         history_len = conf["data"]["history_len"]
+        forecast_len = conf["data"]["forecast_len"]
         amp = conf['trainer']['amp']
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
         teacher_forcing_ratio = conf['trainer']['teacher_forcing_ratio']
@@ -93,7 +94,7 @@ class Trainer:
 
             logs = {}
 
-            if history_len == 1:  # single-step training
+            if history_len == 1 or forecast_len == 0:  # single-step training or multi-step input single-step output
 
                 for _ in range(grad_accum_every):
 
@@ -103,15 +104,15 @@ class Trainer:
 
                     with autocast(enabled=amp):
 
-                        x_atmo = batch["x"][:, 0]
-                        x_surf = batch["x_surf"][:, 0]
+                        x_atmo = batch["x"][:, 0] if history_len == 1 else batch["x"]  # deprecated
+                        x_surf = batch["x_surf"][:, 0] if history_len == 1 else batch["x_surf"]  # deprecated
                         x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
 
-                        y_atmo = batch["y"][:, 0]
-                        y_surf = batch["y_surf"][:, 0]
+                        y_atmo = batch["y"][:, 0] if history_len == 1 else batch["y"]  # deprecated
+                        y_surf = batch["y_surf"][:, 0] if history_len == 1 else batch["y_surf"]  # deprecated
                         y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
 
-                        if self.model.use_codebook:
+                        if getattr(self.model, 'use_codebook', False):
                             y_pred, cm_loss = self.model(x)
                             commit_loss += cm_loss
                         else:
@@ -164,7 +165,7 @@ class Trainer:
                             else:  # use model's predictions
                                 x = y_pred
 
-                            if self.model.use_codebook:
+                            if getattr(self.model, 'use_codebook', False):
                                 y_pred, cm_loss = self.model(x)
                                 commit_loss += cm_loss
                             else:
@@ -206,7 +207,7 @@ class Trainer:
             if distributed:
                 dist.all_reduce(batch_loss, dist.ReduceOp.AVG, async_op=False)
             results_dict["train_loss"].append(batch_loss[0].item())
-            if history_len > 1:
+            if 'forecast_hour' in batch:
                 forecast_hour_stop = batch['forecast_hour'][-1].item()
                 results_dict["train_forecast_len"].append(forecast_hour_stop+1)
             else:
@@ -256,6 +257,7 @@ class Trainer:
 
         valid_batches_per_epoch = conf['trainer']['valid_batches_per_epoch']
         history_len = conf["data"]["valid_history_len"] if "valid_history_len" in conf["data"] else conf["history_len"]
+        forecast_len = conf["data"]["valid_forecast_len"] if "valid_forecast_len" in conf["data"] else conf["forecast_len"]
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
 
         results_dict = defaultdict(list)
@@ -276,16 +278,16 @@ class Trainer:
         with torch.no_grad():
             for k, batch in enumerate(valid_loader):
 
-                if history_len == 1:  # single-step
-
-                    x_atmo = batch["x"][:, 0]
-                    x_surf = batch["x_surf"][:, 0]
+                if history_len == 1 or forecast_len == 0:  # single-step options (t-N, ..., t) -> t+1
+                    x_atmo = batch["x"][:, 0] if history_len == 1 else batch["x"]  # deprecated
+                    x_surf = batch["x_surf"][:, 0] if history_len == 1 else batch["x_surf"]  # deprecated
                     x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
-                    y_atmo = batch["y"][:, 0]
-                    y_surf = batch["y_surf"][:, 0]
+
+                    y_atmo = batch["y"][:, 0] if history_len == 1 else batch["y"]  # deprecated
+                    y_surf = batch["y_surf"][:, 0] if history_len == 1 else batch["y_surf"]  # deprecated
                     y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
 
-                    if self.model.use_codebook:
+                    if getattr(self.model, 'use_codebook', False):
                         y_pred, cm_loss = self.model(x)
                     else:
                         y_pred = self.model(x)
@@ -317,7 +319,7 @@ class Trainer:
                             x = y_pred
 
                         commit_loss = 0
-                        if self.model.use_codebook:
+                        if getattr(self.model, 'use_codebook', False):
                             y_pred, cm_loss = self.model(x)
                             commit_loss += cm_loss
                         else:
