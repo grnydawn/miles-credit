@@ -25,9 +25,13 @@ def main():
     coord_set = [(i, lon_flat[i], lat_flat[i]) for i in range(lon_flat.size)]
     calc_edge_p = partial(calc_edges, all_coords=coord_set, max_dist=args.dist)
     with Pool(processes=args.procs) as p:
-        edge_indices_list = p.map(calc_edge_p, coord_set)
+        results = p.map(calc_edge_p, coord_set)
+    edge_indices_list = [x[0] for x in results]
+    dist_list = [x[1] for x in results]
     edge_indices_arr = np.concatenate(edge_indices_list)
+    dist_arr = np.concatenate(dist_list)
     output_ds = xr.Dataset({"edges": (("index", "pair"), edge_indices_arr),
+                            "distances": (("index", ), dist_arr),
                 "longitude": (("index", ), lon_flat),
                 "latitude": (("index", ), lat_flat),
                 }, coords={"index": list(range(lon_flat.size))},
@@ -41,8 +45,9 @@ def main():
 def calc_edges(coord, all_coords=None, max_dist=25.0):
     coord_distances = haversine_vector(coord[1:], all_coords[:, 1:], Unit.KILOMETERS)
     close_coords = np.where(coord_distances < max_dist)[0]
+    edge_distances = coord_distances[close_coords]
     edge_indices = [(int(coord[0]), c) for c in close_coords]
-    return edge_indices
+    return edge_indices, edge_distances
 
 if __name__ == "__main__":
     main()

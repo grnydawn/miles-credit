@@ -17,8 +17,8 @@ import yaml
 from torch.distributed.fsdp import StateDictType
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision import transforms
-from credit.vit2d import ViT2D
-from credit.rvt import RViT
+from credit.models.vit2d import ViT2D
+from credit.models.rvt import RViT
 from credit.loss import VariableTotalLoss2D
 from credit.data import PredictForecast
 from credit.transforms import ToTensor, NormalizeState
