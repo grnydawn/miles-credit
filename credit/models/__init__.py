@@ -1,7 +1,9 @@
 import logging
 
 # Import model classes
+from credit.models.crossformer import CrossFormer
 from credit.models.simple_vit import SimpleViT
+from credit.models.cube_vit import CubeViT
 from credit.models.vit2d import ViT2D
 from credit.models.vit3d import ViT3D
 from credit.models.fuxi import Fuxi
@@ -15,7 +17,9 @@ model_types = {
     "vit3d": (ViT3D, "Loading a Vision transformer architecture ..."),
     "rvt": (RViT, "Loading a custom rotary transformer architecture with conv attention ..."),
     "simple-vit": (SimpleViT, "Loading a simplified vit rotary transformer architecture ..."),
-    "fuxi": (Fuxi, "Loading the FuXi model ...")
+    "cube-vit": (CubeViT, "Loading a simplified vit rotary transformer architecture with a 3D conv tokenizer ..."),
+    "fuxi": (Fuxi, "Loading the FuXi model ..."),
+    "crossformer": (CrossFormer, "Loading the CrossFormer model ...")
 }
 
 

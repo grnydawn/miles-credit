@@ -108,6 +108,7 @@ class SpectralLossLocal(nn.Module):
 
         return loss.to(device=device, dtype=dtype)
 
+
 class SpectralLoss2D(torch.nn.Module):
     def __init__(self, wavenum_init=20, reduction='none'):
         super(SpectralLoss2D, self).__init__()
@@ -115,7 +116,7 @@ class SpectralLoss2D(torch.nn.Module):
         self.reduction = reduction
 
     def forward(self, output, target, weights=None, fft_dim=3):
-        
+
         device, dtype = output.device, output.dtype
         output = output.float()
         target = target.float()
@@ -129,17 +130,16 @@ class SpectralLoss2D(torch.nn.Module):
         target_fft_abs = torch.abs(target_fft)
 
         if weights is not None:
-            color_channels = out_fft_abs.shape[1]
             weights = weights.unsqueeze(1).permute(0, 3, 1, 2).to(device=device, dtype=dtype)
             out_fft_abs = torch.matmul(weights, out_fft_abs)
             target_fft_abs = torch.matmul(weights, target_fft_abs)
-        
+
         # Average over spatial dims
         out_fft_mean = torch.mean(out_fft_abs, dim=(fft_dim - 1))
         target_fft_mean = torch.mean(target_fft_abs, dim=(fft_dim - 1))
 
-        # Compute MSE 
-        loss = torch.square(out_fft_mean[:, :, self.wavenum_init:] -  target_fft_mean[:, :, self.wavenum_init:])
+        # Compute MSE
+        loss = torch.square(out_fft_mean[:, :, self.wavenum_init:] - target_fft_mean[:, :, self.wavenum_init:])
         loss = torch.sqrt(loss.mean())
 
         return loss.to(device=device, dtype=dtype)
@@ -280,7 +280,7 @@ class VariableTotalLoss2D(torch.nn.Module):
         lat_file = conf['loss']['latitude_weights']
         atmos_vars = conf['data']['variables']
         surface_vars = conf['data']['surface_variables']
-        levels = conf['model']['frames']
+        levels = conf['model']['levels'] if 'levels' in conf['model'] else conf['model']['frames']
 
         self.vars = [f"{v}_{k}" for v in atmos_vars for k in range(levels)]
         self.vars += surface_vars
@@ -291,7 +291,7 @@ class VariableTotalLoss2D(torch.nn.Module):
             w_lat = np.cos(np.deg2rad(lat))
             w_lat = w_lat / w_lat.mean()
             self.lat_weights = torch.from_numpy(w_lat).unsqueeze(0).unsqueeze(-1)
-            
+
         self.var_weights = None
         if conf["loss"]["use_variable_weights"]:
             var_weights = [value if isinstance(value, list) else [value] for value in conf["loss"]["variable_weights"].values()]

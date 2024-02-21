@@ -64,7 +64,6 @@ class SurfacePosEmb2D(nn.Module):
         y = y.flatten()[:, None] * omega[None, :]
         x = x.flatten()[:, None] * omega[None, :]
         pe = torch.cat((x.sin(), x.cos(), y.sin(), y.cos()), dim=1)
-        #pe = F.normalize(pe, dim=1)
 
         # Add an additional row for the CLS token
         if cls_token:
@@ -101,3 +100,30 @@ class PosEmb3D(nn.Module):
 
     def forward(self, x):
         return x + self.embedding.to(dtype=x.dtype, device=x.device)
+
+
+class CubeEmbedding(nn.Module):
+    """
+    Args:
+        img_size: T, Lat, Lon
+        patch_size: T, Lat, Lon
+    """
+    def __init__(self, img_size, patch_size, in_chans, embed_dim, norm_layer=nn.LayerNorm):
+        super().__init__()
+        patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1], img_size[2] // patch_size[2]]
+
+        self.img_size = img_size
+        self.patches_resolution = patches_resolution
+        self.embed_dim = embed_dim
+        self.proj = nn.Conv3d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
+        if norm_layer is not None:
+            self.norm = norm_layer(embed_dim)
+        else:
+            self.norm = None
+
+    def forward(self, x: torch.Tensor):
+        B, T, C, Lat, Lon = x.shape
+        x = self.proj(x).reshape(B, self.embed_dim, -1).transpose(1, 2)  # B T*Lat*Lon C
+        if self.norm is not None:
+            x = self.norm(x)
+        return x

@@ -11,6 +11,9 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 import logging
 
 
+logger = logging.getLogger(__name__)
+
+
 def get_pad3d(input_resolution, window_size):
     """
     Args:
@@ -162,7 +165,6 @@ class UTransformer(nn.Module):
         B, C, Lat, Lon = x.shape
         padding_left, padding_right, padding_top, padding_bottom = self.padding
         x = self.down(x)
-
         shortcut = x
 
         # pad
@@ -178,7 +180,6 @@ class UTransformer(nn.Module):
 
         # concat
         x = torch.cat([shortcut, x], dim=1)  # B 2*C Lat Lon
-
         x = self.up(x)
         return x
 
