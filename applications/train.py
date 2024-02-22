@@ -40,16 +40,6 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 
 from torchvision import transforms
 
-# ================================== #
-# relative import from parent folder
-import inspect
-currentdir = os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe())))
-parentdir = os.path.dirname(currentdir)
-sys.path.insert(0, parentdir) 
-# ----------- #
-import credit
-# ================================== #
-
 from credit.models import load_model
 from credit.loss import VariableTotalLoss2D
 from credit.data import ERA5Dataset, DistributedSequentialDataset
