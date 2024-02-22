@@ -1,7 +1,8 @@
 name: credit
 channels:
-  - conda-forge
+  - nvidia
   - pytorch
+  - conda-forge
 dependencies:
   - python=3.11
   - pip
