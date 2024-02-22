@@ -213,15 +213,30 @@ class Fuxi(nn.Module):
                  window_size=7):
 
         super().__init__()
+        # input tensor size (time, lat, lon)
         img_size = (frames, image_height, image_width)
+
+        # the size of embedded patches
         patch_size = (frame_patch_size, patch_height, patch_width)
+        
+        # number of channels = levels * varibales per level + surface variables 
         in_chans = out_chans = levels * channels + surface_channels
+
+        # input resolution = number of embedded patches / 2
+        # divide by two because "u_trasnformer" has a down-sampling block
         input_resolution = int(img_size[1] / patch_size[1] / 2), int(img_size[2] / patch_size[2] / 2)
 
+        # FuXi cube embedding layer
         self.cube_embedding = CubeEmbedding(img_size, patch_size, in_chans, dim)
+
+        # Downsampling --> SwinTransformerV2 stacks --> Upsampling
         self.u_transformer = UTransformer(dim, num_groups, input_resolution, num_heads, window_size, depth=depth)
+
+        # dense layer applied on channel dmension
+        # channel * patch_size beucase dense layer recovers embedded dimensions to the input dimensions
         self.fc = nn.Linear(dim, out_chans * patch_size[1] * patch_size[2])
 
+        # Hyperparameters
         self.patch_size = patch_size
         self.input_resolution = input_resolution
         self.out_chans = out_chans
@@ -243,22 +258,39 @@ class Fuxi(nn.Module):
         return tensor1, tensor2
 
     def forward(self, x: torch.Tensor):
+        # Tensor dims: Batch, Variables, Time, Lat grids, Lon grids
         B, _, _, _, _ = x.shape
+        
         _, patch_lat, patch_lon = self.patch_size
+
+        # Get the number of patches after embedding
         Lat, Lon = self.input_resolution
         Lat, Lon = Lat * 2, Lon * 2
+
+        # Cube Embedding and squeese the time dimension 
+        # (the model produce single forecast lead time only)
+
+        # x: input size = (Batch, Variables, Time, Lat grids, Lon grids)
         x = self.cube_embedding(x).squeeze(2)  # B C Lat Lon
+        # x: output size = (Batch, Embedded dimension, time, number of patches, number of patches)
+
+        # u_transformer stage
+        # the size of x does notchange
         x = self.u_transformer(x)
+
+        # recover embeddings to lat/lon grids with dense layer and reshape operation.
         x = self.fc(x.permute(0, 2, 3, 1))  # B Lat Lon C
         x = x.reshape(B, Lat, Lon, patch_lat, patch_lon, self.out_chans).permute(0, 1, 3, 2, 4, 5)
         # B, lat, patch_lat, lon, patch_lon, C
-
         x = x.reshape(B, Lat * patch_lat, Lon * patch_lon, self.out_chans)
         x = x.permute(0, 3, 1, 2)  # B C Lat Lon
-
-        # bilinear
+        
+        # bilinear interpolation
+        # if lat/lon grids (i.e., img_size) cannot be divided by the patche size completely
+        # this will preserve the output size
         x = F.interpolate(x, size=self.img_size[1:], mode="bilinear")
 
+        # unfold the time dimension
         return x.unsqueeze(2)
 
     @classmethod
