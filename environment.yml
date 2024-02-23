@@ -1,4 +1,4 @@
-name: credit
+name: credit-cuda
 channels:
   - nvidia
   - pytorch
@@ -16,6 +16,7 @@ dependencies:
   - xarray
   - netcdf4
   - pytorch
+  - pytorch-cuda=12.1
   - torchvision
   - wandb
   - pyyaml
@@ -30,7 +31,7 @@ dependencies:
     - echo-opt
     - bridgescaler
     - rotary-embedding-torch
-    - segmentation-models-pytorch
+#    - segmentation-models-pytorch
     - vector_quantize_pytorch
     - timm>=0.9.12
     - .
