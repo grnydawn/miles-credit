@@ -20,9 +20,8 @@ model_types = {
     "simple-vit": (SimpleViT, "Loading a simplified vit rotary transformer architecture ..."),
     "cube-vit": (CubeViT, "Loading a simplified vit rotary transformer architecture with a 3D conv tokenizer ..."),
     "crossformer": (CrossFormer, "Loading the CrossFormer model with a conv decoder head ..."),
-    "crossformer-skip": (CrossFormerSkip, "Loading the CrossFormer model with a conv decoder head and skip connections ...")
+    "crossformer-skip": (CrossFormerSkip, "Loading the CrossFormer model with a conv decoder head and skip connections ..."),
     "crossformer": (CrossFormer, "Loading the CrossFormer model ...")
->>>>>>> Stashed changes
 }
 
 
