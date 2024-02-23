@@ -19,14 +19,8 @@ model_types = {
     "rvt": (RViT, "Loading a custom rotary transformer architecture with conv attention ..."),
     "simple-vit": (SimpleViT, "Loading a simplified vit rotary transformer architecture ..."),
     "cube-vit": (CubeViT, "Loading a simplified vit rotary transformer architecture with a 3D conv tokenizer ..."),
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-    "fuxi": (Fuxi, "Loading the FuXi model ..."),
     "crossformer": (CrossFormer, "Loading the CrossFormer model with a conv decoder head ..."),
     "crossformer-skip": (CrossFormerSkip, "Loading the CrossFormer model with a conv decoder head and skip connections ...")
-=======
-=======
->>>>>>> Stashed changes
     "crossformer": (CrossFormer, "Loading the CrossFormer model ...")
 >>>>>>> Stashed changes
 }
