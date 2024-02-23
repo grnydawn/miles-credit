@@ -1,4 +1,4 @@
-name: credit-cuda
+name: credit
 channels:
   - nvidia
   - pytorch
