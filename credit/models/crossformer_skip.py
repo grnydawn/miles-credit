@@ -12,91 +12,8 @@ import logging
 
 # helpers
 
-
 def cast_tuple(val, length=1):
     return val if isinstance(val, tuple) else ((val,) * length)
-
-
-class UpsampleModel(nn.Module):
-    def __init__(self, input_channels, output_channels):
-        super(UpsampleModel, self).__init__()
-
-        # Define transposed convolutional layers for upsampling
-        self.transconv1 = nn.ConvTranspose2d(input_channels, 128, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.transconv2 = nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.transconv3 = nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.transconv4 = nn.ConvTranspose2d(32, output_channels, kernel_size=3, stride=2, padding=1, output_padding=1)
-
-    def forward(self, x):
-        x = torch.relu(self.transconv1(x))
-        x = torch.relu(self.transconv2(x))
-        x = torch.relu(self.transconv3(x))
-        x = torch.relu(self.transconv4(x))
-
-        return x
-
-
-class SADecoder(nn.Module):
-    def __init__(self, filters, output_channels, group_size=32):    
-        super(SADecoder, self).__init__()
-        self.filters = filters
-        self.output_channels = output_channels
-        self.group_size = group_size
-
-        # Define transposed convolutional layers for upsampling
-        self.blocks = nn.ModuleList()
-        #self.attention = nn.ModuleList()
-        for i in range(len(filters) - 1):
-            conv_transpose = nn.ConvTranspose2d(filters[i], filters[i+1], kernel_size=2, stride=2)
-            group_norm = nn.GroupNorm(group_size, filters[i+1])
-            silu = nn.SiLU()
-            #self.attention.append(Self_Attn(filters[i+1]))
-            self.blocks.append(nn.Sequential(conv_transpose, group_norm, silu))
-        
-        self.conv1 = nn.ConvTranspose2d(filters[-1], output_channels, kernel_size=2, stride=2)
-        #self.conv2 = nn.ConvTranspose2d(output_channels, output_channels, kernel_size=2, stride=2)
-
-    def forward(self, x):
-        for i, block in enumerate(self.blocks):
-            x = block(x)
-            #x, _ = self.attention[i](x)
-        x = self.conv1(x)
-        #x = self.conv2(x)
-        return x
-
-
-class Self_Attn(nn.Module):
-    """ Self attention Layer"""
-    def __init__(self,in_dim):
-        super(Self_Attn, self).__init__()
-        self.chanel_in = in_dim
-        
-        self.query_conv = nn.Conv2d(in_channels = in_dim , out_channels = in_dim//8 , kernel_size= 1)
-        self.key_conv = nn.Conv2d(in_channels = in_dim , out_channels = in_dim//8 , kernel_size= 1)
-        self.value_conv = nn.Conv2d(in_channels = in_dim , out_channels = in_dim , kernel_size= 1)
-        self.gamma = nn.Parameter(torch.zeros(1))
-        self.softmax  = nn.Softmax(dim=-1) #
-        
-    def forward(self,x):
-        """
-            inputs :
-                x : input feature maps( B X C X W X H)
-            returns :
-                out : self attention value + input feature 
-                attention: B X N X N (N is Width*Height)
-        """
-        m_batchsize,C,width ,height = x.size()
-        proj_query  = self.query_conv(x).view(m_batchsize,-1,width*height).permute(0,2,1) # B X CX(N)
-        proj_key =  self.key_conv(x).view(m_batchsize,-1,width*height) # B X C x (*W*H)
-        energy =  torch.bmm(proj_query,proj_key) # transpose check
-        attention = self.softmax(energy) # BX (N) X (N) 
-        proj_value = self.value_conv(x).view(m_batchsize,-1,width*height) # B X C X N
-
-        out = torch.bmm(proj_value,attention.permute(0,2,1) )
-        out = out.view(m_batchsize,C,width,height)
-        
-        out = self.gamma*out + x
-        return out,attention
 
 
 # cube embedding
@@ -430,22 +347,10 @@ class CrossFormer(nn.Module):
             dim[0]
         )
 
-        self.up_block1 = UpBlock(last_dim, last_dim // 2, dim[0])
-        self.up_block2 = UpBlock(last_dim // 2, last_dim // 4, dim[0])
-        self.up_block3 = UpBlock(last_dim // 4, last_dim // 8, dim[0])
-        self.up_block4 = nn.ConvTranspose2d(last_dim // 8, input_channels, kernel_size=2, stride=2)
-        
-        # self.fc = nn.Linear(last_dim // 2, input_channels)
-        
-        # self.up_transpose = SADecoder(
-        #     filters = list(dim[::-1][1:]) + [dim[0] // 2],
-        #     output_channels = input_channels,
-        #     group_size = 32
-        # )
-
-        # self.up_transpose = UpsampleModel(input_channels, input_channels)
-
-        
+        self.up_block1 = UpBlock(1 * last_dim, last_dim // 2, dim[0])
+        self.up_block2 = UpBlock(2 * (last_dim // 2), last_dim // 4, dim[0])
+        self.up_block3 = UpBlock(2 * (last_dim // 4), last_dim // 8, dim[0])
+        self.up_block4 = nn.ConvTranspose2d(2 * (last_dim // 8), input_channels, kernel_size=2, stride=2)
 
     def forward(self, x):
 
@@ -454,13 +359,18 @@ class CrossFormer(nn.Module):
         else:
             x = F.avg_pool3d(x, kernel_size=(2, 1, 1)).squeeze(2)
 
+        encodings = []
         for cel, transformer in self.layers:
             x = cel(x)
             x = transformer(x)
-            
+            encodings.append(x)
+
         x = self.up_block1(x)
+        x = torch.cat([x, encodings[2]], dim=1)
         x = self.up_block2(x)
+        x = torch.cat([x, encodings[1]], dim=1)
         x = self.up_block3(x)
+        x = torch.cat([x, encodings[0]], dim=1)
         x = self.up_block4(x)
         x = F.interpolate(x, size=(self.image_height, self.image_width), mode="bilinear")
 

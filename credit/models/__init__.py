@@ -1,6 +1,7 @@
 import logging
 
 # Import model classes
+from credit.models.crossformer_skip import CrossFormer as CrossFormerSkip
 from credit.models.crossformer import CrossFormer
 from credit.models.simple_vit import SimpleViT
 from credit.models.cube_vit import CubeViT
@@ -19,7 +20,8 @@ model_types = {
     "simple-vit": (SimpleViT, "Loading a simplified vit rotary transformer architecture ..."),
     "cube-vit": (CubeViT, "Loading a simplified vit rotary transformer architecture with a 3D conv tokenizer ..."),
     "fuxi": (Fuxi, "Loading the FuXi model ..."),
-    "crossformer": (CrossFormer, "Loading the CrossFormer model ...")
+    "crossformer": (CrossFormer, "Loading the CrossFormer model with a conv decoder head ..."),
+    "crossformer-skip": (CrossFormerSkip, "Loading the CrossFormer model with a conv decoder head and skip connections ...")
 }
 
 
