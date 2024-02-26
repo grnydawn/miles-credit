@@ -45,7 +45,7 @@ from credit.loss import VariableTotalLoss2D
 from credit.data import ERA5Dataset
 from credit.transforms import ToTensor, NormalizeState
 from credit.scheduler import load_scheduler, annealed_probability
-from credit.trainer_new import Trainer
+from credit.trainer import Trainer
 from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything
