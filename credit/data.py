@@ -324,9 +324,10 @@ class ERA5Dataset(torch.utils.data.Dataset):
                 datetime_index=datasel.time.values.astype('datetime64[s]').astype(int)
             )
         elif self.one_shot is not None:
+            total_seq_len = self.history_len + self.forecast_len + 1
             sample = Sample(
                 historical_ERA5_images=datasel.isel(time=slice(0, self.history_len)),
-                target_ERA5_images=datasel.isel(time=-1),
+                target_ERA5_images=datasel.isel(time=slice(total_seq_len-1, total_seq_len)),
                 datetime_index=datasel.time.values.astype('datetime64[s]').astype(int)
             )
         else:

@@ -42,10 +42,10 @@ from torchvision import transforms
 
 from credit.models import load_model
 from credit.loss import VariableTotalLoss2D
-from credit.data import ERA5Dataset
+from credit.data import ERA5Dataset, DistributedSequentialDataset
 from credit.transforms import ToTensor, NormalizeState
 from credit.scheduler import load_scheduler, annealed_probability
-from credit.trainer_new import Trainer
+from credit.trainer import Trainer
 from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything
@@ -68,35 +68,51 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
     forecast_len = conf["data"]["forecast_len"]
     valid_history_len = conf["data"]["valid_history_len"]
     valid_forecast_len = conf["data"]["valid_forecast_len"]
-    time_step = None if "time_step" not in conf["data"] else conf["data"]["time_step"]
-    one_shot = None if "one_shot" not in conf["data"] else conf["data"]["one_shot"]
+    time_step = conf["data"]["time_step"]
 
     history_len = history_len if is_train else valid_history_len
     forecast_len = forecast_len if is_train else valid_forecast_len
     shuffle = is_train
     name = "Train" if is_train else "Valid"
 
-    dataset = ERA5Dataset(
-        filenames=files,
-        history_len=history_len,
-        forecast_len=forecast_len,
-        skip_periods=time_step,
-        one_shot=one_shot,
-        transform=transforms.Compose([
-            NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"]),
-            ToTensor(history_len=history_len, forecast_len=forecast_len),
-        ]),
-    )
-    sampler = DistributedSampler(
-        dataset,
-        num_replicas=world_size,
-        rank=rank,
-        seed=seed,
-        shuffle=shuffle,
-        drop_last=True
-    )
-    logging.info(f"{name} (forecast length = {forecast_len}): Loaded an ERA dataset, and a distributed sampler")
-
+    if history_len > 1 and forecast_len > 0:
+        dataset = DistributedSequentialDataset(
+            filenames=files,
+            history_len=history_len,
+            forecast_len=forecast_len,
+            skip_periods=time_step,
+            world_size=world_size,
+            rank=rank,
+            shuffle=shuffle,
+            transform=transforms.Compose([
+                NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"]),
+                ToTensor(history_len=history_len, forecast_len=forecast_len),
+            ]),
+        )
+        sampler = None
+        logging.info(
+            f"{name} (forecast length = {forecast_len}): Loaded a distributed sequential ERA dataset which contains its own distributed sampler"
+        )
+    else:
+        dataset = ERA5Dataset(
+            filenames=files,
+            history_len=history_len,
+            forecast_len=forecast_len,
+            skip_periods=time_step,
+            transform=transforms.Compose([
+                NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"]),
+                ToTensor(history_len=history_len, forecast_len=forecast_len),
+            ]),
+        )
+        sampler = DistributedSampler(
+            dataset,
+            num_replicas=world_size,
+            rank=rank,
+            seed=seed,
+            shuffle=shuffle,
+            drop_last=True
+        )
+        logging.info(f"{name} (forecast length = {forecast_len}): Loaded an ERA dataset, and a distributed sampler")
     return dataset, sampler
 
 
@@ -125,7 +141,7 @@ def distributed_model_wrapper(conf, vae, device):
 
         model = FSDP(
             vae,
-            use_orig_params=True,  # needed if using torch.compile
+            use_orig_params=True,  #needed if using torch.compile
             auto_wrap_policy=combined_auto_wrap_policy,
             # mixed_precision=torch.distributed.fsdp.MixedPrecision(
             #     param_dtype=torch.float16,
@@ -133,7 +149,7 @@ def distributed_model_wrapper(conf, vae, device):
             #     buffer_dtype=torch.float16,
             #     #cast_forward_inputs=True
             # ),
-            # sharding_strategy=ShardingStrategy.FULL_SHARD  # Zero3. Zero2 = ShardingStrategy.SHARD_GRAD_OP
+            #sharding_strategy=ShardingStrategy.FULL_SHARD # Zero3. Zero2 = ShardingStrategy.SHARD_GRAD_OP
             cpu_offload=CPUOffload(offload_params=True)
         )
 
@@ -178,7 +194,7 @@ def load_model_and_optimizer(conf, model, device):
 
     # load optimizer and grad scaler states
     else:
-        ckpt = f"{save_loc}/checkpoint.pt"  # if conf["trainer"]["mode"] != "ddp" else f"{save_loc}/checkpoint_{device}.pt"
+        ckpt = f"{save_loc}/checkpoint.pt" #if conf["trainer"]["mode"] != "ddp" else f"{save_loc}/checkpoint_{device}.pt"
         checkpoint = torch.load(ckpt, map_location=device)
 
         if conf["trainer"]["mode"] == "fsdp":
@@ -231,9 +247,6 @@ def load_model_and_optimizer(conf, model, device):
         if scheduler is not None:
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         scaler.load_state_dict(checkpoint['scaler_state_dict'])
-
-    # for param_group in optimizer.param_groups:
-    #     param_group['lr'] = learning_rate
 
     return model, optimizer, scheduler, scaler
 
@@ -338,7 +351,7 @@ def main(rank, world_size, conf, trial=False):
     train_criterion = VariableTotalLoss2D(conf)
     valid_criterion = VariableTotalLoss2D(conf, validation=True)
 
-    # Optional load stopping probability annealer
+    ## Optional load stopping probability annealer
 
     # Set up some metrics
 
@@ -377,7 +390,7 @@ class Objective(BaseObjective):
 
         conf['model']['dim_head'] = conf['model']['dim']
         conf['model']['vq_codebook_dim'] = conf['model']['dim']
-
+        
         try:
             return main(0, 1, conf, trial=trial)
 

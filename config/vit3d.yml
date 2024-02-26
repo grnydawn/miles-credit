@@ -7,9 +7,9 @@ data:
     save_loc: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
     mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
     std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
-    history_len: 2 
+    history_len: 1
     forecast_len: 0
-    valid_history_len: 2
+    valid_history_len: 1
     valid_forecast_len: 0
     time_step: 1
     

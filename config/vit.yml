@@ -1,4 +1,4 @@
-save_loc: "/glade/work/schreck/repos/global/miles-credit/results/unet-testing/"
+save_loc: "/glade/work/schreck/repos/global/miles-credit/results/vit_zscore/"
 seed: 1000
 
 data:
@@ -8,21 +8,21 @@ data:
     mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
     std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
     history_len: 1
-    forecast_len: 2
+    forecast_len: 0
     valid_history_len: 1
-    valid_forecast_len: 2
+    valid_forecast_len: 0
     time_step: 1
     
 trainer:
-    mode: none # none, ddp, fsdp
-    train_batch_size: 4
-    valid_batch_size: 4
+    mode: ddp # none, ddp, fsdp
+    train_batch_size: 2
+    valid_batch_size: 2
     batches_per_epoch: 0 # Set to 0 to use len(dataloader)
     valid_batches_per_epoch: 100
     learning_rate: 5.0e-04
     weight_decay: 1.0e-05
     start_epoch: 0
-    epochs: 1
+    epochs: 100
     amp: False
     grad_accum_every: 1
     grad_max_norm: 1.0
@@ -99,26 +99,26 @@ predict:
         ["2018-06-01 00:00:00", "2018-06-07 00:00:00"]
     ]
 
-# pbs: #derecho
-#     conda: "holodec"
-#     project: "NAML0001"
-#     job_name: "rotary-large"
-#     walltime: "12:00:00"
-#     nodes: 8
-#     ncpus: 64
-#     ngpus: 4
-#     mem: '480GB'
-#     queue: 'main' #'preempt'
+pbs: #derecho
+    conda: "holodec"
+    project: "NAML0001"
+    job_name: "vit-zscore"
+    walltime: "12:00:00"
+    nodes: 8
+    ncpus: 64
+    ngpus: 4
+    mem: '480GB'
+    queue: 'main' #'preempt'
     
-pbs: # casper
-    conda: "/glade/work/schreck/miniconda3/envs/evidential"
-    job_name: 'latlon'
-    nodes: 1
-    ncpus: 8
-    ngpus: 1
-    mem: '128GB'
-    walltime: '12:00:00'
-    gpu_type: 'a100'
-    cpu_type: 'milan'
-    project: 'NAML0001'
-    queue: 'casper'
+# pbs: # casper
+#     conda: "/glade/work/schreck/miniconda3/envs/evidential"
+#     job_name: 'latlon'
+#     nodes: 1
+#     ncpus: 8
+#     ngpus: 1
+#     mem: '128GB'
+#     walltime: '12:00:00'
+#     gpu_type: 'a100'
+#     cpu_type: 'milan'
+#     project: 'NAML0001'
+#     queue: 'casper'

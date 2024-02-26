@@ -46,27 +46,55 @@ class CubeEmbedding(nn.Module):
         return x.squeeze(2)
 
 
-class UpBlock(nn.Module):
-    def __init__(self, in_chans, out_chans, num_groups, num_residuals=2):
+# class UpBlock(nn.Module):
+#     def __init__(self, in_chans, out_chans, num_groups, num_residuals=2):
+#         super().__init__()
+#         self.conv = nn.ConvTranspose2d(in_chans, out_chans, kernel_size=2, stride=2)
+
+#         blk = []
+#         for i in range(num_residuals):
+#             blk.append(nn.Conv2d(out_chans, out_chans, kernel_size=3, stride=1, padding=1))
+#             blk.append(nn.GroupNorm(num_groups, out_chans))
+#             blk.append(nn.SiLU())
+
+#         self.b = nn.Sequential(*blk)
+
+#     def forward(self, x):
+#         x = self.conv(x)
+
+#         shortcut = x
+
+#         x = self.b(x)
+
+#         return x + shortcut
+
+class UpSamplingBlock(nn.Module):
+    def __init__(self, in_channels, out_channels, num_groups, num_residuals=2):
         super().__init__()
-        self.conv = nn.ConvTranspose2d(in_chans, out_chans, kernel_size=2, stride=2)
 
-        blk = []
-        for i in range(num_residuals):
-            blk.append(nn.Conv2d(out_chans, out_chans, kernel_size=3, stride=1, padding=1))
-            blk.append(nn.GroupNorm(num_groups, out_chans))
-            blk.append(nn.SiLU())
+        # Transposed convolution layer for upsampling
+        self.upsample = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2)
 
-        self.b = nn.Sequential(*blk)
+        # Sequential block for residual operations
+        residual_operations = []
+        for _ in range(num_residuals):
+            residual_operations.append(nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1))
+            residual_operations.append(nn.GroupNorm(num_groups, out_channels))
+            residual_operations.append(nn.SiLU())
+
+        self.residual_block = nn.Sequential(*residual_operations)
 
     def forward(self, x):
-        x = self.conv(x)
+        # Upsample the input tensor
+        upsampled_input = self.upsample(x)
 
-        shortcut = x
+        # Apply residual operations to the upsampled tensor
+        residual_output = self.residual_block(upsampled_input)
 
-        x = self.b(x)
+        # Add the upsampled tensor to the input tensor as a residual connection
+        output = x + residual_output
 
-        return x + shortcut
+        return output
 
 
 # cross embed layer
@@ -340,17 +368,19 @@ class CrossFormer(nn.Module):
                 Transformer(dim_out, local_window_size=local_wsz, global_window_size=global_wsz, depth=layers, attn_dropout=attn_dropout, ff_dropout=ff_dropout)
             ]))
 
-        self.cube_embedding = CubeEmbedding(
-            (frames, image_height, image_width),
-            (frames, patch_height, patch_width),
-            input_channels,
-            dim[0]
-        )
+        if self.patch_width > 1 and self.patch_height > 1:
+            self.cube_embedding = CubeEmbedding(
+                (frames, image_height, image_width),
+                (frames, patch_height, patch_width),
+                input_channels,
+                dim[0]
+            )
 
-        self.up_block1 = UpBlock(1 * last_dim, last_dim // 2, dim[0])
-        self.up_block2 = UpBlock(2 * (last_dim // 2), last_dim // 4, dim[0])
-        self.up_block3 = UpBlock(2 * (last_dim // 4), last_dim // 8, dim[0])
-        self.up_block4 = nn.ConvTranspose2d(2 * (last_dim // 8), input_channels, kernel_size=2, stride=2)
+        self.up_block1 = UpSamplingBlock(1 * last_dim, last_dim // 2, dim[0])
+        self.up_block2 = UpSamplingBlock(2 * (last_dim // 2), last_dim // 4, dim[0])
+        self.up_block3 = UpSamplingBlock(2 * (last_dim // 4), last_dim // 8, dim[0])
+        self.up_block4 = nn.ConvTranspose2d(2 * (last_dim // 8), input_channels, kernel_size=4, stride=2, padding=1)
+
 
     def forward(self, x):
 
@@ -372,6 +402,7 @@ class CrossFormer(nn.Module):
         x = self.up_block3(x)
         x = torch.cat([x, encodings[0]], dim=1)
         x = self.up_block4(x)
+
         x = F.interpolate(x, size=(self.image_height, self.image_width), mode="bilinear")
 
         return x.unsqueeze(2)
@@ -466,7 +497,7 @@ if __name__ == "__main__":
         global_window_size=(5, 5, 2, 1),
         local_window_size=10,
         cross_embed_kernel_sizes=((4, 8, 16, 32), (2, 4), (2, 4), (2, 4)),
-        cross_embed_strides=(4, 2, 2, 2),
+        cross_embed_strides=(2, 2, 2, 2),
         attn_dropout=0.,
         ff_dropout=0.,
     ).to("cuda")
