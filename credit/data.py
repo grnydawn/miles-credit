@@ -598,44 +598,44 @@ class PredictForecast(torch.utils.data.IterableDataset):
         num_workers = worker_info.num_workers if worker_info is not None else 1
         worker_id = worker_info.id if worker_info is not None else 0
         sampler = DistributedSampler(self, num_replicas=num_workers*self.world_size, rank=self.rank*num_workers+worker_id, shuffle=self.shuffle)
-    
+
         for index in sampler:
-            
+
             data_lookup = self.find_start_stop_indices(index)
 
             for k, (file_key, time_key) in enumerate(data_lookup):
                 concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
                 sliced_x = xr.open_zarr(self.filenames[file_key], consolidated=True).isel(time=slice(time_key, time_key+self.history_len+1))
-                
-                 # Check if additional data from the next file is needed
+
+                # Check if additional data from the next file is needed
                 if len(sliced_x['time']) < self.history_len + 1:
                     # Load excess data from the next file
                     next_file_idx = self.filenames.index(self.filenames[file_key]) + 1
                     if next_file_idx == len(self.filenames):
                         raise OSError("You have reached the end of the available data. Exiting.")
                     sliced_x_next = xr.open_zarr(
-                        self.filenames[next_file_idx], 
+                        self.filenames[next_file_idx],
                         consolidated=True).isel(time=slice(0, self.history_len+1-len(sliced_x['time'])))
-            
+
                     # Concatenate excess data from the next file with the current data
                     sliced_x = xr.concat([sliced_x, sliced_x_next], dim='time')
-                
+
                 sample_x = {
                     'x': sliced_x.isel(time=slice(0, self.history_len)),
                     'y': sliced_x.isel(time=slice(self.history_len, self.history_len+1))  # Fetch y data for t(i+1)
                 }
-                                
+
                 if self.transform:
                     sample_x = self.transform(sample_x)
-    
+
                 for key in concatenated_samples.keys():
-                    concatenated_samples[key] = sample_x[key]
-    
+                    concatenated_samples[key] = sample_x[key].squeeze(0) if self.history_len == 1 else sample_x[key]
+
                 concatenated_samples['forecast_hour'] = k + 1
                 concatenated_samples['stop_forecast'] = (k == (len(data_lookup)-self.history_len-1))  # Adjust stopping condition
                 concatenated_samples['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[-1]
 
                 yield concatenated_samples
-    
+
                 if concatenated_samples['stop_forecast']:
                     break

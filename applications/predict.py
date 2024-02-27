@@ -65,7 +65,7 @@ def draw_forecast(data, conf=None, times=None, forecast_count=None, save_locatio
     pout = ax.pcolormesh(
         lat_lon_weights["longitude"],
         lat_lon_weights["latitude"],
-        pred,  #(pred * sds["U"].values[8] + means["U"].values[8]),
+        pred,
         transform=ccrs.PlateCarree(),
         vmin=-30,
         vmax=30,
@@ -102,7 +102,7 @@ def predict(rank, world_size, conf):
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
 
     # Preprocessing transformations
-    state_transformer = NormalizeState(conf["data"]["mean_path"],conf["data"]["std_path"])
+    state_transformer = NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"])
     transform = transforms.Compose([
         state_transformer,
         ToTensor(history_len=history_len, forecast_len=forecast_len)
@@ -163,13 +163,15 @@ def predict(rank, world_size, conf):
 
             if forecast_hour == 1:
                 # Initialize x and x_surf with the first time step
-                x_atmo = batch["x"]
-                x_surf = batch["x_surf"]
-                x = model.concat_and_reshape(x_atmo, x_surf).to(device)
+                x = model.concat_and_reshape(
+                    batch["x"],
+                    batch["x_surf"]
+                ).to(device)
 
-            y_atmo = batch["y"]
-            y_surf = batch["y_surf"]
-            y = model.concat_and_reshape(y_atmo, y_surf).to(device)
+            y = model.concat_and_reshape(
+                batch["y"],
+                batch["y_surf"]
+                ).to(device)
 
             # Predict
             y_pred = model(x)
@@ -204,10 +206,10 @@ def predict(rank, world_size, conf):
             # Save as numpy arrays for now
             save_arr = state_transformer.inverse_transform(y_pred.cpu()).squeeze(0)
             np.save(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_pred.npy"), save_arr)
-            #np.save(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_true.npy"), y.cpu())
+            # np.save(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_true.npy"), y.cpu())
 
             pred_files.append(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_pred.npy"))
-            #true_files.append(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_true.npy"))
+            # true_files.append(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_true.npy"))
 
             # Explicitly release GPU memory
             torch.cuda.empty_cache()
@@ -241,7 +243,7 @@ def predict(rank, world_size, conf):
                 forecast_count += 1
                 metrics_results = defaultdict(list)
                 pred_files = []
-                true_files = []
+                # true_files = []
 
 
 if __name__ == "__main__":
