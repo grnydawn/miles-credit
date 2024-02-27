@@ -531,8 +531,15 @@ class PredictForecast(torch.utils.data.IterableDataset):
         self.current_epoch = 0
         self.rollout_p = rollout_p
         self.forecasts = forecasts
+        self.skip_periods = skip_periods if skip_periods is not None else 1
 
     def find_start_stop_indices(self, index):
+        start_time = self.forecasts[index][0]
+        date_object = datetime.datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
+        shifted_hours = self.skip_periods * self.history_len
+        date_object = date_object - datetime.timedelta(hours=shifted_hours)
+        self.forecasts[index][0] = date_object.strftime('%Y-%m-%d %H:%M:%S')
+
         datetime_objs = [np.datetime64(date) for date in self.forecasts[index]]
         start_time, stop_time = [str(datetime_obj) + '.000000000' for datetime_obj in datetime_objs]
         self.start_time = np.datetime64(start_time).astype(datetime.datetime)
@@ -591,35 +598,44 @@ class PredictForecast(torch.utils.data.IterableDataset):
         num_workers = worker_info.num_workers if worker_info is not None else 1
         worker_id = worker_info.id if worker_info is not None else 0
         sampler = DistributedSampler(self, num_replicas=num_workers*self.world_size, rank=self.rank*num_workers+worker_id, shuffle=self.shuffle)
-
+    
         for index in sampler:
+            
             data_lookup = self.find_start_stop_indices(index)
 
             for k, (file_key, time_key) in enumerate(data_lookup):
                 concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
-                sliced_x = xr.open_zarr(self.filenames[file_key], consolidated=True).isel(time=slice(time_key, time_key+1, self.skip_periods))
+                sliced_x = xr.open_zarr(self.filenames[file_key], consolidated=True).isel(time=slice(time_key, time_key+self.history_len+1))
+                
+                 # Check if additional data from the next file is needed
+                if len(sliced_x['time']) < self.history_len + 1:
+                    # Load excess data from the next file
+                    next_file_idx = self.filenames.index(self.filenames[file_key]) + 1
+                    if next_file_idx == len(self.filenames):
+                        raise OSError("You have reached the end of the available data. Exiting.")
+                    sliced_x_next = xr.open_zarr(
+                        self.filenames[next_file_idx], 
+                        consolidated=True).isel(time=slice(0, self.history_len+1-len(sliced_x['time'])))
+            
+                    # Concatenate excess data from the next file with the current data
+                    sliced_x = xr.concat([sliced_x, sliced_x_next], dim='time')
+                
                 sample_x = {
-                    'x': sliced_x.isel(time=slice(0, 1, 1)),
-                    #'t': sliced_x.time.values.astype('datetime64[s]').astype(int),
+                    'x': sliced_x.isel(time=slice(0, self.history_len)),
+                    'y': sliced_x.isel(time=slice(self.history_len, self.history_len+1))  # Fetch y data for t(i+1)
                 }
-                # Fetch the next pair to create the y tensor
-                next_k = k + 1
-                if next_k < len(data_lookup):
-                    next_file_key, next_time_key = data_lookup[next_k]
-                    sliced_y = xr.open_zarr(self.filenames[next_file_key], consolidated=True).isel(time=slice(next_time_key, next_time_key+1, self.skip_periods))
-                    sample_x['y'] = sliced_y.isel(time=slice(0, 1, 1))
-
+                                
                 if self.transform:
                     sample_x = self.transform(sample_x)
-
+    
                 for key in concatenated_samples.keys():
-                    concatenated_samples[key] = sample_x[key].squeeze()
-
-                concatenated_samples['forecast_hour'] = k
-                concatenated_samples['stop_forecast'] = (k == (len(data_lookup)-2))
-                concatenated_samples['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[0]
+                    concatenated_samples[key] = sample_x[key]
+    
+                concatenated_samples['forecast_hour'] = k + 1
+                concatenated_samples['stop_forecast'] = (k == (len(data_lookup)-self.history_len-1))  # Adjust stopping condition
+                concatenated_samples['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[-1]
 
                 yield concatenated_samples
-
+    
                 if concatenated_samples['stop_forecast']:
                     break

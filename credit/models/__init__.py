@@ -25,7 +25,7 @@ model_types = {
 }
 
 
-def load_model(conf):
+def load_model(conf, load_weights=False):
     model_conf = conf["model"]
 
     if "type" not in model_conf:
@@ -39,17 +39,24 @@ def load_model(conf):
         logger.info("Loading a segmentation model ...")
         check_timm_version(model_type)
         from credit.models.unet import SegmentationModel
+        if load_weights:
+            return SegmentationModel.load_model(conf)
         return SegmentationModel(conf)
+    
     elif model_type == "fuxi":
         logger.info("Loading FuXi ...")
         check_timm_version(model_type)
         
         from credit.models.fuxi import Fuxi
+        if load_weights:
+            return Fuxi.load_model(conf)
         return Fuxi(**model_conf)
 
     elif model_type in model_types:
         model, message = model_types[model_type]
         logger.info(message)
+        if load_weights:
+            return model.load_model(conf)
         return model(**model_conf)
         
     else:
