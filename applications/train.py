@@ -178,7 +178,7 @@ def load_model_and_optimizer(conf, model, device):
 
     # load optimizer and grad scaler states
     else:
-        ckpt = f"{save_loc}/checkpoint.pt"  # if conf["trainer"]["mode"] != "ddp" else f"{save_loc}/checkpoint_{device}.pt"
+        ckpt = os.path.join(save_loc, "checkpoint.pt")
         checkpoint = torch.load(ckpt, map_location=device)
 
         if conf["trainer"]["mode"] == "fsdp":
