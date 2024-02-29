@@ -21,6 +21,7 @@ import glob
 from argparse import ArgumentParser
 
 
+
 parser = ArgumentParser(
     description="converts a directory of netcdf files into a zarr store"
 )
@@ -33,7 +34,8 @@ parser.add_argument(
     help="zarr store to create (must not already exist)"
 )
 
-
+## locals().update creates these, but declare them to pacify flake
+indir, zarrfile = None, None
 locals().update(vars(parser.parse_args()))  ## convert args into vars
 
 inglob = indir + "/*.nc"
