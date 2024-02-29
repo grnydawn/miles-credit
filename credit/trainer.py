@@ -80,7 +80,10 @@ class Trainer:
             )
 
         batch_group_generator = tqdm.tqdm(
-            enumerate(trainloader), total=batches_per_epoch, leave=True
+            enumerate(trainloader),
+            total=batches_per_epoch,
+            leave=True,
+            disable=True if self.rank > 0 else False
         )
 
         results_dict = defaultdict(list)
@@ -160,7 +163,7 @@ class Trainer:
                 forecast_hour_stop = batch['forecast_hour'][-1].item()
                 results_dict["train_forecast_len"].append(forecast_hour_stop+1)
             else:
-                results_dict["train_forecast_len"].append(1)
+                results_dict["train_forecast_len"].append(forecast_len+1)
 
             if not np.isfinite(np.mean(results_dict["train_loss"])):
                 try:
@@ -223,7 +226,10 @@ class Trainer:
             )
 
         batch_group_generator = tqdm.tqdm(
-            enumerate(valid_loader), total=valid_batches_per_epoch, leave=True
+            enumerate(valid_loader),
+            total=valid_batches_per_epoch,
+            leave=True,
+            disable=True if self.rank > 0 else False
         )
 
         for i, batch in batch_group_generator:
