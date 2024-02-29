@@ -17,8 +17,7 @@ import yaml
 from torch.distributed.fsdp import StateDictType
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision import transforms
-from credit.vit2d import ViT2D
-from credit.rvt import RViT
+from credit.models import load_model
 from credit.loss import VariableTotalLoss2D
 from credit.data import PredictForecast
 from credit.transforms import ToTensor, NormalizeState
@@ -66,14 +65,15 @@ def draw_forecast(data, conf=None, times=None, forecast_count=None, save_locatio
     pout = ax.pcolormesh(
         lat_lon_weights["longitude"],
         lat_lon_weights["latitude"],
-        pred,  #(pred * sds["U"].values[8] + means["U"].values[8]),
+        pred,
         transform=ccrs.PlateCarree(),
         vmin=-30,
         vmax=30,
         cmap='RdBu'
     )
     plt.colorbar(pout, ax=ax, orientation="horizontal", fraction=0.05, pad=0.01)
-    plt.title(f"Q (g/kg) D ({t}) H ({k})")
+    plt.title(f"V (m/s) D ({t}) H ({k})")
+    #plt.title(f"Q (g/kg) D ({t}) H ({k})")
     filename = join(save_location, f"global_q_{forecast_count}_{k}.png")
     plt.savefig(filename, dpi=300, bbox_inches="tight")
     plt.close()
@@ -96,13 +96,13 @@ def predict(rank, world_size, conf):
 
     history_len = conf["data"]["history_len"]
     forecast_len = conf["data"]["forecast_len"]
-    time_step = conf["data"]["time_step"]
+    time_step = conf["data"]["time_step"] if "time_step" in conf["data"] else None
 
     # Load paths to all ERA5 data available
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
 
     # Preprocessing transformations
-    state_transformer = NormalizeState(conf["data"]["mean_path"],conf["data"]["std_path"])
+    state_transformer = NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"])
     transform = transforms.Compose([
         state_transformer,
         ToTensor(history_len=history_len, forecast_len=forecast_len)
@@ -131,14 +131,7 @@ def predict(rank, world_size, conf):
     )
 
     # load model
-    if 'use_rotary' in conf['model'] and conf['model']['use_rotary']:
-        model = RViT.load_model(conf).to(device)
-    else:
-        if 'use_rotary' in conf['model']:
-            del conf['model']['use_rotary']
-            del conf['model']['use_ds_conv']
-            del conf['model']['use_glu']
-        model = ViT2D.load_model(conf).to(device)
+    model = load_model(conf, load_weights=True).to(device)
 
     # Warning -- see next line
     if conf["trainer"]["mode"] == "ddp":  # A new field needs to be added to predict
@@ -168,21 +161,29 @@ def predict(rank, world_size, conf):
             date_time = batch["datetime"].item()
             forecast_hour = batch["forecast_hour"].item()
 
-            if forecast_hour == 0:
+            if forecast_hour == 1:
                 # Initialize x and x_surf with the first time step
-                x_atmo = batch["x"].squeeze(1)
-                x_surf = batch["x_surf"].squeeze(1)
-                x = model.concat_and_reshape(x_atmo, x_surf).to(device)
-            else:
-                x = y_pred.detach()
+                x = model.concat_and_reshape(
+                    batch["x"],
+                    batch["x_surf"]
+                ).to(device)
 
-            y_atmo = batch["y"].squeeze(1)
-            y_surf = batch["y_surf"].squeeze(1)
-            y = model.concat_and_reshape(y_atmo, y_surf).to(device)
+            y = model.concat_and_reshape(
+                batch["y"],
+                batch["y_surf"]
+                ).to(device)
 
             # Predict
-
             y_pred = model(x)
+
+            # Update the input
+            if history_len == 1:
+                x = y_pred.detach()
+            else:
+                x_detach = x[:, :, 1:].detach()
+                x = torch.cat([x_detach, y_pred.detach()], dim=2)
+                y = y.squeeze(2)
+                y_pred = y_pred.squeeze(2)
 
             # Compute metrics
             mae = loss_fn(y, y_pred)
@@ -205,10 +206,10 @@ def predict(rank, world_size, conf):
             # Save as numpy arrays for now
             save_arr = state_transformer.inverse_transform(y_pred.cpu()).squeeze(0)
             np.save(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_pred.npy"), save_arr)
-            #np.save(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_true.npy"), y.cpu())
+            # np.save(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_true.npy"), y.cpu())
 
             pred_files.append(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_pred.npy"))
-            #true_files.append(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_true.npy"))
+            # true_files.append(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_true.npy"))
 
             # Explicitly release GPU memory
             torch.cuda.empty_cache()
@@ -242,7 +243,7 @@ def predict(rank, world_size, conf):
                 forecast_count += 1
                 metrics_results = defaultdict(list)
                 pred_files = []
-                true_files = []
+                # true_files = []
 
 
 if __name__ == "__main__":

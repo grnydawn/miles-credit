@@ -19,13 +19,12 @@ model_types = {
     "rvt": (RViT, "Loading a custom rotary transformer architecture with conv attention ..."),
     "simple-vit": (SimpleViT, "Loading a simplified vit rotary transformer architecture ..."),
     "cube-vit": (CubeViT, "Loading a simplified vit rotary transformer architecture with a 3D conv tokenizer ..."),
-    "crossformer": (CrossFormer, "Loading the CrossFormer model with a conv decoder head ..."),
     "crossformer-skip": (CrossFormerSkip, "Loading the CrossFormer model with a conv decoder head and skip connections ..."),
     "crossformer": (CrossFormer, "Loading the CrossFormer model ...")
 }
 
 
-def load_model(conf):
+def load_model(conf, load_weights=False):
     model_conf = conf["model"]
 
     if "type" not in model_conf:
@@ -39,34 +38,42 @@ def load_model(conf):
         logger.info("Loading a segmentation model ...")
         check_timm_version(model_type)
         from credit.models.unet import SegmentationModel
+        if load_weights:
+            return SegmentationModel.load_model(conf)
         return SegmentationModel(conf)
+
     elif model_type == "fuxi":
         logger.info("Loading FuXi ...")
         check_timm_version(model_type)
-        
+
         from credit.models.fuxi import Fuxi
+        if load_weights:
+            return Fuxi.load_model(conf)
         return Fuxi(**model_conf)
 
     elif model_type in model_types:
         model, message = model_types[model_type]
         logger.info(message)
+        if load_weights:
+            return model.load_model(conf)
         return model(**model_conf)
-        
+
     else:
         msg = f"Model type {model_type} not supported. Exiting."
         logger.warning(msg)
         raise ValueError(msg)
 
+
 def check_timm_version(model_type):
     if model_type == "unet":
-        try: 
-            assert(version('timm') == '0.6.12')
+        try:
+            assert (version('timm') == '0.6.12')
         except AssertionError as e:
             msg = """timm version 0.6 is required for using pytorch-segmentation-models. Please use environment-unet.yml env or pip install timm==0.6.12."""
             raise Exception(msg) from e
     elif model_type == "fuxi":
         try:
-            assert(version('timm') >= '0.9.12')
+            assert (version('timm') >= '0.9.12')
         except AssertionError as e:
             msg = """timm version 0.9.12 or greater is required for FuXi model. Please use environment.yml env or pip install timm==0.9.12."""
             raise Exception(msg) from e

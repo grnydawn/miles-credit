@@ -9,7 +9,7 @@ class LatWeightedMetrics:
         lat_file = conf['loss']['latitude_weights']
         atmos_vars = conf['data']['variables']
         surface_vars = conf['data']['surface_variables']
-        levels = conf['model']['frames']
+        levels = conf['model']['levels'] if 'levels' in conf['model'] else conf['model']['frames']
 
         self.vars = [f"{v}_{k}" for v in atmos_vars for k in range(levels)]
         self.vars += surface_vars
@@ -33,8 +33,8 @@ class LatWeightedMetrics:
             y = transform(y)
 
         # Get latitude and variable weights
-        w_lat = self.w_lat.to(dtype=pred.dtype, device=pred.device) if self.w_lat is not None else 1
-        w_var = self.w_var.to(dtype=pred.dtype, device=pred.device) if self.w_var is not None else 1
+        w_lat = self.w_lat.to(dtype=pred.dtype, device=pred.device) if self.w_lat is not None else 1.
+        w_var = self.w_var.to(dtype=pred.dtype, device=pred.device) if self.w_var is not None else 1.
 
         if clim is not None:
             clim = clim.to(device=y.device).unsqueeze(0)

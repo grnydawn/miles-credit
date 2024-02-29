@@ -16,6 +16,16 @@ def cast_tuple(val, length=1):
     return val if isinstance(val, tuple) else ((val,) * length)
 
 
+def circular_pad1d(x, pad):
+    return torch.cat((x[..., -pad:], x, x[..., :pad]), dim=-1)
+
+
+def apply_spectral_norm(model):
+    for module in model.modules():
+        if isinstance(module, (nn.Conv2d, nn.Linear, nn.ConvTranspose2d)):
+            nn.utils.spectral_norm(module)
+
+
 # cube embedding
 
 class CubeEmbedding(nn.Module):
@@ -46,55 +56,27 @@ class CubeEmbedding(nn.Module):
         return x.squeeze(2)
 
 
-# class UpBlock(nn.Module):
-#     def __init__(self, in_chans, out_chans, num_groups, num_residuals=2):
-#         super().__init__()
-#         self.conv = nn.ConvTranspose2d(in_chans, out_chans, kernel_size=2, stride=2)
-
-#         blk = []
-#         for i in range(num_residuals):
-#             blk.append(nn.Conv2d(out_chans, out_chans, kernel_size=3, stride=1, padding=1))
-#             blk.append(nn.GroupNorm(num_groups, out_chans))
-#             blk.append(nn.SiLU())
-
-#         self.b = nn.Sequential(*blk)
-
-#     def forward(self, x):
-#         x = self.conv(x)
-
-#         shortcut = x
-
-#         x = self.b(x)
-
-#         return x + shortcut
-
-class UpSamplingBlock(nn.Module):
-    def __init__(self, in_channels, out_channels, num_groups, num_residuals=2):
+class UpBlock(nn.Module):
+    def __init__(self, in_chans, out_chans, num_groups, num_residuals=2):
         super().__init__()
+        self.conv = nn.ConvTranspose2d(in_chans, out_chans, kernel_size=2, stride=2)
 
-        # Transposed convolution layer for upsampling
-        self.upsample = nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2)
+        blk = []
+        for i in range(num_residuals):
+            blk.append(nn.Conv2d(out_chans, out_chans, kernel_size=3, stride=1, padding=1))
+            blk.append(nn.GroupNorm(num_groups, out_chans))
+            blk.append(nn.SiLU())
 
-        # Sequential block for residual operations
-        residual_operations = []
-        for _ in range(num_residuals):
-            residual_operations.append(nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1))
-            residual_operations.append(nn.GroupNorm(num_groups, out_channels))
-            residual_operations.append(nn.SiLU())
-
-        self.residual_block = nn.Sequential(*residual_operations)
+        self.b = nn.Sequential(*blk)
 
     def forward(self, x):
-        # Upsample the input tensor
-        upsampled_input = self.upsample(x)
+        x = self.conv(x)
 
-        # Apply residual operations to the upsampled tensor
-        residual_output = self.residual_block(upsampled_input)
+        shortcut = x
 
-        # Add the upsampled tensor to the input tensor as a residual connection
-        output = x + residual_output
+        x = self.b(x)
 
-        return output
+        return x + shortcut
 
 
 # cross embed layer
@@ -319,6 +301,7 @@ class CrossFormer(nn.Module):
         cross_embed_strides=(4, 2, 2, 2),
         attn_dropout=0.,
         ff_dropout=0.,
+        pad=0
     ):
         super().__init__()
 
@@ -335,6 +318,7 @@ class CrossFormer(nn.Module):
         self.channels = channels
         self.surface_channels = surface_channels
         self.levels = levels
+        self.pad = pad
         input_channels = channels * levels + surface_channels
 
         dim = cast_tuple(dim, 4)
@@ -368,21 +352,23 @@ class CrossFormer(nn.Module):
                 Transformer(dim_out, local_window_size=local_wsz, global_window_size=global_wsz, depth=layers, attn_dropout=attn_dropout, ff_dropout=ff_dropout)
             ]))
 
-        if self.patch_width > 1 and self.patch_height > 1:
-            self.cube_embedding = CubeEmbedding(
-                (frames, image_height, image_width),
-                (frames, patch_height, patch_width),
-                input_channels,
-                dim[0]
-            )
+        self.cube_embedding = CubeEmbedding(
+            (frames, image_height, image_width),
+            (frames, patch_height, patch_width),
+            input_channels,
+            dim[0]
+        )
 
-        self.up_block1 = UpSamplingBlock(1 * last_dim, last_dim // 2, dim[0])
-        self.up_block2 = UpSamplingBlock(2 * (last_dim // 2), last_dim // 4, dim[0])
-        self.up_block3 = UpSamplingBlock(2 * (last_dim // 4), last_dim // 8, dim[0])
+        self.up_block1 = UpBlock(1 * last_dim, last_dim // 2, dim[0])
+        self.up_block2 = UpBlock(2 * (last_dim // 2), last_dim // 4, dim[0])
+        self.up_block3 = UpBlock(2 * (last_dim // 4), last_dim // 8, dim[0])
         self.up_block4 = nn.ConvTranspose2d(2 * (last_dim // 8), input_channels, kernel_size=4, stride=2, padding=1)
 
 
     def forward(self, x):
+
+        if self.pad > 0:
+            x = circular_pad1d(x, pad=self.pad)
 
         if self.patch_width > 1 and self.patch_height > 1:
             x = self.cube_embedding(x)
@@ -402,6 +388,16 @@ class CrossFormer(nn.Module):
         x = self.up_block3(x)
         x = torch.cat([x, encodings[0]], dim=1)
         x = self.up_block4(x)
+
+        if self.pad > 0:
+            # calculate the average at the boundaries
+            avg = (x[..., :self.pad] + x[..., -self.pad:]) / 2
+            # replace the boundaries of x_padded with the average
+            x[..., :self.pad] = avg[..., :self.pad]
+            x[..., -self.pad:] = avg[..., -self.pad:]
+
+            # slice to original size
+            x = x[..., self.pad:-self.pad]
 
         x = F.interpolate(x, size=(self.image_height, self.image_width), mode="bilinear")
 

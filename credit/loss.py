@@ -179,6 +179,36 @@ class SpectralLoss3D(nn.Module):
         return loss.to(device=device, dtype=dtype)
 
 
+class PowerSpectrumLoss(nn.Module):
+    def __init__(self):
+        super(PowerSpectrumLoss, self).__init__()
+
+    def forward(self, true_data, pred_data, weights=None):
+        # Fourier transform along the longitude dimension for true and predicted data
+        true_fft = torch.fft.fftn(true_data, dim=-1)
+        pred_fft = torch.fft.fftn(pred_data, dim=-1)
+
+        # Calculate power spectra for true and predicted data
+        true_power_spectrum = torch.abs(true_fft)**2
+        pred_power_spectrum = torch.abs(pred_fft)**2
+
+        # Logarithm transformation
+        true_power_spectrum_log = torch.log(true_power_spectrum + 1e-8)  # Adding epsilon to avoid log(0)
+        pred_power_spectrum_log = torch.log(pred_power_spectrum + 1e-8)
+
+        # Calculate mean power spectra
+        true_mean_power_spectrum = torch.mean(true_power_spectrum_log, dim=(0, 1, 2))
+        pred_mean_power_spectrum = torch.mean(pred_power_spectrum_log, dim=(0, 1, 2))
+
+        # Compute loss as the mean squared error between the power spectra
+        if weights is not None:
+            loss = torch.mean(weights * (true_mean_power_spectrum - pred_mean_power_spectrum)**2)
+        else:
+            loss = torch.mean((true_mean_power_spectrum - pred_mean_power_spectrum)**2)
+
+        return loss
+
+
 def latititude_weights(conf):
     cos_lat = xr.open_dataset(conf["loss"]["latitude_weights"])["coslat"].values
     # Normalize over lat
@@ -306,6 +336,11 @@ class VariableTotalLoss2D(torch.nn.Module):
                 reduction='none'
             )
 
+        self.use_power_loss = conf["loss"]["use_power_loss"] if "use_power_loss" in conf["loss"] else False
+        if self.use_power_loss:
+            self.power_lambda_reg = conf["loss"]["spectral_lambda_reg"]
+            self.power_loss = PowerSpectrumLoss()
+
         self.validation = validation
         if self.validation:
             self.loss_fn = nn.L1Loss(reduction='none')
@@ -319,6 +354,8 @@ class VariableTotalLoss2D(torch.nn.Module):
         loss = self.loss_fn(target, pred)
 
         # Add the spectral loss
+        if not self.validation and self.use_power_loss:
+            loss += self.power_lambda_reg * self.power_loss(target, pred, weights=self.lat_weights)
 
         loss_dict = {}
         for i, var in enumerate(self.vars):
