@@ -218,8 +218,8 @@ class Fuxi(nn.Module):
 
         # the size of embedded patches
         patch_size = (frame_patch_size, patch_height, patch_width)
-        
-        # number of channels = levels * varibales per level + surface variables 
+
+        # number of channels = levels * varibales per level + surface variables
         in_chans = out_chans = levels * channels + surface_channels
 
         # input resolution = number of embedded patches / 2
@@ -260,14 +260,14 @@ class Fuxi(nn.Module):
     def forward(self, x: torch.Tensor):
         # Tensor dims: Batch, Variables, Time, Lat grids, Lon grids
         B, _, _, _, _ = x.shape
-        
+
         _, patch_lat, patch_lon = self.patch_size
 
         # Get the number of patches after embedding
         Lat, Lon = self.input_resolution
         Lat, Lon = Lat * 2, Lon * 2
 
-        # Cube Embedding and squeese the time dimension 
+        # Cube Embedding and squeese the time dimension
         # (the model produce single forecast lead time only)
 
         # x: input size = (Batch, Variables, Time, Lat grids, Lon grids)
@@ -284,7 +284,7 @@ class Fuxi(nn.Module):
         # B, lat, patch_lat, lon, patch_lon, C
         x = x.reshape(B, Lat * patch_lat, Lon * patch_lon, self.out_chans)
         x = x.permute(0, 3, 1, 2)  # B C Lat Lon
-        
+
         # bilinear interpolation
         # if lat/lon grids (i.e., img_size) cannot be divided by the patche size completely
         # this will preserve the output size
@@ -296,11 +296,7 @@ class Fuxi(nn.Module):
     @classmethod
     def load_model(cls, conf):
         save_loc = conf['save_loc']
-        ckpt = os.path.join(f"{save_loc}", "checkpoint.pt")
-
-        if conf["trainer"]["mode"] == "ddp":
-            if not os.path.isfile(ckpt):
-                ckpt = os.path.join(f"{save_loc}", "checkpoint_cuda:0.pt")
+        ckpt = os.path.join(save_loc, "checkpoint.pt")
 
         if not os.path.isfile(ckpt):
             raise ValueError(
@@ -341,7 +337,7 @@ class Fuxi(nn.Module):
         state_dict = {
             "model_state_dict": self.state_dict(),
         }
-        torch.save(state_dict, f"{save_loc}/checkpoint.pt")
+        torch.save(state_dict, os.path.join(save_loc, "checkpoint.pt"))
 
 
 if __name__ == "__main__":
@@ -359,7 +355,7 @@ if __name__ == "__main__":
     img_size = (2, image_height, image_width)
     patch_size = (2, patch_height, patch_width)
     in_chans = 67
-    dim = 128
+    dim = 1024
 
     input_tensor = torch.randn(2, channels * levels + surface_channels, frames, image_height, image_width).to("cuda")
 

@@ -1,11 +1,11 @@
 import warnings
+import logging
 import torch
 import torch.distributed as dist
 from argparse import ArgumentParser
 from pathlib import Path
 
 import torch.fft
-import logging
 import shutil
 
 import wandb
@@ -38,6 +38,8 @@ from multiprocessing import Pool
 from functools import partial
 import pandas as pd
 
+logger = logging.getLogger(__name__)
+
 
 warnings.filterwarnings("ignore")
 
@@ -56,7 +58,7 @@ def draw_forecast(data, conf=None, times=None, forecast_count=None, save_locatio
     lat_lon_weights = xr.open_dataset(conf['loss']['latitude_weights'])
     pred = np.load(fn)
     t = times[k]
-    pred = pred[8]
+    pred = pred[45]
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(1, 1, 1, projection=ccrs.EckertIII())
     ax.set_global()
@@ -67,13 +69,13 @@ def draw_forecast(data, conf=None, times=None, forecast_count=None, save_locatio
         lat_lon_weights["latitude"],
         pred,
         transform=ccrs.PlateCarree(),
-        vmin=-30,
-        vmax=30,
+        vmin=0,
+        vmax=0.000005,
         cmap='RdBu'
     )
     plt.colorbar(pout, ax=ax, orientation="horizontal", fraction=0.05, pad=0.01)
-    plt.title(f"V (m/s) D ({t}) H ({k})")
-    #plt.title(f"Q (g/kg) D ({t}) H ({k})")
+    plt.title(f"U (m/s) D ({t}) H ({k})")
+    # plt.title(f"Q (g/kg) D ({t}) H ({k})")
     filename = join(save_location, f"global_q_{forecast_count}_{k}.png")
     plt.savefig(filename, dpi=300, bbox_inches="tight")
     plt.close()
@@ -185,6 +187,10 @@ def predict(rank, world_size, conf):
                 y = y.squeeze(2)
                 y_pred = y_pred.squeeze(2)
 
+            # Convert back to quantites with physical units before computing metrics
+            y = state_transformer.inverse_transform(y.cpu())
+            y_pred = state_transformer.inverse_transform(y_pred.cpu())
+
             # Compute metrics
             mae = loss_fn(y, y_pred)
             metrics_dict = metrics(y_pred.float(), y.float())
@@ -204,8 +210,8 @@ def predict(rank, world_size, conf):
             print(print_str)
 
             # Save as numpy arrays for now
-            save_arr = state_transformer.inverse_transform(y_pred.cpu()).squeeze(0)
-            np.save(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_pred.npy"), save_arr)
+            # save_arr = state_transformer.inverse_transform(y_pred.cpu()).squeeze(0)
+            np.save(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_pred.npy"), y_pred.squeeze(0))
             # np.save(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_true.npy"), y.cpu())
 
             pred_files.append(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_pred.npy"))

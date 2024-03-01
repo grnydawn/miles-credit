@@ -52,6 +52,7 @@ class SegmentationModel(torch.nn.Module):
         self.num_single_layer = conf["model"]["surface_channels"]
         self.use_codebook = False
         self.rk4_integration = conf["model"]["rk4_integration"]
+        self.channels = 1
 
         in_out_channels = int(self.num_atmos_vars*self.num_levels + self.num_single_layer)
 
@@ -66,24 +67,20 @@ class SegmentationModel(torch.nn.Module):
         return self.rk4(x) if self.rk4_integration else self.model(x)
 
     def concat_and_reshape(self, x1, x2):
-        x1 = x1.view(x1.shape[0], -1, x1.shape[3], x1.shape[4])
-        x_concat = torch.cat((x1, x2), dim=1)
-        return x_concat
+        x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
+        x_concat = torch.cat((x1, x2), dim=2)
+        return x_concat.permute(0, 2, 1, 3, 4).squeeze(2)
 
     def split_and_reshape(self, tensor):
-        tensor1 = tensor[:, :int(self.num_atmos_vars*self.num_levels), :, :]
-        tensor2 = tensor[:, -self.num_single_layer:, :, :]
-        tensor1 = tensor1.view(tensor1.shape[0], self.num_atmos_vars, self.num_levels, tensor1.shape[2], tensor1.shape[3])
+        tensor1 = tensor[:, :int(self.channels * self.levels), :, :, :]
+        tensor2 = tensor[:, -int(self.surface_channels):, :, :, :]
+        tensor1 = tensor1.view(tensor1.shape[0], self.channels, self.levels, tensor1.shape[2], tensor1.shape[3], tensor1.shape[4])
         return tensor1, tensor2
 
     @classmethod
     def load_model(cls, conf):
         save_loc = conf['save_loc']
         ckpt = f"{save_loc}/checkpoint.pt"
-
-        if conf["trainer"]["mode"] == "ddp":
-            if not os.path.isfile(ckpt):
-                ckpt = f"{save_loc}/checkpoint_cuda:0.pt"
 
         if not os.path.isfile(ckpt):
             raise ValueError(
@@ -124,7 +121,7 @@ class SegmentationModel(torch.nn.Module):
         state_dict = {
             "model_state_dict": self.state_dict(),
         }
-        torch.save(state_dict, f"{save_loc}/checkpoint.pt")
+        torch.save(state_dict, os.path.join(save_loc, "checkpoint.pt"))
 
     def rk4(self, x):
 
