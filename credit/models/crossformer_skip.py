@@ -10,6 +10,9 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 import logging
 
 
+logger = logging.getLogger(__name__)
+
+
 # helpers
 
 def cast_tuple(val, length=1):
@@ -301,7 +304,8 @@ class CrossFormer(nn.Module):
         cross_embed_strides=(4, 2, 2, 2),
         attn_dropout=0.,
         ff_dropout=0.,
-        pad=0
+        pad=0,
+        use_spectral_norm=False
     ):
         super().__init__()
 
@@ -319,6 +323,7 @@ class CrossFormer(nn.Module):
         self.surface_channels = surface_channels
         self.levels = levels
         self.pad = pad
+        self.use_spectral_norm = use_spectral_norm
         input_channels = channels * levels + surface_channels
 
         dim = cast_tuple(dim, 4)
@@ -364,6 +369,12 @@ class CrossFormer(nn.Module):
         self.up_block3 = UpBlock(2 * (last_dim // 4), last_dim // 8, dim[0])
         self.up_block4 = nn.ConvTranspose2d(2 * (last_dim // 8), input_channels, kernel_size=4, stride=2, padding=1)
 
+        if self.use_spectral_norm:
+            logger.info("Adding spectral norm to all conv and linear layers")
+            apply_spectral_norm(self)
+
+        if self.pad > 0:
+            logger.info(f"Padding each longitudinal boundary with {self.pad} pixels from the other side")
 
     def forward(self, x):
 
@@ -403,6 +414,21 @@ class CrossFormer(nn.Module):
 
         return x.unsqueeze(2)
 
+    def rk4(self, x):
+
+        def integrate_step(x, k, factor):
+            return self.forward(x + k * factor)
+
+        k1 = self.forward(x)  # State at i
+        k1 = torch.cat([x[:, :, -2:-1], k1], dim=2)
+        k2 = integrate_step(x, k1, 0.5)  # State at i + 0.5
+        k2 = torch.cat([x[:, :, -2:-1], k2], dim=2)
+        k3 = integrate_step(x, k2, 0.5)  # State at i + 0.5
+        k3 = torch.cat([x[:, :, -2:-1], k3], dim=2)
+        k4 = integrate_step(x, k3, 1.0)  # State at i + 1
+
+        return (k1 + 2 * k2 + 2 * k3 + k4) / 6
+
     def concat_and_reshape(self, x1, x2):
         x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
         x_concat = torch.cat((x1, x2), dim=2)
@@ -418,10 +444,6 @@ class CrossFormer(nn.Module):
     def load_model(cls, conf):
         save_loc = conf['save_loc']
         ckpt = os.path.join(f"{save_loc}", "checkpoint.pt")
-
-        if conf["trainer"]["mode"] == "ddp":
-            if not os.path.isfile(ckpt):
-                ckpt = os.path.join(f"{save_loc}", "checkpoint_cuda:0.pt")
 
         if not os.path.isfile(ckpt):
             raise ValueError(
@@ -476,7 +498,7 @@ if __name__ == "__main__":
     patch_width = 1
     frame_patch_size = 2
 
-    input_tensor = torch.randn(2, channels * levels + surface_channels, frames, image_height, image_width).to("cuda")
+    input_tensor = torch.randn(1, channels * levels + surface_channels, frames, image_height, image_width).to("cuda")
 
     model = CrossFormer(
         image_height=image_height,
@@ -498,9 +520,10 @@ if __name__ == "__main__":
         ff_dropout=0.,
     ).to("cuda")
 
-    y_pred = model(input_tensor.to("cuda"))
-
-    print("Predicted shape:", y_pred.shape)
-
     num_params = sum(p.numel() for p in model.parameters())
     print(f"Number of parameters in the model: {num_params}")
+
+    y_pred = model(input_tensor.to("cuda"))
+    print("Predicted shape:", y_pred.shape)
+
+    # print(model.rk4(input_tensor.to("cpu")).shape)
