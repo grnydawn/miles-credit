@@ -66,9 +66,10 @@ model:
 loss: 
     training_loss: "mse"
     use_vgg: False
+    use_power_loss: True # use either power or spectral loss
     use_spectral_loss: False
-    spectral_wavenum_init: 15
-    spectral_lambda_reg: 0.025791372491084097
+    spectral_wavenum_init: 20
+    spectral_lambda_reg: 0.1 # power loss is order of 1e1 (usually between 1-10)
     use_latitude_weights: True
     latitude_weights: "/glade/u/home/wchapman/MLWPS/DataLoader/static_variables_ERA5_zhght.nc"
     use_variable_weights: False
