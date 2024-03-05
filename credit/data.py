@@ -419,7 +419,6 @@ class CONUS404Dataset(torch.utils.data.Dataset):
 
         ## construct indexing arrays
         zarrlen = [z.dims[self.tdimname] for z in self.zarrs]
-        #segname = [list(repeat(f,z)) for f,z in zip(filenames, zarrlen)]
         whichseg = [list(repeat(s,z)) for s,z in zip(range(len(zarrlen)), zarrlen)]
         segindex = [list(range(z)) for z in zarrlen]
         
@@ -429,12 +428,12 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         self.segments = flatten([s[:-N] for s in whichseg])
         self.zindex   = flatten([i[:-N] for i in segindex])
 
-        ### if skip_periods = None, skip=0; else skip = skip_periods+1?
-        #Ntot = Nhist + Nfore + 1
+
+        ## precompute "mask" indexing arrays for subsetting data for samples
         self.histmask = list(range(0, history_len, stride))
         foreind = list(range(sample_len))
         if one_shot:
-            self.foremask = foreind[:-Nfore]
+            self.foremask = foreind[-1]
         else:
             self.foremask =  foreind[slice(history_len, sample_len, stride)]
 
@@ -745,21 +744,21 @@ class PredictForecast(torch.utils.data.IterableDataset):
 
 ############  test:
 
-# import os
-# testpath = "../../testdata/zarr/"
-# test = [testpath+f for f in os.listdir(testpath)]
-# 
-# e5 = data.ERA5Dataset(test)
-# c4 = data.CONUS404Dataset(test, tdimname="time")
-# 
-# len(e5)
-# len(c4)
+#import os
+#testpath = "../../testdata/zarr/"
+#test = [testpath+f for f in os.listdir(testpath)]
 #
-# day 22 = Jan 23
-# day 340 = Dec 28
+#e5 = data.ERA5Dataset(test)
+#c4 = data.CONUS404Dataset(test, tdimname="time")
 #
-# e5[22]
-# c4[22]
+#len(e5)
+#len(c4)
 #
-# e5[340]
-# c4[340]
+#day 22 = Jan 23
+#day 340 = Dec 28
+#
+#e5[22]
+#c4[22]
+#
+#e5[340]
+#c4[340]
