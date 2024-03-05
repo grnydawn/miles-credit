@@ -341,6 +341,144 @@ class ERA5Dataset(torch.utils.data.Dataset):
         return sample
 
 
+
+
+    
+class CONUS404Dataset(torch.utils.data.Dataset):
+    """Each Zarr store for the CONUS-404 data contains one year of
+    hourly data for one variable.
+
+    When we're sampling data, we only want to load from a single zarr
+    store; we don't want the samples to span zarr store boundaries.
+    This lets us leave years out from across the entire span for
+    validation during training.
+
+    So to do this, we segment the dataset by year.  We figure out how
+    many samples we could have, then subtract all the ones that start
+    in one year and end in another (or end past the end of the
+    dataset).  Then we create an index of which segment each sample
+    belongs to, and the number of that sample within the segment.
+
+    Then, for the __getitem__ method, we look up which segment the
+    sample is in and its numbering within the segment, then open the
+    corresponding zarr store and read only the data we want with an
+    isel() call.
+
+    Roughly: segment[i].load().isel(time=segnum[i]+mask)
+
+    """
+
+    #    def test():
+    #        
+    #from itertools import repeat
+    #from functools import reduce
+    #                                    
+    #def flatten(array):
+    #  return reduce(lambda a,b: a+b, array) 
+    #
+    ## histlen <- 2
+    #histlen = 2
+    #
+    ## forelen <- 1
+    #forelen = 1
+    #
+    #samplen = histlen + forelen - 1
+    #
+    ## monlen <- c(31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+    ## names(monlen) <- month.abb
+    #monlen = {"Jan": 31, "Feb": 28, "Mar": 31, "Apr": 30,
+    #          "May": 31, "Jun": 30, "Jul": 31, "Aug": 31,
+    #          "Sep": 30, "Oct": 31, "Nov": 30, "Dec": 31}
+    #
+    ## segments <- mapply(rep, month.abb, monlen, USE.NAMES=FALSE)
+    #segments = [list(repeat(m, monlen[m])) for m in monlen.keys()]
+    #
+    ## monthdays <- lapply(monlen, seq)
+    #monthdays =  [list(range(n)) for n in monlen.values()]
+    #
+    ## good <- lapply(monlen - (histlen + forelen-1), seq)
+    ## mindex <- mapply(`[`, monthdays, good) |> unlist(use.names=FALSE)
+    ## seqname <- mapply(`[`, segments, good) |> unlist(use.names=FALSE)
+    #mindex  = flatten([m[:-samplen] for m in monthdays])
+    #seqname = flatten([s[:-samplen] for s in segments])
+    #
+    ## print(paste(seqname, sprintf("%02d", mindex)))
+    #print([s + " " + str(i+1).zfill(2) for s,i in zip(seqname, mindex)]) 
+    #
+
+    def __init__(
+            self,
+            filenames: list=[],
+            history_len = 2,
+            forecast_len = 2,
+            transform:  Optional[Callable] = None,
+            seed = 22,
+            skip_periods = None,
+            one_shot = False
+    ):
+        self.history_len  = history_len
+        self.forecast_len = forecast_len
+        self.transform    = transform
+        self.skip_periods = skip_periods
+        self.one_shot     = one_shot
+        
+        self.sample_len = sample_len = history_len + forecast_len
+        self.rng = np.random.default_rng(seed)
+
+        self.stride = stride = 1 if skip_periods is None else skip_periods + 1
+
+        
+        ## lazily open input files
+        filenames = sorted(filenames)
+        self.zarrs = zip(filenames,
+                         [get_forward_data(f) for f in filenames])
+
+        ## construct indexing arrays
+        zarrlen = [length(z) for z in self.zarrs]
+        segname = [list(repeat, f, zarrlen[f]) for f in filenames]
+        segindex = [list(range(z)) for z in zarrlen]
+        
+        ## subset to samples that don't overlap a segment boundary
+        ## (sample size N = can't use last N-1 samples)
+        N = self.sample_len - 1
+        self.segments = flatten([sn[:-N] for sn in segname])
+        self.zindex = flatten([si[:-N] for si in segindex])
+
+        totlen = sum(zarrlen)
+        
+        ### if skip_periods = None, skip=0; else skip = skip_periods+1?
+        #Ntot = Nhist + Nfore + 1
+        self.histmask = list(range(0, history_len, stride))
+        foreind = list(range(sample_len))
+        if one_shot:
+            self.foremask = foreind[:-Nfore]
+        else:
+            self.foremask =  foreind[slice(history_len, forecast_len, stride)]
+
+    def __len(self):
+        return(totlen)
+
+    def __getitem(self, index):
+        zi = self.zindex[index]
+        data = self.zarrs[self.segname[index]].isel(time=slice(zi,zi+self.sample_len)).load()
+        ## ah but these want to by isel(time=slice), not []
+        sample=Sample(history=data[self.histmask],
+                      target=data[self.foremask],
+                      datetime=data.time.values())
+        
+        if self.transform:
+            sample = self.transform(sample)
+
+        return sample
+
+        
+### HERE UNTESTED
+        
+## Note: DistributedSequentialDataset & DistributedSequentialDataset
+## are legacy; they wrap ERA5Dataset to send data batches to GPUs for
+## (1 class of?) huge sharded models, but otherwise have been
+## superseded by ERA5Dataset.
+
 class SequentialDataset(torch.utils.data.Dataset):
 
     def __init__(self, filenames, history_len=1, forecast_len=2, skip_periods=1, transform=None, random_forecast=True):
