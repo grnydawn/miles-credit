@@ -8,6 +8,7 @@ from torch.utils.data import get_worker_info
 from torch.utils.data.distributed import DistributedSampler
 import torch.utils.data
 import datetime
+from itertools import repeat
 
 
 def get_forward_data(filename) -> xr.DataArray:
@@ -341,9 +342,13 @@ class ERA5Dataset(torch.utils.data.Dataset):
         return sample
 
 
-
-
     
+from functools import reduce
+                                    
+def flatten(array):
+  return reduce(lambda a,b: a+b, array) 
+
+
 class CONUS404Dataset(torch.utils.data.Dataset):
     """Each Zarr store for the CONUS-404 data contains one year of
     hourly data for one variable.
@@ -368,59 +373,39 @@ class CONUS404Dataset(torch.utils.data.Dataset):
 
     """
 
-    #    def test():
-    #        
-    #from itertools import repeat
-    #from functools import reduce
-    #                                    
-    #def flatten(array):
-    #  return reduce(lambda a,b: a+b, array) 
-    #
-    ## histlen <- 2
-    #histlen = 2
-    #
-    ## forelen <- 1
-    #forelen = 1
-    #
+
     #samplen = histlen + forelen - 1
     #
-    ## monlen <- c(31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
-    ## names(monlen) <- month.abb
     #monlen = {"Jan": 31, "Feb": 28, "Mar": 31, "Apr": 30,
     #          "May": 31, "Jun": 30, "Jul": 31, "Aug": 31,
     #          "Sep": 30, "Oct": 31, "Nov": 30, "Dec": 31}
     #
-    ## segments <- mapply(rep, month.abb, monlen, USE.NAMES=FALSE)
     #segments = [list(repeat(m, monlen[m])) for m in monlen.keys()]
     #
-    ## monthdays <- lapply(monlen, seq)
     #monthdays =  [list(range(n)) for n in monlen.values()]
     #
-    ## good <- lapply(monlen - (histlen + forelen-1), seq)
-    ## mindex <- mapply(`[`, monthdays, good) |> unlist(use.names=FALSE)
-    ## seqname <- mapply(`[`, segments, good) |> unlist(use.names=FALSE)
     #mindex  = flatten([m[:-samplen] for m in monthdays])
     #seqname = flatten([s[:-samplen] for s in segments])
     #
-    ## print(paste(seqname, sprintf("%02d", mindex)))
     #print([s + " " + str(i+1).zfill(2) for s,i in zip(seqname, mindex)]) 
-    #
 
     def __init__(
             self,
             filenames: list=[],
-            history_len = 2,
+            history_len = 1,
             forecast_len = 2,
             transform:  Optional[Callable] = None,
             seed = 22,
             skip_periods = None,
-            one_shot = False
+            one_shot = False,
+            tdimname = "Time"
     ):
         self.history_len  = history_len
         self.forecast_len = forecast_len
         self.transform    = transform
         self.skip_periods = skip_periods
         self.one_shot     = one_shot
+        self.tdimname     = tdimname
         
         self.sample_len = sample_len = history_len + forecast_len
         self.rng = np.random.default_rng(seed)
@@ -429,23 +414,21 @@ class CONUS404Dataset(torch.utils.data.Dataset):
 
         
         ## lazily open input files
-        filenames = sorted(filenames)
-        self.zarrs = zip(filenames,
-                         [get_forward_data(f) for f in filenames])
+        self.filenames = sorted(filenames)
+        self.zarrs = [get_forward_data(f) for f in self.filenames]
 
         ## construct indexing arrays
-        zarrlen = [length(z) for z in self.zarrs]
-        segname = [list(repeat, f, zarrlen[f]) for f in filenames]
+        zarrlen = [z.dims[self.tdimname] for z in self.zarrs]
+        #segname = [list(repeat(f,z)) for f,z in zip(filenames, zarrlen)]
+        whichseg = [list(repeat(s,z)) for s,z in zip(range(len(zarrlen)), zarrlen)]
         segindex = [list(range(z)) for z in zarrlen]
         
         ## subset to samples that don't overlap a segment boundary
         ## (sample size N = can't use last N-1 samples)
         N = self.sample_len - 1
-        self.segments = flatten([sn[:-N] for sn in segname])
-        self.zindex = flatten([si[:-N] for si in segindex])
+        self.segments = flatten([s[:-N] for s in whichseg])
+        self.zindex   = flatten([i[:-N] for i in segindex])
 
-        totlen = sum(zarrlen)
-        
         ### if skip_periods = None, skip=0; else skip = skip_periods+1?
         #Ntot = Nhist + Nfore + 1
         self.histmask = list(range(0, history_len, stride))
@@ -453,26 +436,25 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         if one_shot:
             self.foremask = foreind[:-Nfore]
         else:
-            self.foremask =  foreind[slice(history_len, forecast_len, stride)]
+            self.foremask =  foreind[slice(history_len, sample_len, stride)]
 
-    def __len(self):
-        return(totlen)
+    def __len__(self):
+        return(len(self.zindex))
 
-    def __getitem(self, index):
-        zi = self.zindex[index]
-        data = self.zarrs[self.segname[index]].isel(time=slice(zi,zi+self.sample_len)).load()
-        ## ah but these want to by isel(time=slice), not []
-        sample=Sample(history=data[self.histmask],
-                      target=data[self.foremask],
-                      datetime=data.time.values())
+    def __getitem__(self, index):
+        first = self.zindex[index]
+        last = first + self.sample_len
+        seg = self.segments[index]
+        subset = self.zarrs[seg].isel(time=slice(first, last)).load()
+        sample=Sample(history=subset.isel(time=self.histmask),
+                      target=subset.isel(time=self.foremask),
+                      datetime=subset.time)
         
         if self.transform:
             sample = self.transform(sample)
 
         return sample
 
-        
-### HERE UNTESTED
         
 ## Note: DistributedSequentialDataset & DistributedSequentialDataset
 ## are legacy; they wrap ERA5Dataset to send data batches to GPUs for
@@ -760,3 +742,24 @@ class PredictForecast(torch.utils.data.IterableDataset):
 
                 if concatenated_samples['stop_forecast']:
                     break
+
+############  test:
+
+# import os
+# testpath = "../../testdata/zarr/"
+# test = [testpath+f for f in os.listdir(testpath)]
+# 
+# e5 = data.ERA5Dataset(test)
+# c4 = data.CONUS404Dataset(test, tdimname="time")
+# 
+# len(e5)
+# len(c4)
+#
+# day 22 = Jan 23
+# day 340 = Dec 28
+#
+# e5[22]
+# c4[22]
+#
+# e5[340]
+# c4[340]
