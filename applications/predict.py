@@ -29,6 +29,7 @@ from argparse import ArgumentParser
 # Numerics
 import datetime
 import numpy as np
+import pandas as pd
 import xarray as xr
 
 # ---------- #
@@ -53,9 +54,13 @@ from credit.pbs import launch_script, launch_script_mpi
 # ---------- #
 # Graph
 import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
+import matplotlib.gridspec as gridspec
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 
-# import pandas as pd
+import cartopy.crs as ccrs
+import cartopy.mpl.geoaxes
+import cartopy.feature as cfeature
+
 # import wandb
 
 logger = logging.getLogger(__name__)
@@ -70,18 +75,11 @@ def setup(rank, world_size, mode):
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
 
-def draw_forecast(data, level=10, var_num=4, conf=None, times=None, forecast_count=None, save_location=None):
-    # ------------------------------ #
-    # get timestep and filename
-    k, fn = data
-    t = times[k]
-    pred = np.load(fn)
-    pred = pred[45]
-    # ------------------------------ #
-    # get lat/lon grids
-    lat_lon_weights = xr.open_dataset(conf['loss']['latitude_weights'])
-    longitude = lat_lon_weights["longitude"]
-    latitude = lat_lon_weights["latitude"]
+def draw_forecast(data, N_level=15, level_num=10, var_num=4, 
+                  conf=None, times=None, forecast_count=None, save_location=None):
+    '''
+    This function produces 4-panel figures 
+    '''
     # ------------------------------ #
     # visualization settings
     ## variable rage limit with units of m/s, m/s, K, g/kg
@@ -96,6 +94,17 @@ def draw_forecast(data, level=10, var_num=4, conf=None, times=None, forecast_cou
                      'Air temperature [K$^\circ$]\ntime: {}; step: {}', 
                      'Specific humidity [g/kg]\ntime: {}; step: {}']
     # ------------------------------ #
+    # get timestep and filename
+    k, fn = data
+    t = times[k]
+    pred = np.load(fn)
+    pred = pred[45]
+    # ------------------------------ #
+    # get lat/lon grids
+    lat_lon_weights = xr.open_dataset(conf['loss']['latitude_weights'])
+    longitude = lat_lon_weights["longitude"]
+    latitude = lat_lon_weights["latitude"]
+
     # Figure
     fig = plt.figure(figsize=(13, 6.5))
     
@@ -131,7 +140,7 @@ def draw_forecast(data, level=10, var_num=4, conf=None, times=None, forecast_cou
         # get the current axis
         ax = AX[i_var]
         # get the current variable
-        var_ind = i_var*N_level + level
+        var_ind = i_var*N_level + level_num
         pred_draw = pred[var_ind]
         # get visualization settings
         var_lim = var_lims[i_var]
@@ -299,24 +308,24 @@ def predict(rank, world_size, conf):
                 df.to_csv(os.path.join(save_location, "metrics.csv"))
 
                 video_files = []
+                # collect forecast outputs
                 forecast_paths = os.path.join(save_location, f"{forecast_count}_*_*_pred.npy")
+                # generator of file_name, file_count
                 file_list = enumerate(sorted(glob.glob(forecast_paths)))
-
+                # parallelize draw_forecast func
                 with Pool(processes=8) as pool:
-                    f = partial(
-                        draw_forecast,
-                        conf=conf,
-                        times=forecast_datetimes,
-                        forecast_count=forecast_count,
-                        save_location=save_location
-                    )
+                    f = partial(draw_forecast, conf=conf, times=forecast_datetimes,
+                                forecast_count=forecast_count, save_location=save_location)
+                    # collect output png file names
                     video_files = pool.map(f, file_list)
-
+                    
+                # generate gif
                 video_files = [x[1] for x in sorted(video_files)]
                 command_str = f'convert -delay 20 -loop 0 {" ".join(video_files)} {save_location}/global.gif'
+                
                 out = subprocess.Popen(command_str, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
                 print(out)
-
+                
                 forecast_count += 1
                 metrics_results = defaultdict(list)
                 pred_files = []
@@ -327,27 +336,17 @@ if __name__ == "__main__":
 
     description = "Rollout AI-NWP forecasts"
     parser = ArgumentParser(description=description)
-    parser.add_argument(
-        "-c",
-        dest="model_config",
-        type=str,
-        default=False,
-        help="Path to the model configuration (yml) containing your inputs.",
-    )
-    parser.add_argument(
-        "-l",
-        dest="launch",
-        type=int,
-        default=0,
-        help="Submit workers to PBS.",
-    )
-    parser.add_argument(
-        "-w",
-        "--world-size",
-        type=int,
-        default=4,
-        help="Number of processes (world size) for multiprocessing"
-    )
+    # -------------------- #
+    # parser args: -c, -l, -w
+    parser.add_argument("-c", dest="model_config", type=str, default=False,
+                        help="Path to the model configuration (yml) containing your inputs.",)
+    
+    parser.add_argument("-l", dest="launch", type=int, default=0,
+                        help="Submit workers to PBS.",)
+    
+    parser.add_argument("-w", "--world-size", type=int, default=4,
+                        help="Number of processes (world size) for multiprocessing")
+    # parse
     args = parser.parse_args()
     args_dict = vars(args)
     config = args_dict.pop("model_config")
