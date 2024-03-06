@@ -2,8 +2,11 @@
 Credit model output summary
 ------------------------------
 Output tensor size: (variables, latitude, longitude)
-Variables = top-of-atmosphere variables --> near-surface variables --> single layer variables
+Atmospheric level arrangement: top-of-atmosphere--> near-surface --> single layer
+An example: U (top-of-atmosphere) --> U (near-surface) --> V (top-of-atmosphere) --> V (near-surface)
 
+Yingkai Sha
+ksha@ucar.edu
 '''
 
 
@@ -89,22 +92,23 @@ def draw_forecast(data, N_level=15, level_num=10, var_num=4,
     ## colorbar extend
     colorbar_extends = ['both', 'both', 'both', 'max']
     ## title
-    title_strings = ['U wind [m/s]\ntime: {}; step: {}', 
-                     'V wind [m/s]\ntime: {}; step: {}', 
-                     'Air temperature [K$^\circ$]\ntime: {}; step: {}', 
-                     'Specific humidity [g/kg]\ntime: {}; step: {}']
+    title_strings = ['U wind [m/s]; level {}\ntime: {}; step: {}', 
+                     'V wind [m/s]; level {}\ntime: {}; step: {}', 
+                     'Air temperature [$^\circ$K]; level {}\ntime: {}; step: {}', 
+                     'Specific humidity [g/kg]; level {}\ntime: {}; step: {}']
     # ------------------------------ #
-    # get timestep and filename
+    # get forecast step and file name
     k, fn = data
     t = times[k]
     pred = np.load(fn)
-    pred = pred[45]
+    
     # ------------------------------ #
     # get lat/lon grids
     lat_lon_weights = xr.open_dataset(conf['loss']['latitude_weights'])
     longitude = lat_lon_weights["longitude"]
     latitude = lat_lon_weights["latitude"]
-
+    
+    # ------------------------------ #
     # Figure
     fig = plt.figure(figsize=(13, 6.5))
     
@@ -118,7 +122,6 @@ def draw_forecast(data, N_level=15, level_num=10, var_num=4,
     ax2 = plt.subplot(gs[1, 0], projection=proj_)
     ax3 = plt.subplot(gs[1, 1], projection=proj_)
     AX = [ax0, ax1, ax2, ax3]
-    # panel gaps
     plt.subplots_adjust(0, 0, 1, 1, hspace=0.2, wspace=0.05)
     
     # lat/lon gridlines and labeling
@@ -133,9 +136,8 @@ def draw_forecast(data, N_level=15, level_num=10, var_num=4,
     
         ax.add_feature(cfeature.COASTLINE.with_scale('110m'), edgecolor='k', linewidth=1.0, zorder=5)
         ax.spines['geo'].set_linewidth(2.5)
-    
-    CBar_collection = []
-    
+
+    # pcolormesh / colorbar / title in loops
     for i_var in range(var_num):
         # get the current axis
         ax = AX[i_var]
@@ -145,17 +147,17 @@ def draw_forecast(data, N_level=15, level_num=10, var_num=4,
         # get visualization settings
         var_lim = var_lims[i_var]
         colormap = colormaps[i_var]
+        cbar_extend = colorbar_extends[i_var]
         # pcolormesh
         cbar = ax.pcolormesh(longitude, latitude, pred_draw, vmin=var_lim[0], vmax=var_lim[1], 
                              cmap=colormap, transform=ccrs.PlateCarree())
         # colorbar operations
-        CBar_collection.append(cbar)
         CBar = fig.colorbar(cbar, location='right', orientation='vertical', 
-                            pad=0.02, fraction=0.025, shrink=0.6, aspect=15, extend=colorbar_extends[i_var], ax=ax)
+                            pad=0.02, fraction=0.025, shrink=0.6, aspect=15, extend=cbar_extend, ax=ax)
         CBar.ax.tick_params(axis='y', labelsize=14, direction='in', length=0)
         CBar.outline.set_linewidth(2.5)
         # title
-        ax.set_title(title_strings[i_var].format(t, k), fontsize=14)
+        ax.set_title(title_strings[i_var].format(level_num, t, k), fontsize=14)
     
     filename = join(save_location, f"global_q_{forecast_count}_{k}.png")
     plt.savefig(filename, dpi=300, bbox_inches="tight")
