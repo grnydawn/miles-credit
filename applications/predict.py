@@ -1,48 +1,56 @@
-import warnings
-import logging
-import torch
-import torch.distributed as dist
-from argparse import ArgumentParser
-from pathlib import Path
-
-import torch.fft
-import shutil
-
-import wandb
-import glob
+# ---------- #
+# System
+import gc
 import os
 import sys
 import yaml
+import glob
+import shutil
+import logging
+import warnings
+import subprocess
+from os.path import join
+from pathlib import Path
+from functools import partial
+from multiprocessing import Pool
+from collections import defaultdict
+from argparse import ArgumentParser
 
+# ---------- #
+# Numerics
+import datetime
+import numpy as np
+import xarray as xr
+
+# ---------- #
+# AI libs
+import torch
+#import torch.fft
+import torch.distributed as dist
 from torch.distributed.fsdp import StateDictType
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision import transforms
-from credit.models import load_model
-from credit.loss import VariableTotalLoss2D
-from credit.data import PredictForecast
-from credit.transforms import ToTensor, NormalizeState
-from credit.metrics import LatWeightedMetrics
-from credit.pbs import launch_script, launch_script_mpi
-from credit.seed import seed_everything
-import xarray as xr
-from collections import defaultdict
-import numpy as np
-import gc
 
+# ---------- #
+# credit
+from credit.data import PredictForecast
+from credit.loss import VariableTotalLoss2D
+from credit.models import load_model
+from credit.metrics import LatWeightedMetrics
+from credit.transforms import ToTensor, NormalizeState
+from credit.seed import seed_everything
+from credit.pbs import launch_script, launch_script_mpi
+
+# ---------- #
+# Graph
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
-from os.path import join
-import datetime
-import subprocess
-from multiprocessing import Pool
-from functools import partial
-import pandas as pd
+
+# import pandas as pd
+# import wandb
 
 logger = logging.getLogger(__name__)
-
-
 warnings.filterwarnings("ignore")
-
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -59,20 +67,15 @@ def draw_forecast(data, conf=None, times=None, forecast_count=None, save_locatio
     pred = np.load(fn)
     t = times[k]
     pred = pred[45]
+    longitude = lat_lon_weights["longitude"]
+    latitude = lat_lon_weights["latitude"]
+    # ---------- #
+    # Figure
     fig = plt.figure(figsize=(10, 8))
     ax = fig.add_subplot(1, 1, 1, projection=ccrs.EckertIII())
     ax.set_global()
     ax.coastlines('110m', alpha=0.5)
-
-    pout = ax.pcolormesh(
-        lat_lon_weights["longitude"],
-        lat_lon_weights["latitude"],
-        pred,
-        transform=ccrs.PlateCarree(),
-        vmin=0,
-        vmax=0.000005,
-        cmap='RdBu'
-    )
+    pout = ax.pcolormesh(longitude, latitude, pred, vmin=0, vmax=0.000005, cmap='RdBu', transform=ccrs.PlateCarree())
     plt.colorbar(pout, ax=ax, orientation="horizontal", fraction=0.05, pad=0.01)
     plt.title(f"U (m/s) D ({t}) H ({k})")
     # plt.title(f"Q (g/kg) D ({t}) H ({k})")
@@ -80,7 +83,6 @@ def draw_forecast(data, conf=None, times=None, forecast_count=None, save_locatio
     plt.savefig(filename, dpi=300, bbox_inches="tight")
     plt.close()
     return k, filename
-
 
 def predict(rank, world_size, conf):
 
