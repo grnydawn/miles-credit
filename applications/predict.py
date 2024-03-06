@@ -1,3 +1,12 @@
+'''
+Credit model output summary
+------------------------------
+Output tensor size: (variables, latitude, longitude)
+Variables = top-of-atmosphere variables --> near-surface variables --> single layer variables
+
+'''
+
+
 # ---------- #
 # System
 import gc
@@ -61,24 +70,84 @@ def setup(rank, world_size, mode):
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
 
-def draw_forecast(data, conf=None, times=None, forecast_count=None, save_location=None):
+def draw_forecast(data, level=10, var_num=4, conf=None, times=None, forecast_count=None, save_location=None):
+    # ------------------------------ #
+    # get timestep and filename
     k, fn = data
-    lat_lon_weights = xr.open_dataset(conf['loss']['latitude_weights'])
-    pred = np.load(fn)
     t = times[k]
+    pred = np.load(fn)
     pred = pred[45]
+    # ------------------------------ #
+    # get lat/lon grids
+    lat_lon_weights = xr.open_dataset(conf['loss']['latitude_weights'])
     longitude = lat_lon_weights["longitude"]
     latitude = lat_lon_weights["latitude"]
-    # ---------- #
+    # ------------------------------ #
+    # visualization settings
+    ## variable rage limit with units of m/s, m/s, K, g/kg
+    var_lims = [[-20, 20], [-20, 20], [273.15-35, 273.15+35], [0, 1e-2]]
+    ## colormap
+    colormaps = [plt.cm.Spectral, plt.cm.Spectral, plt.cm.RdBu_r, plt.cm.YlGn]
+    ## colorbar extend
+    colorbar_extends = ['both', 'both', 'both', 'max']
+    ## title
+    title_strings = ['U wind [m/s]\ntime: {}; step: {}', 
+                     'V wind [m/s]\ntime: {}; step: {}', 
+                     'Air temperature [K$^\circ$]\ntime: {}; step: {}', 
+                     'Specific humidity [g/kg]\ntime: {}; step: {}']
+    # ------------------------------ #
     # Figure
-    fig = plt.figure(figsize=(10, 8))
-    ax = fig.add_subplot(1, 1, 1, projection=ccrs.EckertIII())
-    ax.set_global()
-    ax.coastlines('110m', alpha=0.5)
-    pout = ax.pcolormesh(longitude, latitude, pred, vmin=0, vmax=0.000005, cmap='RdBu', transform=ccrs.PlateCarree())
-    plt.colorbar(pout, ax=ax, orientation="horizontal", fraction=0.05, pad=0.01)
-    plt.title(f"U (m/s) D ({t}) H ({k})")
-    # plt.title(f"Q (g/kg) D ({t}) H ({k})")
+    fig = plt.figure(figsize=(13, 6.5))
+    
+    # 2-by-2 subplots
+    gs = gridspec.GridSpec(2, 2, height_ratios=[1, 1], width_ratios=[1, 1])
+    proj_ = ccrs.EckertIII()
+    
+    # subplot ax
+    ax0 = plt.subplot(gs[0, 0], projection=proj_)
+    ax1 = plt.subplot(gs[0, 1], projection=proj_)
+    ax2 = plt.subplot(gs[1, 0], projection=proj_)
+    ax3 = plt.subplot(gs[1, 1], projection=proj_)
+    AX = [ax0, ax1, ax2, ax3]
+    # panel gaps
+    plt.subplots_adjust(0, 0, 1, 1, hspace=0.2, wspace=0.05)
+    
+    # lat/lon gridlines and labeling
+    for ax in AX:
+        GL = ax.gridlines(crs=ccrs.PlateCarree(), 
+                          draw_labels=True, x_inline=False, y_inline=False, 
+                          color='k', linewidth=0.5, linestyle=':', zorder=5)
+        GL.top_labels = None; GL.bottom_labels = None
+        GL.right_labels = None; GL.left_labels = None
+        GL.xlabel_style = {'size': 14}; GL.ylabel_style = {'size': 14}
+        GL.rotate_labels = False
+    
+        ax.add_feature(cfeature.COASTLINE.with_scale('110m'), edgecolor='k', linewidth=1.0, zorder=5)
+        ax.spines['geo'].set_linewidth(2.5)
+    
+    CBar_collection = []
+    
+    for i_var in range(var_num):
+        # get the current axis
+        ax = AX[i_var]
+        # get the current variable
+        var_ind = i_var*N_level + level
+        pred_draw = pred[var_ind]
+        # get visualization settings
+        var_lim = var_lims[i_var]
+        colormap = colormaps[i_var]
+        # pcolormesh
+        cbar = ax.pcolormesh(longitude, latitude, pred_draw, vmin=var_lim[0], vmax=var_lim[1], 
+                             cmap=colormap, transform=ccrs.PlateCarree())
+        # colorbar operations
+        CBar_collection.append(cbar)
+        CBar = fig.colorbar(cbar, location='right', orientation='vertical', 
+                            pad=0.02, fraction=0.025, shrink=0.6, aspect=15, extend=colorbar_extends[i_var], ax=ax)
+        CBar.ax.tick_params(axis='y', labelsize=14, direction='in', length=0)
+        CBar.outline.set_linewidth(2.5)
+        # title
+        ax.set_title(title_strings[i_var].format(t, k), fontsize=14)
+    
     filename = join(save_location, f"global_q_{forecast_count}_{k}.png")
     plt.savefig(filename, dpi=300, bbox_inches="tight")
     plt.close()
