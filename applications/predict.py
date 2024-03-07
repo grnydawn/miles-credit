@@ -229,7 +229,7 @@ def predict(rank, world_size, conf):
     loss_fn = VariableTotalLoss2D(conf, validation=True)
 
     # create save directory for numpy arrays
-    save_location = os.path.join(conf['save_loc'], "forecasts")
+    save_location = os.path.join(os.path.expandvars(conf['save_loc']), "forecasts")
     os.makedirs(save_location, exist_ok=True)
 
     # Rollout
@@ -370,9 +370,10 @@ if __name__ == "__main__":
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
     # Create directories if they do not exist and copy yml file
-    os.makedirs(conf["save_loc"], exist_ok=True)
-    if not os.path.exists(os.path.join(conf["save_loc"], "model.yml")):
-        shutil.copy(config, os.path.join(conf["save_loc"], "model.yml"))
+    save_loc = os.path.expandvars(conf["save_loc"])
+    os.makedirs(save_loc, exist_ok=True)
+    if not os.path.exists(os.path.join(save_loc, "model.yml")):
+        shutil.copy(config, os.path.join(save_loc, "model.yml"))
 
     # Launch PBS jobs
     if launch:
