@@ -1,48 +1,73 @@
-import warnings
-import logging
-import torch
-import torch.distributed as dist
-from argparse import ArgumentParser
-from pathlib import Path
+'''
+Credit model output summary
+------------------------------
+Output tensor size: (variables, latitude, longitude)
+Atmospheric level arrangement: top-of-atmosphere--> near-surface --> single layer
+An example: U (top-of-atmosphere) --> U (near-surface) --> V (top-of-atmosphere) --> V (near-surface)
 
-import torch.fft
-import shutil
+Yingkai Sha
+ksha@ucar.edu
+'''
 
-import wandb
-import glob
+
+# ---------- #
+# System
+import gc
 import os
 import sys
 import yaml
+import glob
+import shutil
+import logging
+import warnings
+import subprocess
+from os.path import join
+from pathlib import Path
+from functools import partial
+from multiprocessing import Pool
+from collections import defaultdict
+from argparse import ArgumentParser
 
+# ---------- #
+# Numerics
+import datetime
+import numpy as np
+import pandas as pd
+import xarray as xr
+
+# ---------- #
+# AI libs
+import torch
+#import torch.fft
+import torch.distributed as dist
 from torch.distributed.fsdp import StateDictType
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision import transforms
-from credit.models import load_model
-from credit.loss import VariableTotalLoss2D
-from credit.data import PredictForecast
-from credit.transforms import ToTensor, NormalizeState
-from credit.metrics import LatWeightedMetrics
-from credit.pbs import launch_script, launch_script_mpi
-from credit.seed import seed_everything
-import xarray as xr
-from collections import defaultdict
-import numpy as np
-import gc
 
+# ---------- #
+# credit
+from credit.data import PredictForecast
+from credit.loss import VariableTotalLoss2D
+from credit.models import load_model
+from credit.metrics import LatWeightedMetrics
+from credit.transforms import ToTensor, NormalizeState
+from credit.seed import seed_everything
+from credit.pbs import launch_script, launch_script_mpi
+
+# ---------- #
+# Graph
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
+from mpl_toolkits.axes_grid1.inset_locator import inset_axes
+
 import cartopy.crs as ccrs
-from os.path import join
-import datetime
-import subprocess
-from multiprocessing import Pool
-from functools import partial
-import pandas as pd
+import cartopy.mpl.geoaxes
+import cartopy.feature as cfeature
+
+# import wandb
 
 logger = logging.getLogger(__name__)
-
-
 warnings.filterwarnings("ignore")
-
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -53,34 +78,91 @@ def setup(rank, world_size, mode):
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
 
-def draw_forecast(data, conf=None, times=None, forecast_count=None, save_location=None):
+def draw_forecast(data, N_level=15, level_num=10, var_num=4, 
+                  conf=None, times=None, forecast_count=None, save_location=None):
+    '''
+    This function produces 4-panel figures 
+    '''
+    # ------------------------------ #
+    # visualization settings
+    ## variable rage limit with units of m/s, m/s, K, g/kg
+    var_lims = [[-20, 20], [-20, 20], [273.15-35, 273.15+35], [0, 1e-2]]
+    ## colormap
+    colormaps = [plt.cm.Spectral, plt.cm.Spectral, plt.cm.RdBu_r, plt.cm.YlGn]
+    ## colorbar extend
+    colorbar_extends = ['both', 'both', 'both', 'max']
+    ## title
+    title_strings = ['U wind [m/s]; level {}\ntime: {}; step: {}', 
+                     'V wind [m/s]; level {}\ntime: {}; step: {}', 
+                     'Air temperature [$^\circ$K]; level {}\ntime: {}; step: {}', 
+                     'Specific humidity [g/kg]; level {}\ntime: {}; step: {}']
+    # ------------------------------ #
+    # get forecast step and file name
     k, fn = data
-    lat_lon_weights = xr.open_dataset(conf['loss']['latitude_weights'])
-    pred = np.load(fn)
     t = times[k]
-    pred = pred[45]
-    fig = plt.figure(figsize=(10, 8))
-    ax = fig.add_subplot(1, 1, 1, projection=ccrs.EckertIII())
-    ax.set_global()
-    ax.coastlines('110m', alpha=0.5)
+    pred = np.load(fn)
+    
+    # ------------------------------ #
+    # get lat/lon grids
+    lat_lon_weights = xr.open_dataset(conf['loss']['latitude_weights'])
+    longitude = lat_lon_weights["longitude"]
+    latitude = lat_lon_weights["latitude"]
+    
+    # ------------------------------ #
+    # Figure
+    fig = plt.figure(figsize=(13, 6.5))
+    
+    # 2-by-2 subplots
+    gs = gridspec.GridSpec(2, 2, height_ratios=[1, 1], width_ratios=[1, 1])
+    proj_ = ccrs.EckertIII()
+    
+    # subplot ax
+    ax0 = plt.subplot(gs[0, 0], projection=proj_)
+    ax1 = plt.subplot(gs[0, 1], projection=proj_)
+    ax2 = plt.subplot(gs[1, 0], projection=proj_)
+    ax3 = plt.subplot(gs[1, 1], projection=proj_)
+    AX = [ax0, ax1, ax2, ax3]
+    plt.subplots_adjust(0, 0, 1, 1, hspace=0.2, wspace=0.05)
+    
+    # lat/lon gridlines and labeling
+    for ax in AX:
+        GL = ax.gridlines(crs=ccrs.PlateCarree(), 
+                          draw_labels=True, x_inline=False, y_inline=False, 
+                          color='k', linewidth=0.5, linestyle=':', zorder=5)
+        GL.top_labels = None; GL.bottom_labels = None
+        GL.right_labels = None; GL.left_labels = None
+        GL.xlabel_style = {'size': 14}; GL.ylabel_style = {'size': 14}
+        GL.rotate_labels = False
+    
+        ax.add_feature(cfeature.COASTLINE.with_scale('110m'), edgecolor='k', linewidth=1.0, zorder=5)
+        ax.spines['geo'].set_linewidth(2.5)
 
-    pout = ax.pcolormesh(
-        lat_lon_weights["longitude"],
-        lat_lon_weights["latitude"],
-        pred,
-        transform=ccrs.PlateCarree(),
-        vmin=0,
-        vmax=0.000005,
-        cmap='RdBu'
-    )
-    plt.colorbar(pout, ax=ax, orientation="horizontal", fraction=0.05, pad=0.01)
-    plt.title(f"U (m/s) D ({t}) H ({k})")
-    # plt.title(f"Q (g/kg) D ({t}) H ({k})")
+    # pcolormesh / colorbar / title in loops
+    for i_var in range(var_num):
+        # get the current axis
+        ax = AX[i_var]
+        # get the current variable
+        var_ind = i_var*N_level + level_num
+        pred_draw = pred[var_ind]
+        # get visualization settings
+        var_lim = var_lims[i_var]
+        colormap = colormaps[i_var]
+        cbar_extend = colorbar_extends[i_var]
+        # pcolormesh
+        cbar = ax.pcolormesh(longitude, latitude, pred_draw, vmin=var_lim[0], vmax=var_lim[1], 
+                             cmap=colormap, transform=ccrs.PlateCarree())
+        # colorbar operations
+        CBar = fig.colorbar(cbar, location='right', orientation='vertical', 
+                            pad=0.02, fraction=0.025, shrink=0.6, aspect=15, extend=cbar_extend, ax=ax)
+        CBar.ax.tick_params(axis='y', labelsize=14, direction='in', length=0)
+        CBar.outline.set_linewidth(2.5)
+        # title
+        ax.set_title(title_strings[i_var].format(level_num, t, k), fontsize=14)
+    
     filename = join(save_location, f"global_q_{forecast_count}_{k}.png")
     plt.savefig(filename, dpi=300, bbox_inches="tight")
     plt.close()
     return k, filename
-
 
 def predict(rank, world_size, conf):
 
@@ -228,24 +310,24 @@ def predict(rank, world_size, conf):
                 df.to_csv(os.path.join(save_location, "metrics.csv"))
 
                 video_files = []
+                # collect forecast outputs
                 forecast_paths = os.path.join(save_location, f"{forecast_count}_*_*_pred.npy")
+                # generator of file_name, file_count
                 file_list = enumerate(sorted(glob.glob(forecast_paths)))
-
+                # parallelize draw_forecast func
                 with Pool(processes=8) as pool:
-                    f = partial(
-                        draw_forecast,
-                        conf=conf,
-                        times=forecast_datetimes,
-                        forecast_count=forecast_count,
-                        save_location=save_location
-                    )
+                    f = partial(draw_forecast, conf=conf, times=forecast_datetimes,
+                                forecast_count=forecast_count, save_location=save_location)
+                    # collect output png file names
                     video_files = pool.map(f, file_list)
-
+                    
+                # generate gif
                 video_files = [x[1] for x in sorted(video_files)]
                 command_str = f'convert -delay 20 -loop 0 {" ".join(video_files)} {save_location}/global.gif'
+                
                 out = subprocess.Popen(command_str, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
                 print(out)
-
+                
                 forecast_count += 1
                 metrics_results = defaultdict(list)
                 pred_files = []
@@ -256,27 +338,17 @@ if __name__ == "__main__":
 
     description = "Rollout AI-NWP forecasts"
     parser = ArgumentParser(description=description)
-    parser.add_argument(
-        "-c",
-        dest="model_config",
-        type=str,
-        default=False,
-        help="Path to the model configuration (yml) containing your inputs.",
-    )
-    parser.add_argument(
-        "-l",
-        dest="launch",
-        type=int,
-        default=0,
-        help="Submit workers to PBS.",
-    )
-    parser.add_argument(
-        "-w",
-        "--world-size",
-        type=int,
-        default=4,
-        help="Number of processes (world size) for multiprocessing"
-    )
+    # -------------------- #
+    # parser args: -c, -l, -w
+    parser.add_argument("-c", dest="model_config", type=str, default=False,
+                        help="Path to the model configuration (yml) containing your inputs.",)
+    
+    parser.add_argument("-l", dest="launch", type=int, default=0,
+                        help="Submit workers to PBS.",)
+    
+    parser.add_argument("-w", "--world-size", type=int, default=4,
+                        help="Number of processes (world size) for multiprocessing")
+    # parse
     args = parser.parse_args()
     args_dict = vars(args)
     config = args_dict.pop("model_config")
