@@ -8,6 +8,8 @@ from torch.utils.data import get_worker_info
 from torch.utils.data.distributed import DistributedSampler
 import torch.utils.data
 import datetime
+import os
+from glob import glob
 from itertools import repeat
 
 
@@ -345,9 +347,15 @@ class ERA5Dataset(torch.utils.data.Dataset):
     
 from functools import reduce
                                     
+## flatten list-of-list
 def flatten(array):
   return reduce(lambda a,b: a+b, array) 
 
+## lazy-load & merge zarr stores
+def lazymerge(zlist):
+    return xr.merge([get_forward_data(z) for z in zlist])
+
+## todo: dataclass decorator
 
 class CONUS404Dataset(torch.utils.data.Dataset):
     """Each Zarr store for the CONUS-404 data contains one year of
@@ -369,29 +377,18 @@ class CONUS404Dataset(torch.utils.data.Dataset):
     corresponding zarr store and read only the data we want with an
     isel() call.
 
-    Roughly: segment[i].load().isel(time=segnum[i]+mask)
-
+    For multiple variables, we do end up reading from multiple stores,
+    but they're merged into a single xarray Dataset, so hopefully
+    that's okay?
+    
     """
 
 
-    #samplen = histlen + forelen - 1
-    #
-    #monlen = {"Jan": 31, "Feb": 28, "Mar": 31, "Apr": 30,
-    #          "May": 31, "Jun": 30, "Jul": 31, "Aug": 31,
-    #          "Sep": 30, "Oct": 31, "Nov": 30, "Dec": 31}
-    #
-    #segments = [list(repeat(m, monlen[m])) for m in monlen.keys()]
-    #
-    #monthdays =  [list(range(n)) for n in monlen.values()]
-    #
-    #mindex  = flatten([m[:-samplen] for m in monthdays])
-    #seqname = flatten([s[:-samplen] for s in segments])
-    #
-    #print([s + " " + str(i+1).zfill(2) for s,i in zip(seqname, mindex)]) 
-
     def __init__(
             self,
-            filenames: list=[],
+            zarrpath,
+            # = "/glade/campaign/ral/risc/DATA/conus404/zarr",
+            varnames: list=[],
             history_len = 1,
             forecast_len = 2,
             transform:  Optional[Callable] = None,
@@ -400,6 +397,7 @@ class CONUS404Dataset(torch.utils.data.Dataset):
             one_shot = False,
             tdimname = "Time"
     ):
+        self.zarrpath     = zarrpath
         self.history_len  = history_len
         self.forecast_len = forecast_len
         self.transform    = transform
@@ -408,17 +406,33 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         self.tdimname     = tdimname
         
         self.sample_len = sample_len = history_len + forecast_len
-        self.rng = np.random.default_rng(seed)
-
         self.stride = stride = 1 if skip_periods is None else skip_periods + 1
 
+        self.rng = np.random.default_rng(seed)
+
+        ## CONUS404 data is organized into directories by variable,
+        ## with a set of yearly zarr stores for each variable
+        if len(varnames) == 0:
+            varnames = os.listdir(zarrpath)
+        self.varnames = sorted(varnames)
         
-        ## lazily open input files
-        self.filenames = sorted(filenames)
-        self.zarrs = [get_forward_data(f) for f in self.filenames]
+        ## get file paths
+        zdict = {}
+        for v in varnames:
+            zdict[v] = sorted(glob(zarrpath+"/"+v+"/"+v+".*.zarr"))
+
+        ## check that lists align
+        zlen = [len(z) for z in zdict.values()]
+        assert all([zlen[i] == zlen[0] for i in range(len(zlen))])
+
+        ## transpose list-of-lists; sort by key to ensure var order constant
+        zlol = list(zip(*sorted(zdict.values())))
+        
+        ## lazy-load & merge zarr stores
+        self.zarrs = [lazymerge(z) for z in zlol]
 
         ## construct indexing arrays
-        zarrlen = [z.dims[self.tdimname] for z in self.zarrs]
+        zarrlen = [z.dims[tdimname] for z in self.zarrs]
         whichseg = [list(repeat(s,z)) for s,z in zip(range(len(zarrlen)), zarrlen)]
         segindex = [list(range(z)) for z in zarrlen]
         
@@ -428,8 +442,7 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         self.segments = flatten([s[:-N] for s in whichseg])
         self.zindex   = flatten([i[:-N] for i in segindex])
 
-
-        ## precompute "mask" indexing arrays for subsetting data for samples
+        ## precompute mask arrays for subsetting data for samples
         self.histmask = list(range(0, history_len, stride))
         foreind = list(range(sample_len))
         if one_shot:
@@ -441,13 +454,14 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         return(len(self.zindex))
 
     def __getitem__(self, index):
+        time = self.tdimname
         first = self.zindex[index]
         last = first + self.sample_len
         seg = self.segments[index]
-        subset = self.zarrs[seg].isel(time=slice(first, last)).load()
-        sample=Sample(history=subset.isel(time=self.histmask),
-                      target=subset.isel(time=self.foremask),
-                      datetime=subset.time)
+        subset = self.zarrs[seg].isel({time:slice(first, last)}).load()
+        sample=Sample(history=subset.isel({time:self.histmask}),
+                      target=subset.isel({time:self.foremask}),
+                      datetime=subset[time])
         
         if self.transform:
             sample = self.transform(sample)
@@ -744,21 +758,19 @@ class PredictForecast(torch.utils.data.IterableDataset):
 
 ############  test:
 
-#import os
-#testpath = "../../testdata/zarr/"
-#test = [testpath+f for f in os.listdir(testpath)]
-#
-#e5 = data.ERA5Dataset(test)
-#c4 = data.CONUS404Dataset(test, tdimname="time")
-#
-#len(e5)
+
+#from data import *
+
+#zarrpath = "/glade/work/mcginnis/ML/GWC/testdata/zarr"
+#varnames = ["prec","tmin","tmax"]
+#tdimname = "time"
+
+#zarrpath = "/glade/campaign/ral/risc/DATA/conus404/zarr"
+#varnames = ["Q850","T850","U850","V850","Z850"]
+#tdimname = "Time"
+
+#c4 = CONUS404Dataset(zarrpath, varnames, tdimname=tdimname)
+
 #len(c4)
-#
-#day 22 = Jan 23
-#day 340 = Dec 28
-#
-#e5[22]
+
 #c4[22]
-#
-#e5[340]
-#c4[340]
