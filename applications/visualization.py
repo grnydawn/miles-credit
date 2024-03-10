@@ -27,12 +27,18 @@ import cartopy.feature as cfeature
 
 
 def get_colormap(cmap_strings):
+    '''
+    returns a list of colormaps from input strings.
+    '''
     colormap_obj = []
     for cmap_name in cmap_strings:
         colormap_obj.append(plt_cmaps[cmap_name])
     return colormap_obj
 
 def get_colormap_extend(var_range):
+    '''
+    return colorbar extend options based on the given value range.
+    '''
     if var_range[0] == 0.0:
         return 'max'
     elif var_range[1] == 0.0:
@@ -42,6 +48,9 @@ def get_colormap_extend(var_range):
     return colorbar_extends
 
 def get_variable_range(data):
+    '''
+    Estimate pcolor value ranges based on the input data.
+    '''
     data_ravel = data.ravel()
     
     data_max = np.quantile(data_ravel, 0.98)
@@ -51,17 +60,21 @@ def get_variable_range(data):
         data_min = np.quantile(data_ravel, 0.02)
         
     # rounding
-    if data_max > 10:
+    if data_max > 100 or -data_min > 100:
+        round_val = 30
+    elif data_max > 40 or -data_min > 40:
+        round_val = 20
+    elif data_max > 10 or -data_min > 10:
         round_val = 10
-    elif data_max > 1:
-        round_val = 1
-    elif data_max > 0.1:
+    elif data_max > 1.0 or -data_min > 1.0:
+        round_val = 1.0
+    elif data_max > 0.1 or -data_min > 0.1:
         round_val = 0.1
-    elif data_max > 0.01:
+    elif data_max > 0.01 or -data_min > 0.01:
         round_val = 0.01
-    elif data_max > 0.001:
+    elif data_max > 0.001 or -data_min > 0.001:
         round_val = 0.001
-    elif data_max > 0.0001:
+    elif data_max > 0.0001 or -data_min > 0.0001:
         round_val = 0.0001
     else:
         round_val = 0.00001
@@ -78,7 +91,7 @@ def get_variable_range(data):
     
     return [data_min, data_max]
 
-def draw_forecast(data, conf=None, times=None, forecast_count=None, save_location=None):
+def draw_upper_air(data, conf=None, times=None, forecast_count=None, save_location=None):
     '''
     This function produces 4-panel figures 
     '''

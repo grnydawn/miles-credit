@@ -55,7 +55,7 @@ from credit.seed import seed_everything
 from credit.pbs import launch_script, launch_script_mpi
 
 # ---------- #
-from visualization import draw_forecast
+from visualization import draw_upper_air
 
 # import wandb
 
@@ -227,7 +227,7 @@ def predict(rank, world_size, conf):
                 
                 ## parallelize draw_forecast func
                 with Pool(processes=8) as pool:
-                    f = partial(draw_forecast, conf=conf, times=forecast_datetimes,
+                    f = partial(draw_upper_air, conf=conf, times=forecast_datetimes,
                                 forecast_count=forecast_count, save_location=save_location)
                     # collect output png file names
                     video_files = pool.map(f, file_list)
