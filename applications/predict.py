@@ -55,7 +55,7 @@ from credit.seed import seed_everything
 from credit.pbs import launch_script, launch_script_mpi
 
 # ---------- #
-from visualization import draw_sigma_level, draw_diagnostics
+from visualization import draw_sigma_level, draw_diagnostics, draw_surface
 
 # import wandb
 
@@ -214,11 +214,7 @@ def predict(rank, world_size, conf):
 
                 df = pd.DataFrame(metrics_results)
                 df.to_csv(os.path.join(save_location, "metrics.csv"))
-                
-                # collect forecast outputs
-                forecast_paths = os.path.join(save_location, f"{forecast_count}_*_*_pred.npy")
-                # generator of file_name, file_count
-                file_list = enumerate(sorted(glob.glob(forecast_paths)))
+
 
                 # =============================================================================== #
                 # Data visualization for sigma level variables
@@ -226,6 +222,12 @@ def predict(rank, world_size, conf):
                 
                 # start producing figures if level is not empty
                 if len(sigma_levels) > 0:
+                
+                    # collect forecast outputs
+                    forecast_paths = os.path.join(save_location, f"{forecast_count}_*_*_pred.npy")
+                    # generator of file_name, file_count
+                    file_list = enumerate(sorted(glob.glob(forecast_paths)))
+                    
                     # the output session begins
                     print('Preparing sigma level outputs')
                     video_files = []
@@ -262,7 +264,14 @@ def predict(rank, world_size, conf):
                 # =============================================================================== #
                 # Data visualization for diagnostics
                 N_vars = len(conf['visualization']['diagnostic_variable_visualize']['variable_indices'])
+                
                 if N_vars > 0:
+                
+                    # collect forecast outputs
+                    forecast_paths = os.path.join(save_location, f"{forecast_count}_*_*_pred.npy")
+                    # generator of file_name, file_count
+                    file_list = enumerate(sorted(glob.glob(forecast_paths)))
+                    
                     # the output session begins
                     print('Preparing diagnostic outputs')
                     video_files = []
@@ -289,6 +298,41 @@ def predict(rank, world_size, conf):
                     print(out)
 
                 # =============================================================================== #
+                # Data visualization for diagnostics
+                N_vars = len(conf['visualization']['surface_visualize']['variable_indices'])
+                
+                if N_vars > 0:
+                
+                    # collect forecast outputs
+                    forecast_paths = os.path.join(save_location, f"{forecast_count}_*_*_pred.npy")
+                    # generator of file_name, file_count
+                    file_list = enumerate(sorted(glob.glob(forecast_paths)))
+                    
+                    # the output session begins
+                    print('Preparing surface outputs')
+                    video_files = []
+                    
+                    with Pool(processes=8) as pool:
+                        f = partial(draw_surface, conf=conf, times=forecast_datetimes,
+                                    forecast_count=forecast_count, save_location=save_location)
+                        # collect output png file names
+                        video_files = pool.map(f, file_list)
+                        
+                    ## collect all png file names
+                    ## video_files[0] = f; video_files[1] = file_names
+                    video_files_all = [x[1] for x in sorted(video_files)]
+                    
+                    ## gif outpout name = png output name
+                    gif_name_prefix = conf['visualization']['surface_visualize']['file_name_prefix']
+                    
+                    ## send all png files to the gif maker 
+                    gif_name = '{}.gif'.format(gif_name_prefix)
+                    command_str = f'convert -delay 20 -loop 0 {" ".join(video_files_all)} {save_location}/{gif_name}'
+                    out = subprocess.Popen(command_str, shell=True, 
+                                           stdout=subprocess.PIPE, 
+                                           stderr=subprocess.PIPE).communicate()
+                    print(out)
+                    
                 forecast_count += 1
                 metrics_results = defaultdict(list)
                 pred_files = []

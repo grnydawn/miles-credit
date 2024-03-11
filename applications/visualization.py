@@ -73,7 +73,7 @@ def get_variable_range(data):
     if data_max > 1000 or -data_min > 1000:
         round_val = 100
     elif data_max > 100 or -data_min > 100:
-        round_val = 30
+        round_val = 50
     elif data_max > 40 or -data_min > 40:
         round_val = 20
     elif data_max > 10 or -data_min > 10:
@@ -118,6 +118,9 @@ def draw_sigma_level(data, conf=None, times=None, forecast_count=None, save_loca
 
     ## variable factors
     var_factors = conf['visualization']['sigma_level_visualize']['variable_factors']
+
+    ## variable range
+    var_range = conf['visualization']['sigma_level_visualize']['variable_range']
     
     ## number of levels
     N_levels = int(len(conf['loss']['variable_weights']['U']))
@@ -185,8 +188,12 @@ def draw_sigma_level(data, conf=None, times=None, forecast_count=None, save_loca
             pred_draw = pred[var_ind]
             pred_draw = pred_draw * var_factors[i_var]
             
-            # get visualization settings
-            var_lim = get_variable_range(pred_draw)
+            ## variable range
+            var_lim = var_range[i_var]
+            if var_lim == 'auto':
+                var_lim = get_variable_range(pred_draw)
+
+            ## colorbar settings
             cbar_extend = get_colormap_extend(var_lim)
             colormap = colormaps[i_var]
             
@@ -224,7 +231,10 @@ def draw_diagnostics(data, conf=None, times=None, forecast_count=None, save_loca
     title_string = '{}\ntime: {}; step: {}' #.format(var_name, datetime, step)
     
     ## indices of diagnostic variables
-    var_inds = conf['visualization']['diagnostic_variable_visualize']['variable_indices'] = [62, 63, 64, 65, 66]
+    var_inds = conf['visualization']['diagnostic_variable_visualize']['variable_indices']
+
+    ## variable range
+    var_range = conf['visualization']['diagnostic_variable_visualize']['variable_range']
     
     ## variable factors
     var_factors = conf['visualization']['diagnostic_variable_visualize']['variable_factors']
@@ -288,8 +298,12 @@ def draw_diagnostics(data, conf=None, times=None, forecast_count=None, save_loca
         pred_draw = pred[ind_var]
         pred_draw = pred_draw * var_factors[i_var]
         
-        # get visualization settings
-        var_lim = get_variable_range(pred_draw)
+        ## variable range
+        var_lim = var_range[i_var]
+        if var_lim == 'auto':
+            var_lim = get_variable_range(pred_draw)
+
+        ## colorbar settings
         cbar_extend = get_colormap_extend(var_lim)
         colormap = colormaps[i_var]
     
@@ -315,4 +329,113 @@ def draw_diagnostics(data, conf=None, times=None, forecast_count=None, save_loca
     return k, filename
 
 
-# def draw_surface
+def draw_surface(data, conf=None, times=None, forecast_count=None, save_location=None):
+
+    # ------------------------------ #
+    # visualization settings
+    ## colormap
+    colormaps = get_colormap(conf['visualization']['surface_visualize']['colormaps'])
+    
+    ## variable names
+    var_names = conf['visualization']['surface_visualize']['variable_names']
+    title_string = '{}\ntime: {}; step: {}' #.format(var_name, datetime, step)
+    
+    ## indices of diagnostic variables
+    var_inds = conf['visualization']['surface_visualize']['variable_indices']
+    
+    ## variable factors
+    var_factors = conf['visualization']['surface_visualize']['variable_factors']
+
+    ## variable range
+    var_range = conf['visualization']['surface_visualize']['variable_range']
+    
+    ## number of variables to plot
+    var_num = int(len(var_names))
+    
+    ## output figure options and names
+    save_options = conf['visualization']['save_options']
+    save_name_head = conf['visualization']['surface_visualize']['file_name_prefix']
+    
+    
+    # ------------------------------ #
+    # get forecast step and file name
+    k, fn = data
+    t = times[k]
+    pred = np.load(fn)
+    
+    # ------------------------------ #
+    # get lat/lon grids
+    lat_lon_weights = xr.open_dataset(conf['loss']['latitude_weights'])
+    longitude = lat_lon_weights["longitude"]
+    latitude = lat_lon_weights["latitude"]
+    
+    # ------------------------------ #
+    # Figure
+    fig = plt.figure(figsize=(13, 8))
+            
+    # 3-by-2 subplots
+    gs = gridspec.GridSpec(2, 1, height_ratios=[1, 1], width_ratios=[1,])
+    proj_ = ccrs.EckertIII()
+    
+    # subplot ax
+    ax0 = plt.subplot(gs[0, 0], projection=proj_)
+    ax1 = plt.subplot(gs[1, 0], projection=proj_)
+    
+    AX = [ax0, ax1,]
+    plt.subplots_adjust(0, 0, 1, 1, hspace=0.2, wspace=0.00)
+    
+    # lat/lon gridlines and labeling
+    for ax in AX:
+        GL = ax.gridlines(crs=ccrs.PlateCarree(), 
+                          draw_labels=True, x_inline=False, y_inline=False, 
+                          color='k', linewidth=0.5, linestyle=':', zorder=5)
+        GL.top_labels = None; GL.bottom_labels = None
+        GL.right_labels = None; GL.left_labels = None
+        GL.xlabel_style = {'size': 14}; GL.ylabel_style = {'size': 14}
+        GL.rotate_labels = False
+    
+        ax.add_feature(cfeature.COASTLINE.with_scale('110m'), edgecolor='k', linewidth=1.0, zorder=5)
+        ax.spines['geo'].set_linewidth(2.5)
+    
+    for i_var, ind_var in enumerate(var_inds):
+        # get the current axis
+        ax = AX[i_var]
+        pred_draw = pred[ind_var]
+        pred_draw = pred_draw * var_factors[i_var]
+        
+        ## variable range
+        var_lim = var_range[i_var]
+        if var_lim == 'auto':
+            var_lim = get_variable_range(pred_draw)
+
+        ## colorbar settings
+        cbar_extend = get_colormap_extend(var_lim)
+        colormap = colormaps[i_var]
+    
+        # pcolormesh
+        cbar = ax.pcolormesh(longitude, latitude, pred_draw, vmin=var_lim[0], vmax=var_lim[1], 
+                             cmap=colormap, transform=ccrs.PlateCarree())
+    
+        # colorbar operations
+        CBar = fig.colorbar(cbar, location='right', orientation='vertical', 
+                            pad=0.02, fraction=0.025, shrink=0.6, aspect=15, extend=cbar_extend, ax=ax)
+        CBar.ax.tick_params(axis='y', labelsize=14, direction='in', length=0)
+        CBar.outline.set_linewidth(2.5)
+        
+        # title
+        var_name = var_names[i_var]
+        ax.set_title(title_string.format(var_name, t, k), fontsize=14)
+    
+    save_name = '{}_fcst{:03d}_step{:03d}.png'.format(save_name_head, forecast_count, k)
+    filename = join(save_location, save_name)
+    
+    plt.savefig(filename, **save_options)
+    plt.close()
+    return k, filename
+
+
+
+
+
+
+    
