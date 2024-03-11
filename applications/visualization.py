@@ -55,7 +55,6 @@ def get_colormap_extend(var_range):
         return 'min'
     else:
         return 'both'
-    return colorbar_extends
 
 def get_variable_range(data):
     '''
