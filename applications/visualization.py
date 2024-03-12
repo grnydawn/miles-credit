@@ -102,6 +102,122 @@ def get_variable_range(data):
     
     return [data_min, data_max]
 
+def figure_panel_planner(var_num):
+    if var_num == 1:
+        return cartopy_single_panel(figsize=(13, 6.5), proj=ccrs.EckertIII())
+    elif var_num == 2:
+        return cartopy_panel2(figsize=(13, 8), proj=ccrs.EckertIII())
+    elif var_num == 3 or var_num == 4:
+        return cartopy_panel4(var_num, figsize=(13, 6.5), proj=ccrs.EckertIII())
+    elif var_num == 5 or var_num == 6:
+        return cartopy_panel6(var_num, figsize=(13, 9.75), proj=ccrs.EckertIII())
+
+def map_gridline_opt(AX):
+    # lat/lon gridlines and labeling
+    for ax in AX:
+        GL = ax.gridlines(crs=ccrs.PlateCarree(), 
+                          draw_labels=False, x_inline=False, y_inline=False, 
+                          color='k', linewidth=0.5, linestyle=':', zorder=5)
+        GL.top_labels = None; GL.bottom_labels = None
+        GL.right_labels = None; GL.left_labels = None
+        GL.xlabel_style = {'size': 14}; GL.ylabel_style = {'size': 14}
+        GL.rotate_labels = False
+    
+        ax.add_feature(cfeature.COASTLINE.with_scale('110m'), edgecolor='k', linewidth=1.0, zorder=5)
+        ax.spines['geo'].set_linewidth(2.5)
+    return AX
+
+def colorbar_opt(fig, ax, cbar, cbar_extend):
+    CBar = fig.colorbar(cbar, location='right', orientation='vertical', 
+                        pad=0.02, fraction=0.025, shrink=0.6, aspect=15, extend=cbar_extend, ax=ax)
+    CBar.ax.tick_params(axis='y', labelsize=14, direction='in', length=0)
+    CBar.outline.set_linewidth(2.5)
+    return CBar
+
+def cartopy_single_panel(figsize=(13, 6.5), proj=ccrs.EckertIII()):
+    fig = plt.figure(figsize=figsize)
+    proj_ = proj
+    ax = plt.axes(projection=proj_)
+    AX = [ax,]
+    AX = map_gridline_opt(AX)
+    return fig, AX
+
+def cartopy_panel2(figsize=(13, 8), proj=ccrs.EckertIII()):
+    # Figure
+    fig = plt.figure(figsize=figsize)
+            
+    # 3-by-2 subplots
+    gs = gridspec.GridSpec(2, 1, height_ratios=[1, 1], width_ratios=[1,])
+    proj_ = proj
+    
+    # subplot ax
+    ax0 = plt.subplot(gs[0, 0], projection=proj_)
+    ax1 = plt.subplot(gs[1, 0], projection=proj_)
+    
+    AX = [ax0, ax1,]
+    plt.subplots_adjust(0, 0, 1, 1, hspace=0.2, wspace=0.00)
+    
+    # lat/lon gridlines and labeling
+    AX = map_gridline_opt(AX)
+
+    return fig, AX
+
+def cartopy_panel4(var_num, figsize=(13, 6.5), proj=ccrs.EckertIII()):
+    assert (var_num > 2 and var_num <= 4)
+    
+    fig = plt.figure(figsize=figsize)
+    
+    # 2-by-2 subplots
+    gs = gridspec.GridSpec(2, 2, height_ratios=[1, 1], width_ratios=[1, 1])
+    proj_ = proj
+    
+    # subplot ax
+    ax0 = plt.subplot(gs[0, 0], projection=proj_)
+    ax1 = plt.subplot(gs[0, 1], projection=proj_)
+    ax2 = plt.subplot(gs[1, 0], projection=proj_)
+    AX = [ax0, ax1, ax2]
+    
+    # if there are 4 vars to plot
+    if var_num == 4:
+        ax3 = plt.subplot(gs[1, 1], projection=proj_)
+        AX = [ax0, ax1, ax2, ax3]
+        
+    plt.subplots_adjust(0, 0, 1, 1, hspace=0.2, wspace=0.05)
+    
+    # lat/lon gridlines and labeling
+    AX = map_gridline_opt(AX)
+    
+    return fig, AX
+
+def cartopy_panel6(var_num, figsize=(13, 9.75), proj=ccrs.EckertIII()):
+    assert (var_num > 4 and var_num <= 6)
+    
+    # Figure
+    fig = plt.figure(figsize=figsize)
+            
+    # 3-by-2 subplotsvar_num, figsize=(13, 9.75), proj=ccrs.EckertIII()
+    gs = gridspec.GridSpec(3, 2, height_ratios=[1, 1, 1], width_ratios=[1, 1])
+    proj_ = proj
+    
+    # subplot ax
+    ax0 = plt.subplot(gs[0, 0], projection=proj_)
+    ax1 = plt.subplot(gs[0, 1], projection=proj_)
+    ax2 = plt.subplot(gs[1, 0], projection=proj_)
+    ax3 = plt.subplot(gs[1, 1], projection=proj_)
+    ax4 = plt.subplot(gs[2, 0], projection=proj_)
+    AX = [ax0, ax1, ax2, ax3, ax4,]
+
+    if var_num == 6:
+        ax5 = plt.subplot(gs[2, 1], projection=proj_)
+        AX = [ax0, ax1, ax2, ax3, ax4, ax5]
+    
+    plt.subplots_adjust(0, 0, 1, 1, hspace=0.2, wspace=0.05)
+    
+    # lat/lon gridlines and labeling
+    AX = map_gridline_opt(AX)
+    
+    return fig, AX
+
 def draw_sigma_level(data, conf=None, times=None, forecast_count=None, save_location=None):
     '''
     This function produces 4-panel figures for sigma-level variables. 
@@ -150,32 +266,7 @@ def draw_sigma_level(data, conf=None, times=None, forecast_count=None, save_loca
     for level_num in level_nums:
         # ------------------------------ #
         # Figure
-        fig = plt.figure(figsize=(13, 6.5))
-        
-        # 2-by-2 subplots
-        gs = gridspec.GridSpec(2, 2, height_ratios=[1, 1], width_ratios=[1, 1])
-        proj_ = ccrs.EckertIII()
-        
-        # subplot ax
-        ax0 = plt.subplot(gs[0, 0], projection=proj_)
-        ax1 = plt.subplot(gs[0, 1], projection=proj_)
-        ax2 = plt.subplot(gs[1, 0], projection=proj_)
-        ax3 = plt.subplot(gs[1, 1], projection=proj_)
-        AX = [ax0, ax1, ax2, ax3]
-        plt.subplots_adjust(0, 0, 1, 1, hspace=0.2, wspace=0.05)
-        
-        # lat/lon gridlines and labeling
-        for ax in AX:
-            GL = ax.gridlines(crs=ccrs.PlateCarree(), 
-                              draw_labels=True, x_inline=False, y_inline=False, 
-                              color='k', linewidth=0.5, linestyle=':', zorder=5)
-            GL.top_labels = None; GL.bottom_labels = None
-            GL.right_labels = None; GL.left_labels = None
-            GL.xlabel_style = {'size': 14}; GL.ylabel_style = {'size': 14}
-            GL.rotate_labels = False
-        
-            ax.add_feature(cfeature.COASTLINE.with_scale('110m'), edgecolor='k', linewidth=1.0, zorder=5)
-            ax.spines['geo'].set_linewidth(2.5)
+        fig, AX = figure_panel_planner(var_num)
         
         # pcolormesh / colorbar / title in loops
         for i_var in range(var_num):
@@ -200,10 +291,8 @@ def draw_sigma_level(data, conf=None, times=None, forecast_count=None, save_loca
             cbar = ax.pcolormesh(longitude, latitude, pred_draw, vmin=var_lim[0], vmax=var_lim[1], 
                                  cmap=colormap, transform=ccrs.PlateCarree())
             # colorbar operations
-            CBar = fig.colorbar(cbar, location='right', orientation='vertical', 
-                                pad=0.02, fraction=0.025, shrink=0.6, aspect=15, extend=cbar_extend, ax=ax)
-            CBar.ax.tick_params(axis='y', labelsize=14, direction='in', length=0)
-            CBar.outline.set_linewidth(2.5)
+            CBar = colorbar_opt(fig, ax, cbar, cbar_extend)
+            
             # title
             var_name = var_names[i_var]
             ax.set_title(title_string.format(var_name, level_num, t, k), fontsize=14)
@@ -260,36 +349,7 @@ def draw_diagnostics(data, conf=None, times=None, forecast_count=None, save_loca
     
     # ------------------------------ #
     # Figure
-    fig = plt.figure(figsize=(13, 13/4*3))
-            
-    # 3-by-2 subplots
-    gs = gridspec.GridSpec(3, 2, height_ratios=[1, 1, 1], width_ratios=[1, 1])
-    proj_ = ccrs.EckertIII()
-    
-    # subplot ax
-    ax0 = plt.subplot(gs[0, 0], projection=proj_)
-    ax1 = plt.subplot(gs[0, 1], projection=proj_)
-    ax2 = plt.subplot(gs[1, 0], projection=proj_)
-    ax3 = plt.subplot(gs[1, 1], projection=proj_)
-    ax4 = plt.subplot(gs[2, 0], projection=proj_)
-    #ax5 = plt.subplot(gs[2, 1], projection=proj_)
-    
-    AX = [ax0, ax1, ax2, ax3, ax4,]
-    plt.subplots_adjust(0, 0, 1, 1, hspace=0.2, wspace=0.05)
-    #plt.subplots_adjust(0, 0, 1, 1, hspace=0.0, wspace=0.00)
-    
-    # lat/lon gridlines and labeling
-    for ax in AX:
-        GL = ax.gridlines(crs=ccrs.PlateCarree(), 
-                          draw_labels=True, x_inline=False, y_inline=False, 
-                          color='k', linewidth=0.5, linestyle=':', zorder=5)
-        GL.top_labels = None; GL.bottom_labels = None
-        GL.right_labels = None; GL.left_labels = None
-        GL.xlabel_style = {'size': 14}; GL.ylabel_style = {'size': 14}
-        GL.rotate_labels = False
-    
-        ax.add_feature(cfeature.COASTLINE.with_scale('110m'), edgecolor='k', linewidth=1.0, zorder=5)
-        ax.spines['geo'].set_linewidth(2.5)
+    fig, AX = figure_panel_planner(var_num)
     
     for i_var, ind_var in enumerate(var_inds):
         # get the current axis
@@ -311,10 +371,7 @@ def draw_diagnostics(data, conf=None, times=None, forecast_count=None, save_loca
                              cmap=colormap, transform=ccrs.PlateCarree())
     
         # colorbar operations
-        CBar = fig.colorbar(cbar, location='right', orientation='vertical', 
-                            pad=0.02, fraction=0.025, shrink=0.6, aspect=15, extend=cbar_extend, ax=ax)
-        CBar.ax.tick_params(axis='y', labelsize=14, direction='in', length=0)
-        CBar.outline.set_linewidth(2.5)
+        CBar = colorbar_opt(fig, ax, cbar, cbar_extend)
         
         # title
         var_name = var_names[i_var]
@@ -355,7 +412,6 @@ def draw_surface(data, conf=None, times=None, forecast_count=None, save_location
     save_options = conf['visualization']['save_options']
     save_name_head = conf['visualization']['surface_visualize']['file_name_prefix']
     
-    
     # ------------------------------ #
     # get forecast step and file name
     k, fn = data
@@ -370,31 +426,7 @@ def draw_surface(data, conf=None, times=None, forecast_count=None, save_location
     
     # ------------------------------ #
     # Figure
-    fig = plt.figure(figsize=(13, 8))
-            
-    # 3-by-2 subplots
-    gs = gridspec.GridSpec(2, 1, height_ratios=[1, 1], width_ratios=[1,])
-    proj_ = ccrs.EckertIII()
-    
-    # subplot ax
-    ax0 = plt.subplot(gs[0, 0], projection=proj_)
-    ax1 = plt.subplot(gs[1, 0], projection=proj_)
-    
-    AX = [ax0, ax1,]
-    plt.subplots_adjust(0, 0, 1, 1, hspace=0.2, wspace=0.00)
-    
-    # lat/lon gridlines and labeling
-    for ax in AX:
-        GL = ax.gridlines(crs=ccrs.PlateCarree(), 
-                          draw_labels=True, x_inline=False, y_inline=False, 
-                          color='k', linewidth=0.5, linestyle=':', zorder=5)
-        GL.top_labels = None; GL.bottom_labels = None
-        GL.right_labels = None; GL.left_labels = None
-        GL.xlabel_style = {'size': 14}; GL.ylabel_style = {'size': 14}
-        GL.rotate_labels = False
-    
-        ax.add_feature(cfeature.COASTLINE.with_scale('110m'), edgecolor='k', linewidth=1.0, zorder=5)
-        ax.spines['geo'].set_linewidth(2.5)
+    fig, AX = figure_panel_planner(var_num)
     
     for i_var, ind_var in enumerate(var_inds):
         # get the current axis
@@ -416,10 +448,7 @@ def draw_surface(data, conf=None, times=None, forecast_count=None, save_location
                              cmap=colormap, transform=ccrs.PlateCarree())
     
         # colorbar operations
-        CBar = fig.colorbar(cbar, location='right', orientation='vertical', 
-                            pad=0.02, fraction=0.025, shrink=0.6, aspect=15, extend=cbar_extend, ax=ax)
-        CBar.ax.tick_params(axis='y', labelsize=14, direction='in', length=0)
-        CBar.outline.set_linewidth(2.5)
+        CBar = colorbar_opt(fig, ax, cbar, cbar_extend)
         
         # title
         var_name = var_names[i_var]
