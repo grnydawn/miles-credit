@@ -94,10 +94,11 @@ predict:
 
 visualization:
     sigma_level_visualize:
-        visualize_levels: [4, 8, 12] # sigma levels (by their indices) to visualize 
+        variable_indices: [0, 1, 2, 3]   # the variable indices in **[data][variables][...]**
+        visualize_levels: [4, 8, 12]     # sigma levels (by their indices) to visualize 
         variable_names: ['U wind [m/s]', # the name of each variable
-                         'V wind [m/s]', # must be consistent with the order in [data][variables][...]
-                         'Air temperature [$^\circ$K]', # works with the top-4 variables only
+                         'V wind [m/s]', # must be consistent with **variable_indices**
+                         'Air temperature [$^\circ$K]',
                          'Specific humidity [kg/kg]']
         variable_factors: [1, 1, 1, 1]
         variable_range: [auto, auto, auto, auto] # use auto or provide a list of [min_var, max_var]; it applies to all levels
@@ -122,6 +123,7 @@ visualization:
         variable_range: [[650, 1100], [200, 350]]
         colormaps: ['Spectral_r', 'viridis_plasma',]
         file_name_prefix: 'global_surface'
+    map_projection: 'EckertIII' # PlateCarree, LambertCylindrical, Miller, EckertIII, Mollweide, Robinson
     save_options: {'dpi':250, 
                    'orientation':'portrait', 
                    'bbox_inches':'tight', 
