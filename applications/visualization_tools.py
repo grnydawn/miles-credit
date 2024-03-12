@@ -1,6 +1,23 @@
 '''
 A collection of functions for visualizing the forecasts 
 -------------------------------------------------------
+Functions:
+    - cmap_combine(cmap1, cmap2)
+    - get_projection(proj_name)
+    - get_colormap(cmap_strings)
+    - get_colormap_extend(var_range)
+    - get_variable_range(data)
+    - figure_panel_planner(var_num, proj)
+    - cartopy_single_panel(figsize=(13, 6.5), proj=ccrs.EckertIII())
+    - cartopy_panel2(figsize=(13, 8), proj=ccrs.EckertIII())
+    - cartopy_panel4(var_num, figsize=(13, 6.5), proj=ccrs.EckertIII())
+    - cartopy_panel6(var_num, figsize=(13, 9.75), proj=ccrs.EckertIII())
+    - map_gridline_opt(AX)
+    - colorbar_opt(fig, ax, cbar, cbar_extend)
+    - draw_sigma_level(data, conf=None, times=None, forecast_count=None, save_location=None)
+    - draw_diagnostics(data, conf=None, times=None, forecast_count=None, save_location=None)
+    - draw_surface(data, conf=None, times=None, forecast_count=None, save_location=None)
+    
 Yingkai Sha
 ksha@ucar.edu
 '''
@@ -28,10 +45,35 @@ import cartopy.feature as cfeature
 
 
 def cmap_combine(cmap1, cmap2):
+    '''
+    combine two matplotlib colormaps as one.
+    '''
     colors1 = cmap1(np.linspace(0., 1, 256))
     colors2 = cmap2(np.linspace(0, 1, 256))
     colors = np.vstack((colors1, colors2))
     return mcolors.LinearSegmentedColormap.from_list('temp_cmap', colors)
+
+def get_projection(proj_name):
+    '''
+    returns a cartopy projection obj
+    '''
+    if proj_name == 'PlateCarree':
+        return ccrs.PlateCarree(central_longitude=0.0)
+    elif proj_name == 'LambertCylindrical':
+        return ccrs.LambertCylindrical(central_longitude=0.0)
+    elif proj_name == 'Miller':
+        return ccrs.Miller(central_longitude=0.0)
+    elif proj_name == 'Mollweide':
+        return ccrs.Mollweide(central_longitude=0.0)
+    elif proj_name == 'Robinson':
+        return ccrs.Robinson(central_longitude=0.0)
+    elif proj_name == 'InterruptedGoodeHomolosine':
+        return ccrs.InterruptedGoodeHomolosine(central_longitude=0)
+    elif proj_name == 'EckertIII':
+        return ccrs.EckertIII()
+    else:
+        print('Porjection name unkown')
+        raise
 
 def get_colormap(cmap_strings):
     '''
@@ -102,39 +144,27 @@ def get_variable_range(data):
     
     return [data_min, data_max]
 
-def figure_panel_planner(var_num):
+def figure_panel_planner(var_num, proj):
+    '''
+    Choose a figure layout based on the number of variables to plot.
+    ! Handles up to 6 variables
+    '''
     if var_num == 1:
-        return cartopy_single_panel(figsize=(13, 6.5), proj=ccrs.EckertIII())
+        return cartopy_single_panel(figsize=(13, 6.5), proj=proj)
     elif var_num == 2:
-        return cartopy_panel2(figsize=(13, 8), proj=ccrs.EckertIII())
+        return cartopy_panel2(figsize=(13, 8), proj=proj)
     elif var_num == 3 or var_num == 4:
-        return cartopy_panel4(var_num, figsize=(13, 6.5), proj=ccrs.EckertIII())
+        return cartopy_panel4(var_num, figsize=(13, 6.5), proj=proj)
     elif var_num == 5 or var_num == 6:
-        return cartopy_panel6(var_num, figsize=(13, 9.75), proj=ccrs.EckertIII())
-
-def map_gridline_opt(AX):
-    # lat/lon gridlines and labeling
-    for ax in AX:
-        GL = ax.gridlines(crs=ccrs.PlateCarree(), 
-                          draw_labels=False, x_inline=False, y_inline=False, 
-                          color='k', linewidth=0.5, linestyle=':', zorder=5)
-        GL.top_labels = None; GL.bottom_labels = None
-        GL.right_labels = None; GL.left_labels = None
-        GL.xlabel_style = {'size': 14}; GL.ylabel_style = {'size': 14}
-        GL.rotate_labels = False
-    
-        ax.add_feature(cfeature.COASTLINE.with_scale('110m'), edgecolor='k', linewidth=1.0, zorder=5)
-        ax.spines['geo'].set_linewidth(2.5)
-    return AX
-
-def colorbar_opt(fig, ax, cbar, cbar_extend):
-    CBar = fig.colorbar(cbar, location='right', orientation='vertical', 
-                        pad=0.02, fraction=0.025, shrink=0.6, aspect=15, extend=cbar_extend, ax=ax)
-    CBar.ax.tick_params(axis='y', labelsize=14, direction='in', length=0)
-    CBar.outline.set_linewidth(2.5)
-    return CBar
-
+        return cartopy_panel6(var_num, figsize=(13, 9.75), proj=proj)
+    else:
+        print('Built-in visualization tools do cannot plot more than 6 variables at once.')
+        raise
+        
 def cartopy_single_panel(figsize=(13, 6.5), proj=ccrs.EckertIII()):
+    '''
+    Single panel figure layout
+    '''
     fig = plt.figure(figsize=figsize)
     proj_ = proj
     ax = plt.axes(projection=proj_)
@@ -143,6 +173,9 @@ def cartopy_single_panel(figsize=(13, 6.5), proj=ccrs.EckertIII()):
     return fig, AX
 
 def cartopy_panel2(figsize=(13, 8), proj=ccrs.EckertIII()):
+    '''
+    Two-panel figure layout
+    '''
     # Figure
     fig = plt.figure(figsize=figsize)
             
@@ -163,6 +196,9 @@ def cartopy_panel2(figsize=(13, 8), proj=ccrs.EckertIII()):
     return fig, AX
 
 def cartopy_panel4(var_num, figsize=(13, 6.5), proj=ccrs.EckertIII()):
+    '''
+    Four-panel figure layout
+    '''
     assert (var_num > 2 and var_num <= 4)
     
     fig = plt.figure(figsize=figsize)
@@ -190,6 +226,9 @@ def cartopy_panel4(var_num, figsize=(13, 6.5), proj=ccrs.EckertIII()):
     return fig, AX
 
 def cartopy_panel6(var_num, figsize=(13, 9.75), proj=ccrs.EckertIII()):
+    '''
+    Six-panel figure layout
+    '''
     assert (var_num > 4 and var_num <= 6)
     
     # Figure
@@ -218,9 +257,37 @@ def cartopy_panel6(var_num, figsize=(13, 9.75), proj=ccrs.EckertIII()):
     
     return fig, AX
 
+def map_gridline_opt(AX):
+    '''
+    Customize cartopy map gridlines
+    '''
+    # lat/lon gridlines and labeling
+    for ax in AX:
+        GL = ax.gridlines(crs=ccrs.PlateCarree(), 
+                          draw_labels=False, x_inline=False, y_inline=False, 
+                          color='k', linewidth=0.5, linestyle=':', zorder=5)
+        GL.top_labels = None; GL.bottom_labels = None
+        GL.right_labels = None; GL.left_labels = None
+        GL.xlabel_style = {'size': 14}; GL.ylabel_style = {'size': 14}
+        GL.rotate_labels = False
+    
+        ax.add_feature(cfeature.COASTLINE.with_scale('110m'), edgecolor='k', linewidth=1.0, zorder=5)
+        ax.spines['geo'].set_linewidth(2.5)
+    return AX
+
+def colorbar_opt(fig, ax, cbar, cbar_extend):
+    '''
+    Customize the colorbar
+    '''
+    CBar = fig.colorbar(cbar, location='right', orientation='vertical', 
+                        pad=0.02, fraction=0.025, shrink=0.6, aspect=15, extend=cbar_extend, ax=ax)
+    CBar.ax.tick_params(axis='y', labelsize=14, direction='in', length=0)
+    CBar.outline.set_linewidth(2.5)
+    return CBar
+
 def draw_sigma_level(data, conf=None, times=None, forecast_count=None, save_location=None):
     '''
-    This function produces 4-panel figures for sigma-level variables. 
+    This function produces figures for sigma-level variables. 
     '''
     # ------------------------------ #
     # visualization settings
@@ -231,6 +298,9 @@ def draw_sigma_level(data, conf=None, times=None, forecast_count=None, save_loca
     var_names = conf['visualization']['sigma_level_visualize']['variable_names']
     title_string = '{}; level {}\ntime: {}; step: {}' #.format(var_name, level, datetime, step)
 
+    ## indices of diagnostic variables
+    var_inds = conf['visualization']['sigma_level_visualize']['variable_indices']
+    
     ## variable factors
     var_factors = conf['visualization']['sigma_level_visualize']['variable_factors']
 
@@ -238,10 +308,11 @@ def draw_sigma_level(data, conf=None, times=None, forecast_count=None, save_loca
     var_range = conf['visualization']['sigma_level_visualize']['variable_range']
     
     ## number of levels
+    ## !<--- the weights of U is applied to determine the total number of levels
     N_levels = int(len(conf['loss']['variable_weights']['U']))
     
     ## number of variables to plot
-    var_num = int(len(var_names))
+    var_num = int(len(var_inds))
     level_nums = conf['visualization']['sigma_level_visualize']['visualize_levels']
     
     ## output figure options and names
@@ -266,16 +337,16 @@ def draw_sigma_level(data, conf=None, times=None, forecast_count=None, save_loca
     for level_num in level_nums:
         # ------------------------------ #
         # Figure
-        fig, AX = figure_panel_planner(var_num)
+        fig, AX = figure_panel_planner(var_num, get_projection(conf['visualization']['map_projection']))
         
         # pcolormesh / colorbar / title in loops
-        for i_var in range(var_num):
+        for i_var, ind_var in enumerate(var_inds):
             # get the current axis
             ax = AX[i_var]
             
             # get the current variable
-            var_ind = i_var*N_levels + level_num
-            pred_draw = pred[var_ind]
+            var_ind_pick = ind_var*N_levels + level_num
+            pred_draw = pred[var_ind_pick]
             pred_draw = pred_draw * var_factors[i_var]
             
             ## variable range
@@ -307,7 +378,7 @@ def draw_sigma_level(data, conf=None, times=None, forecast_count=None, save_loca
 
 def draw_diagnostics(data, conf=None, times=None, forecast_count=None, save_location=None):
     '''
-    This function produces 5 diagnostics.
+    This function produces figures for diagnostics.
     '''
     # ------------------------------ #
     # visualization settings
@@ -328,7 +399,7 @@ def draw_diagnostics(data, conf=None, times=None, forecast_count=None, save_loca
     var_factors = conf['visualization']['diagnostic_variable_visualize']['variable_factors']
     
     ## number of variables to plot
-    var_num = int(len(var_names))
+    var_num = int(len(var_inds))
     
     ## output figure options and names
     save_options = conf['visualization']['save_options']
@@ -349,7 +420,7 @@ def draw_diagnostics(data, conf=None, times=None, forecast_count=None, save_loca
     
     # ------------------------------ #
     # Figure
-    fig, AX = figure_panel_planner(var_num)
+    fig, AX = figure_panel_planner(var_num, get_projection(conf['visualization']['map_projection']))
     
     for i_var, ind_var in enumerate(var_inds):
         # get the current axis
@@ -386,7 +457,9 @@ def draw_diagnostics(data, conf=None, times=None, forecast_count=None, save_loca
 
 
 def draw_surface(data, conf=None, times=None, forecast_count=None, save_location=None):
-
+    '''
+    This function produces figures for surface variables
+    '''
     # ------------------------------ #
     # visualization settings
     ## colormap
@@ -406,7 +479,7 @@ def draw_surface(data, conf=None, times=None, forecast_count=None, save_location
     var_range = conf['visualization']['surface_visualize']['variable_range']
     
     ## number of variables to plot
-    var_num = int(len(var_names))
+    var_num = int(len(var_inds))
     
     ## output figure options and names
     save_options = conf['visualization']['save_options']
@@ -426,7 +499,7 @@ def draw_surface(data, conf=None, times=None, forecast_count=None, save_location
     
     # ------------------------------ #
     # Figure
-    fig, AX = figure_panel_planner(var_num)
+    fig, AX = figure_panel_planner(var_num, get_projection(conf['visualization']['map_projection']))
     
     for i_var, ind_var in enumerate(var_inds):
         # get the current axis
@@ -461,9 +534,3 @@ def draw_surface(data, conf=None, times=None, forecast_count=None, save_location
     plt.close()
     return k, filename
 
-
-
-
-
-
-    

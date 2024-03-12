@@ -55,8 +55,12 @@ from credit.seed import seed_everything
 from credit.pbs import launch_script, launch_script_mpi
 
 # ---------- #
-from visualization import draw_sigma_level, draw_diagnostics, draw_surface
-
+# visualization_tools is part of the credit now, but it requires a pip update
+try:
+    from credit.visualization_tools import draw_sigma_level, draw_diagnostics, draw_surface
+except:
+    from visualization_tools import draw_sigma_level, draw_diagnostics, draw_surface
+    
 # import wandb
 
 logger = logging.getLogger(__name__)
