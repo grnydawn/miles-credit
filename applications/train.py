@@ -20,10 +20,7 @@ import yaml
 import optuna
 
 from torch.cuda.amp import GradScaler
-from torch.distributed.fsdp import StateDictType
 from torch.nn.parallel import DistributedDataParallel as DDP
-import torch.distributed.checkpoint as DCP
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from torch.distributed.fsdp.fully_sharded_data_parallel import (
     CPUOffload,
@@ -49,6 +46,7 @@ from credit.trainer import Trainer
 from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything
+from credit.models.checkpoint import TorchFSDPModel, FSDPOptimizerWrapper, TorchFSDPCheckpointIO
 
 
 warnings.filterwarnings("ignore")
@@ -104,37 +102,39 @@ def distributed_model_wrapper(conf, vae, device):
 
     if conf["trainer"]["mode"] == "fsdp":
 
-        if "use_rotary" in conf["model"]:
-            from credit.rvt import Attention, FeedForward
-        else:
-            from credit.vit2d import Attention, FeedForward
+        # if "use_rotary" in conf["model"]:
+        #     from credit.rvt import Attention, FeedForward
+        # else:
+        #     from credit.vit2d import Attention, FeedForward
+        from credit.models.crossformer_skip import Attention, FeedForward
 
         # Define two policies
         auto_wrap_policy1 = functools.partial(
             transformer_auto_wrap_policy,
-            transformer_layer_cls={Attention, FeedForward}
+            transformer_layer_cls={Attention} #, FeedForward}
         )
 
         auto_wrap_policy2 = functools.partial(
+            transformer_auto_wrap_policy,
+            transformer_layer_cls={FeedForward}
+        )
+
+        auto_wrap_policy3 = functools.partial(
             size_based_auto_wrap_policy, min_num_params=1_000
         )
 
         def combined_auto_wrap_policy(module, recurse, nonwrapped_numel):
-            # Define a new policy that combines the two
-            return auto_wrap_policy1(module, recurse, nonwrapped_numel) or auto_wrap_policy2(module, recurse, nonwrapped_numel)
+            # Define a new policy that combines policies
+            p1 = auto_wrap_policy1(module, recurse, nonwrapped_numel)
+            # p2 = auto_wrap_policy2(module, recurse, nonwrapped_numel)
+            p3 = auto_wrap_policy3(module, recurse, nonwrapped_numel)
+            return p1 or p3
 
-        model = FSDP(
+        model = TorchFSDPModel(
             vae,
-            use_orig_params=True,  # needed if using torch.compile
+            use_orig_params=True,
             auto_wrap_policy=combined_auto_wrap_policy,
-            # mixed_precision=torch.distributed.fsdp.MixedPrecision(
-            #     param_dtype=torch.float16,
-            #     reduce_dtype=torch.float16,
-            #     buffer_dtype=torch.float16,
-            #     #cast_forward_inputs=True
-            # ),
-            # sharding_strategy=ShardingStrategy.FULL_SHARD  # Zero3. Zero2 = ShardingStrategy.SHARD_GRAD_OP
-            cpu_offload=CPUOffload(offload_params=True)
+            cpu_offload=False
         )
 
         # activation checkpointing on the transformer blocks
@@ -173,6 +173,8 @@ def load_model_and_optimizer(conf, model, device):
     #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
     if start_epoch == 0 and not load_weights:  # Loaded after loading model weights when reloading
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
+        if conf["trainer"]["mode"] == "fsdp":
+            optimizer = FSDPOptimizerWrapper(optimizer, model)
         scheduler = load_scheduler(optimizer, conf)
         scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
 
@@ -180,39 +182,19 @@ def load_model_and_optimizer(conf, model, device):
     else:
         ckpt = os.path.join(save_loc, "checkpoint.pt")
         checkpoint = torch.load(ckpt, map_location=device)
-
         if conf["trainer"]["mode"] == "fsdp":
             logging.info(f"Loading FSDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-
+            optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
+            optimizer = FSDPOptimizerWrapper(optimizer, model)
+            checkpoint_io = TorchFSDPCheckpointIO()
+            checkpoint_io.load_unsharded_model(model, os.path.join(save_loc, "model_checkpoint.pth"))
+            if 'load_optimizer' in conf['trainer'] and conf['trainer']['load_optimizer']:
+                checkpoint_io.load_unsharded_optimizer(optimizer, os.path.join(save_loc, "optimizer_checkpoint.pth"))
             # wait for all workers to get the model loaded
             torch.distributed.barrier()
 
-            # tell torch how we are loading the data in (e.g. sharded states)
-            FSDP.set_state_dict_type(
-                model,
-                StateDictType.SHARDED_STATE_DICT,
-            )
-            # different from ``torch.load()``, DCP requires model state_dict prior to loading to get
-            # the allocated storage and sharding information.
-            state_dict = {
-                "model_state_dict": model.state_dict(),
-            }
-            DCP.load_state_dict(
-                state_dict=state_dict,
-                storage_reader=DCP.FileSystemReader(os.path.join(save_loc, "checkpoint")),
-            )
-            model.load_state_dict(state_dict["model_state_dict"])
-
-            # Load the optimizer here on all ranks
-            # https://github.com/facebookresearch/fairscale/issues/1083
-            optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
-            curr_opt_state_dict = checkpoint["optimizer_state_dict"]
-            optim_shard_dict = model.get_shard_from_optim_state_dict(curr_opt_state_dict)
-            # https://www.facebook.com/pytorch/videos/part-5-loading-and-saving-models-with-fsdp-full-state-dictionary/421104503278422/
-            # says to use scatter_full_optim_state_dict
-            optimizer.load_state_dict(optim_shard_dict)
-
         elif conf["trainer"]["mode"] == "ddp":
+            checkpoint = torch.load(ckpt, map_location=device)
             logging.info(f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
             model.module.load_state_dict(checkpoint["model_state_dict"])
             optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
@@ -220,6 +202,7 @@ def load_model_and_optimizer(conf, model, device):
                 optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
         else:
+            ckpt = os.path.join(save_loc, "checkpoint.pt")
             logging.info(f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
             model.load_state_dict(checkpoint["model_state_dict"])
             optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))

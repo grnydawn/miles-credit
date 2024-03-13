@@ -7,14 +7,12 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.distributed as dist
-import torch.distributed.checkpoint as DCP
 import torch.fft
 import tqdm
 from torch.cuda.amp import autocast
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp import StateDictType
 from torch.utils.data import IterableDataset
 import optuna
+from credit.models.checkpoint import TorchFSDPCheckpointIO
 
 
 def cleanup():
@@ -443,28 +441,27 @@ class Trainer:
 
                     logging.info(f"Saving FSDP model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
 
-                    # https://pytorch.org/tutorials/recipes/distributed_checkpoint_recipe.html
-                    FSDP.set_state_dict_type(
+                    # Initialize the checkpoint I/O handler
+                    checkpoint_io = TorchFSDPCheckpointIO()
+
+                    # Save model and optimizer checkpoints
+                    checkpoint_io.save_unsharded_model(
                         self.model,
-                        StateDictType.SHARDED_STATE_DICT,
+                        os.path.join(save_loc, "model_checkpoint.pth"),
+                        gather_dtensor=True,
+                        use_safetensors=False
                     )
-                    sharded_state_dict = {
-                        "model_state_dict": self.model.state_dict()
-                    }
-                    DCP.save_state_dict(
-                        state_dict=sharded_state_dict,
-                        storage_writer=DCP.FileSystemWriter(os.path.join(save_loc, "checkpoint")),
+                    checkpoint_io.save_unsharded_optimizer(
+                        optimizer,
+                        os.path.join(save_loc, "optimizer_checkpoint.pth"),
+                        gather_dtensor=True
                     )
-                    # save the optimizer
-                    optimizer_state = FSDP.full_optim_state_dict(self.model, optimizer)
                     state_dict = {
                         "epoch": epoch,
-                        "optimizer_state_dict": optimizer_state,
-                        'scheduler_state_dict': scheduler.state_dict(),
+                        'scheduler_state_dict': scheduler.state_dict() if conf["trainer"]["use_scheduler"] else None,
                         'scaler_state_dict': scaler.state_dict()
                     }
-
-                    torch.save(state_dict, f"{save_loc}/checkpoint.pt")
+                    torch.save(state_dict, os.path.join(save_loc, "checkpoint.pt"))
 
                 # This needs updated!
                 # valid_loss = np.mean(valid_results["valid_loss"])
