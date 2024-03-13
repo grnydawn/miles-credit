@@ -1,5 +1,5 @@
 '''
-Credit model output summary
+Run model and produce outputs 
 ------------------------------
 Output tensor size: (variables, latitude, longitude)
 Atmospheric level arrangement: top-of-atmosphere--> near-surface --> single layer
@@ -55,15 +55,12 @@ from credit.seed import seed_everything
 from credit.pbs import launch_script, launch_script_mpi
 
 # ---------- #
-# Graph
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-from mpl_toolkits.axes_grid1.inset_locator import inset_axes
-
-import cartopy.crs as ccrs
-import cartopy.mpl.geoaxes
-import cartopy.feature as cfeature
-
+# visualization_tools is part of the credit now, but it requires a pip update
+try:
+    from credit.visualization_tools import draw_sigma_level, draw_diagnostics, draw_surface
+except:
+    from visualization_tools import draw_sigma_level, draw_diagnostics, draw_surface
+    
 # import wandb
 
 logger = logging.getLogger(__name__)
@@ -76,93 +73,6 @@ os.environ["MKL_NUM_THREADS"] = "1"
 def setup(rank, world_size, mode):
     logging.info(f"Running {mode.upper()} on rank {rank} with world_size {world_size}.")
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
-
-
-def draw_forecast(data, N_level=15, level_num=10, var_num=4, 
-                  conf=None, times=None, forecast_count=None, save_location=None):
-    '''
-    This function produces 4-panel figures 
-    '''
-    # ------------------------------ #
-    # visualization settings
-    ## variable rage limit with units of m/s, m/s, K, g/kg
-    var_lims = [[-20, 20], [-20, 20], [273.15-35, 273.15+35], [0, 1e-2]]
-    ## colormap
-    colormaps = [plt.cm.Spectral, plt.cm.Spectral, plt.cm.RdBu_r, plt.cm.YlGn]
-    ## colorbar extend
-    colorbar_extends = ['both', 'both', 'both', 'max']
-    ## title
-    title_strings = ['U wind [m/s]; level {}\ntime: {}; step: {}', 
-                     'V wind [m/s]; level {}\ntime: {}; step: {}', 
-                     'Air temperature [$^\circ$K]; level {}\ntime: {}; step: {}', 
-                     'Specific humidity [g/kg]; level {}\ntime: {}; step: {}']
-    # ------------------------------ #
-    # get forecast step and file name
-    k, fn = data
-    t = times[k]
-    pred = np.load(fn)
-    
-    # ------------------------------ #
-    # get lat/lon grids
-    lat_lon_weights = xr.open_dataset(conf['loss']['latitude_weights'])
-    longitude = lat_lon_weights["longitude"]
-    latitude = lat_lon_weights["latitude"]
-    
-    # ------------------------------ #
-    # Figure
-    fig = plt.figure(figsize=(13, 6.5))
-    
-    # 2-by-2 subplots
-    gs = gridspec.GridSpec(2, 2, height_ratios=[1, 1], width_ratios=[1, 1])
-    proj_ = ccrs.EckertIII()
-    
-    # subplot ax
-    ax0 = plt.subplot(gs[0, 0], projection=proj_)
-    ax1 = plt.subplot(gs[0, 1], projection=proj_)
-    ax2 = plt.subplot(gs[1, 0], projection=proj_)
-    ax3 = plt.subplot(gs[1, 1], projection=proj_)
-    AX = [ax0, ax1, ax2, ax3]
-    plt.subplots_adjust(0, 0, 1, 1, hspace=0.2, wspace=0.05)
-    
-    # lat/lon gridlines and labeling
-    for ax in AX:
-        GL = ax.gridlines(crs=ccrs.PlateCarree(), 
-                          draw_labels=True, x_inline=False, y_inline=False, 
-                          color='k', linewidth=0.5, linestyle=':', zorder=5)
-        GL.top_labels = None; GL.bottom_labels = None
-        GL.right_labels = None; GL.left_labels = None
-        GL.xlabel_style = {'size': 14}; GL.ylabel_style = {'size': 14}
-        GL.rotate_labels = False
-    
-        ax.add_feature(cfeature.COASTLINE.with_scale('110m'), edgecolor='k', linewidth=1.0, zorder=5)
-        ax.spines['geo'].set_linewidth(2.5)
-
-    # pcolormesh / colorbar / title in loops
-    for i_var in range(var_num):
-        # get the current axis
-        ax = AX[i_var]
-        # get the current variable
-        var_ind = i_var*N_level + level_num
-        pred_draw = pred[var_ind]
-        # get visualization settings
-        var_lim = var_lims[i_var]
-        colormap = colormaps[i_var]
-        cbar_extend = colorbar_extends[i_var]
-        # pcolormesh
-        cbar = ax.pcolormesh(longitude, latitude, pred_draw, vmin=var_lim[0], vmax=var_lim[1], 
-                             cmap=colormap, transform=ccrs.PlateCarree())
-        # colorbar operations
-        CBar = fig.colorbar(cbar, location='right', orientation='vertical', 
-                            pad=0.02, fraction=0.025, shrink=0.6, aspect=15, extend=cbar_extend, ax=ax)
-        CBar.ax.tick_params(axis='y', labelsize=14, direction='in', length=0)
-        CBar.outline.set_linewidth(2.5)
-        # title
-        ax.set_title(title_strings[i_var].format(level_num, t, k), fontsize=14)
-    
-    filename = join(save_location, f"global_q_{forecast_count}_{k}.png")
-    plt.savefig(filename, dpi=300, bbox_inches="tight")
-    plt.close()
-    return k, filename
 
 def predict(rank, world_size, conf):
 
@@ -309,25 +219,124 @@ def predict(rank, world_size, conf):
                 df = pd.DataFrame(metrics_results)
                 df.to_csv(os.path.join(save_location, "metrics.csv"))
 
-                video_files = []
-                # collect forecast outputs
-                forecast_paths = os.path.join(save_location, f"{forecast_count}_*_*_pred.npy")
-                # generator of file_name, file_count
-                file_list = enumerate(sorted(glob.glob(forecast_paths)))
-                # parallelize draw_forecast func
-                with Pool(processes=8) as pool:
-                    f = partial(draw_forecast, conf=conf, times=forecast_datetimes,
-                                forecast_count=forecast_count, save_location=save_location)
-                    # collect output png file names
-                    video_files = pool.map(f, file_list)
+
+                # =============================================================================== #
+                # Data visualization for sigma level variables
+                sigma_levels = conf['visualization']['sigma_level_visualize']['visualize_levels']
+                
+                # start producing figures if level is not empty
+                if len(sigma_levels) > 0:
+                
+                    # collect forecast outputs
+                    forecast_paths = os.path.join(save_location, f"{forecast_count}_*_*_pred.npy")
+                    # generator of file_name, file_count
+                    file_list = enumerate(sorted(glob.glob(forecast_paths)))
                     
-                # generate gif
-                video_files = [x[1] for x in sorted(video_files)]
-                command_str = f'convert -delay 20 -loop 0 {" ".join(video_files)} {save_location}/global.gif'
+                    # the output session begins
+                    print('Preparing sigma level outputs')
+                    video_files = []
+                    
+                    ## parallelize draw_forecast func
+                    with Pool(processes=8) as pool:
+                        f = partial(draw_sigma_level, conf=conf, times=forecast_datetimes,
+                                    forecast_count=forecast_count, save_location=save_location)
+                        # collect output png file names
+                        video_files = pool.map(f, file_list)
+                        
+                    ## collect all png file names
+                    ## video_files[0] = f; video_files[1] = file_names
+                    video_files_all = [x[1] for x in sorted(video_files)]
+                    
+                    ## gif outpout name = png output name
+                    gif_name_prefix = conf['visualization']['sigma_level_visualize']['file_name_prefix']
+                    
+                    ## separate file names based on verticial levels
+                    ## one gif per level 
+                    for n_gif, sigma_level in enumerate(sigma_levels):
+                        video_files_single = []
+                        for filename_list in video_files_all:
+                            video_files_single.append(filename_list[n_gif])
+                            
+                        ## send all png files to the gif maker 
+                        gif_name = '{}_level{:02d}.gif'.format(gif_name_prefix, sigma_level)
+                        command_str = f'convert -delay 20 -loop 0 {" ".join(video_files_single)} {save_location}/{gif_name}'
+                        out = subprocess.Popen(command_str, shell=True, 
+                                               stdout=subprocess.PIPE, 
+                                               stderr=subprocess.PIPE).communicate()
+                        print(out)
+                        
+                # =============================================================================== #
+                # Data visualization for diagnostics
+                N_vars = len(conf['visualization']['diagnostic_variable_visualize']['variable_indices'])
                 
-                out = subprocess.Popen(command_str, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-                print(out)
+                if N_vars > 0:
                 
+                    # collect forecast outputs
+                    forecast_paths = os.path.join(save_location, f"{forecast_count}_*_*_pred.npy")
+                    # generator of file_name, file_count
+                    file_list = enumerate(sorted(glob.glob(forecast_paths)))
+                    
+                    # the output session begins
+                    print('Preparing diagnostic outputs')
+                    video_files = []
+                    
+                    with Pool(processes=8) as pool:
+                        f = partial(draw_diagnostics, conf=conf, times=forecast_datetimes,
+                                    forecast_count=forecast_count, save_location=save_location)
+                        # collect output png file names
+                        video_files = pool.map(f, file_list)
+                        
+                    ## collect all png file names
+                    ## video_files[0] = f; video_files[1] = file_names
+                    video_files_all = [x[1] for x in sorted(video_files)]
+                    
+                    ## gif outpout name = png output name
+                    gif_name_prefix = conf['visualization']['diagnostic_variable_visualize']['file_name_prefix']
+                    
+                    ## send all png files to the gif maker 
+                    gif_name = '{}.gif'.format(gif_name_prefix)
+                    command_str = f'convert -delay 20 -loop 0 {" ".join(video_files_all)} {save_location}/{gif_name}'
+                    out = subprocess.Popen(command_str, shell=True, 
+                                           stdout=subprocess.PIPE, 
+                                           stderr=subprocess.PIPE).communicate()
+                    print(out)
+
+                # =============================================================================== #
+                # Data visualization for diagnostics
+                N_vars = len(conf['visualization']['surface_visualize']['variable_indices'])
+                
+                if N_vars > 0:
+                
+                    # collect forecast outputs
+                    forecast_paths = os.path.join(save_location, f"{forecast_count}_*_*_pred.npy")
+                    # generator of file_name, file_count
+                    file_list = enumerate(sorted(glob.glob(forecast_paths)))
+                    
+                    # the output session begins
+                    print('Preparing surface outputs')
+                    video_files = []
+                    
+                    with Pool(processes=8) as pool:
+                        f = partial(draw_surface, conf=conf, times=forecast_datetimes,
+                                    forecast_count=forecast_count, save_location=save_location)
+                        # collect output png file names
+                        video_files = pool.map(f, file_list)
+                        
+                    ## collect all png file names
+                    ## video_files[0] = f; video_files[1] = file_names
+                    video_files_all = [x[1] for x in sorted(video_files)]
+                    
+                    ## gif outpout name = png output name
+                    gif_name_prefix = conf['visualization']['surface_visualize']['file_name_prefix']
+                    
+                    ## send all png files to the gif maker 
+                    gif_name = '{}.gif'.format(gif_name_prefix)
+                    command_str = f'convert -delay 20 -loop 0 {" ".join(video_files_all)} {save_location}/{gif_name}'
+                    out = subprocess.Popen(command_str, shell=True, 
+                                           stdout=subprocess.PIPE, 
+                                           stderr=subprocess.PIPE).communicate()
+                    print(out)
+                    
                 forecast_count += 1
                 metrics_results = defaultdict(list)
                 pred_files = []
