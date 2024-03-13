@@ -386,16 +386,15 @@ class CONUS404Dataset(torch.utils.data.Dataset):
 
     def __init__(
             self,
-            zarrpath,
-            # = "/glade/campaign/ral/risc/DATA/conus404/zarr",
-            varnames: list=[],
-            history_len = 1,
-            forecast_len = 2,
-            transform:  Optional[Callable] = None,
-            seed = 22,
-            skip_periods = None,
-            one_shot = False,
-            tdimname = "Time"
+            zarrpath:     str = "/glade/campaign/ral/risc/DATA/conus404/zarr",
+            varnames:     list = [],
+            history_len:  int = 1,
+            forecast_len: int = 2,
+            transform:    Optional[Callable] = None,
+            seed:         int = 22,
+            skip_periods: int = None,
+            one_shot:     bool = False,
+            tdimname:     str = "Time"
     ):
         self.zarrpath     = zarrpath
         self.history_len  = history_len
