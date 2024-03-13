@@ -355,7 +355,7 @@ def flatten(array):
 def lazymerge(zlist):
     return xr.merge([get_forward_data(z) for z in zlist])
 
-
+## dataclass decorator avoids lots of self.x=x and gets us free __repr__
 @dataclass
 class CONUS404Dataset(torch.utils.data.Dataset):
     """Each Zarr store for the CONUS-404 data contains one year of
@@ -391,7 +391,6 @@ class CONUS404Dataset(torch.utils.data.Dataset):
     seed:         int = 22
     skip_periods: int = None
     one_shot:     bool = False
-    tdimname:     str = "Time"
 
     def __post_init__(self):
         super().__init__()
@@ -422,6 +421,11 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         ## lazy-load & merge zarr stores
         self.zarrs = [lazymerge(z) for z in zlol]
 
+        ## name of time dimension may vary by dataset; look for attr axis="T"
+        cnames = list(self.zarrs[0].coords.keys())
+        axes = [self.zarrs[0].coords[cn].attrs.get("axis") for cn in cnames]
+        self.tdimname = cnames[axes.index('T')]
+        
         ## construct indexing arrays
         zarrlen = [z.dims[self.tdimname] for z in self.zarrs]
         whichseg = [list(repeat(s,z)) for s,z in zip(range(len(zarrlen)), zarrlen)]
@@ -754,13 +758,12 @@ class PredictForecast(torch.utils.data.IterableDataset):
 
 #zarrpath = "/glade/work/mcginnis/ML/GWC/testdata/zarr"
 #varnames = ["prec","tmin","tmax"]
-#tdimname = "time"
 
 #zarrpath = "/glade/campaign/ral/risc/DATA/conus404/zarr"
 #varnames = ["Q850","T850","U850","V850","Z850"]
-#tdimname = "Time"
 
-#c4 = CONUS404Dataset(zarrpath, varnames, tdimname=tdimname)
+#c4 = CONUS404Dataset(zarrpath)
+#c4 = CONUS404Dataset(zarrpath, varnames)
 
 #len(c4)
 
