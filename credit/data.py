@@ -1,5 +1,5 @@
-from typing import Optional, Callable, TypedDict, Union, Iterable, NamedTuple
-from dataclasses import dataclass
+from typing import Optional, Callable, TypedDict, Union, Iterable, NamedTuple, List
+from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 import xarray as xr
@@ -355,8 +355,8 @@ def flatten(array):
 def lazymerge(zlist):
     return xr.merge([get_forward_data(z) for z in zlist])
 
-## todo: dataclass decorator
 
+@dataclass
 class CONUS404Dataset(torch.utils.data.Dataset):
     """Each Zarr store for the CONUS-404 data contains one year of
     hourly data for one variable.
@@ -382,43 +382,35 @@ class CONUS404Dataset(torch.utils.data.Dataset):
     that's okay?
     
     """
+    
+    zarrpath:     str = "/glade/campaign/ral/risc/DATA/conus404/zarr"
+    varnames:     List[str] = field(default_factory=list)
+    history_len:  int = 1
+    forecast_len: int = 2
+    transform:    Optional[Callable] = None
+    seed:         int = 22
+    skip_periods: int = None
+    one_shot:     bool = False
+    tdimname:     str = "Time"
 
-
-    def __init__(
-            self,
-            zarrpath:     str = "/glade/campaign/ral/risc/DATA/conus404/zarr",
-            varnames:     list = [],
-            history_len:  int = 1,
-            forecast_len: int = 2,
-            transform:    Optional[Callable] = None,
-            seed:         int = 22,
-            skip_periods: int = None,
-            one_shot:     bool = False,
-            tdimname:     str = "Time"
-    ):
-        self.zarrpath     = zarrpath
-        self.history_len  = history_len
-        self.forecast_len = forecast_len
-        self.transform    = transform
-        self.skip_periods = skip_periods
-        self.one_shot     = one_shot
-        self.tdimname     = tdimname
+    def __post_init__(self):
+        super().__init__()
         
-        self.sample_len = sample_len = history_len + forecast_len
-        self.stride = stride = 1 if skip_periods is None else skip_periods + 1
+        self.sample_len = sample_len = self.history_len + self.forecast_len
+        self.stride = stride = 1 if self.skip_periods is None else self.skip_periods + 1
 
-        self.rng = np.random.default_rng(seed)
+        self.rng = np.random.default_rng(self.seed)
 
         ## CONUS404 data is organized into directories by variable,
         ## with a set of yearly zarr stores for each variable
-        if len(varnames) == 0:
-            varnames = os.listdir(zarrpath)
-        self.varnames = sorted(varnames)
+        if len(self.varnames) == 0:
+            self.varnames = os.listdir(self.zarrpath)
+        self.varnames = sorted(self.varnames)
         
         ## get file paths
         zdict = {}
-        for v in varnames:
-            zdict[v] = sorted(glob(zarrpath+"/"+v+"/"+v+".*.zarr"))
+        for v in self.varnames:
+            zdict[v] = sorted(glob(self.zarrpath+"/"+v+"/"+v+".*.zarr"))
 
         ## check that lists align
         zlen = [len(z) for z in zdict.values()]
@@ -431,7 +423,7 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         self.zarrs = [lazymerge(z) for z in zlol]
 
         ## construct indexing arrays
-        zarrlen = [z.dims[tdimname] for z in self.zarrs]
+        zarrlen = [z.dims[self.tdimname] for z in self.zarrs]
         whichseg = [list(repeat(s,z)) for s,z in zip(range(len(zarrlen)), zarrlen)]
         segindex = [list(range(z)) for z in zarrlen]
         
@@ -442,12 +434,12 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         self.zindex   = flatten([i[:-N] for i in segindex])
 
         ## precompute mask arrays for subsetting data for samples
-        self.histmask = list(range(0, history_len, stride))
-        foreind = list(range(sample_len))
-        if one_shot:
+        self.histmask = list(range(0, self.history_len, self.stride))
+        foreind = list(range(self.sample_len))
+        if self.one_shot:
             self.foremask = foreind[-1]
         else:
-            self.foremask =  foreind[slice(history_len, sample_len, stride)]
+            self.foremask =  foreind[slice(self.history_len, self.sample_len, self.stride)]
 
     def __len__(self):
         return(len(self.zindex))
