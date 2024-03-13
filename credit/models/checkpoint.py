@@ -193,12 +193,6 @@ class TorchFSDPModel(ModelWrapper):
         x_concat = torch.cat((x1, x2), dim=2)
         return x_concat.permute(0, 2, 1, 3, 4)
 
-    def split_and_reshape(self, tensor): # to be removed when data is updated
-        tensor1 = tensor[:, :int(self.channels * self.levels), :, :, :]
-        tensor2 = tensor[:, -int(self.surface_channels):, :, :, :]
-        tensor1 = tensor1.view(tensor1.shape[0], channels, self.levels, tensor1.shape[2], tensor1.shape[3], tensor1.shape[4])
-        return tensor1, tensor2
-
 
 class OptimizerWrapper:
     """
