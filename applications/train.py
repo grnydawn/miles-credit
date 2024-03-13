@@ -194,7 +194,6 @@ def load_model_and_optimizer(conf, model, device):
             torch.distributed.barrier()
 
         elif conf["trainer"]["mode"] == "ddp":
-            checkpoint = torch.load(ckpt, map_location=device)
             logging.info(f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
             model.module.load_state_dict(checkpoint["model_state_dict"])
             optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
@@ -202,7 +201,6 @@ def load_model_and_optimizer(conf, model, device):
                 optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
         else:
-            ckpt = os.path.join(save_loc, "checkpoint.pt")
             logging.info(f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
             model.load_state_dict(checkpoint["model_state_dict"])
             optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
