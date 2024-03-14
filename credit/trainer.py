@@ -179,7 +179,6 @@ class Trainer:
             )
             to_print += " lr: {:.12f}".format(optimizer.param_groups[0]["lr"])
             if self.rank == 0:
-                batch_group_generator.update(1)
                 batch_group_generator.set_description(to_print)
 
             if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "cosine-annealing":
@@ -289,7 +288,6 @@ class Trainer:
                     np.mean(results_dict["valid_mae"])
                 )
                 if self.rank == 0:
-                    batch_group_generator.update(1)
                     batch_group_generator.set_description(to_print)
 
                 if i >= valid_batches_per_epoch and i > 0:

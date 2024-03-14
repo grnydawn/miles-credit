@@ -23,7 +23,7 @@ from torch.cuda.amp import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from torch.distributed.fsdp.fully_sharded_data_parallel import (
-    CPUOffload,
+    MixedPrecision
 )
 from torch.distributed.fsdp.wrap import (
     transformer_auto_wrap_policy,
@@ -36,6 +36,7 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 )
 
 from torchvision import transforms
+from torchsummary import summary
 
 from credit.models import load_model
 from credit.loss import VariableTotalLoss2D
@@ -47,6 +48,7 @@ from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything
 from credit.models.checkpoint import TorchFSDPModel, FSDPOptimizerWrapper, TorchFSDPCheckpointIO
+from credit.mixed_precision import parse_dtype
 
 
 warnings.filterwarnings("ignore")
@@ -98,65 +100,90 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
     return dataset, sampler
 
 
-def distributed_model_wrapper(conf, vae, device):
+def distributed_model_wrapper(conf, neural_network, device):
 
     if conf["trainer"]["mode"] == "fsdp":
 
-        # if "use_rotary" in conf["model"]:
-        #     from credit.rvt import Attention, FeedForward
-        # else:
-        #     from credit.vit2d import Attention, FeedForward
-        from credit.models.crossformer_skip import Attention, FeedForward
+        # Define the sharding policies
 
-        # Define two policies
+        if "crossformer" in conf["model"]["type"]:
+            from credit.models.crossformer_skip import Attention as Attend
+        elif "fuxi" in conf["model"]["type"]:
+            from credit.models.fuxi import UTransformer as Attend
+        else:
+            raise OSError("You asked for FSDP but only crossformer and fuxi are currently supported.")
+
         auto_wrap_policy1 = functools.partial(
             transformer_auto_wrap_policy,
-            transformer_layer_cls={Attention} #, FeedForward}
+            transformer_layer_cls={Attend}
         )
 
         auto_wrap_policy2 = functools.partial(
-            transformer_auto_wrap_policy,
-            transformer_layer_cls={FeedForward}
-        )
-
-        auto_wrap_policy3 = functools.partial(
             size_based_auto_wrap_policy, min_num_params=1_000
         )
 
         def combined_auto_wrap_policy(module, recurse, nonwrapped_numel):
             # Define a new policy that combines policies
             p1 = auto_wrap_policy1(module, recurse, nonwrapped_numel)
-            # p2 = auto_wrap_policy2(module, recurse, nonwrapped_numel)
-            p3 = auto_wrap_policy3(module, recurse, nonwrapped_numel)
-            return p1 or p3
+            p2 = auto_wrap_policy2(module, recurse, nonwrapped_numel)
+            return p1 or p2
+
+        # Mixed precision
+
+        use_mixed_precision = conf["trainer"]["use_mixed_precision"] if "use_mixed_precision" in conf["trainer"] else False
+
+        logging.info(f"Using mixed_precision: {use_mixed_precision}")
+
+        if use_mixed_precision:
+            for key, val in conf["trainer"]["mixed_precision"].items():
+                conf["trainer"]["mixed_precision"][key] = parse_dtype(val)
+            mixed_precision_policy = MixedPrecision(**conf["trainer"]["mixed_precision"])
+        else:
+            mixed_precision_policy = None
+
+        # CPU offloading
+
+        cpu_offload = conf["trainer"]["cpu_offload"] if "cpu_offload" in conf["trainer"] else False
+
+        logging.info(f"Using CPU offloading: {cpu_offload}")
+
+        # FSDP module
 
         model = TorchFSDPModel(
-            vae,
+            neural_network,
             use_orig_params=True,
             auto_wrap_policy=combined_auto_wrap_policy,
-            cpu_offload=False
+            mixed_precision=mixed_precision_policy,
+            cpu_offload=cpu_offload
         )
 
         # activation checkpointing on the transformer blocks
-        # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
 
-#         non_reentrant_wrapper = functools.partial(
-#             checkpoint_wrapper,
-#             checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-#         )
+        activation_checkpoint = conf["trainer"]["activation_checkpoint"] if "activation_checkpoint" in conf["trainer"] else False
 
-#         check_fn = lambda submodule: (isinstance(submodule, Attention) or isinstance(submodule, FeedForward))
+        logging.info(f"Activation checkpointing: {activation_checkpoint}")
 
-#         apply_activation_checkpointing(
-#             model,
-#             checkpoint_wrapper_fn=non_reentrant_wrapper,
-#             check_fn=check_fn
-#         )
+        if activation_checkpoint:
+
+            # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
+
+            non_reentrant_wrapper = functools.partial(
+                checkpoint_wrapper,
+                checkpoint_impl=CheckpointImpl.NO_REENTRANT,
+            )
+
+            check_fn = lambda submodule: isinstance(submodule, Attend)
+
+            apply_activation_checkpointing(
+                model,
+                checkpoint_wrapper_fn=non_reentrant_wrapper,
+                check_fn=check_fn
+            )
 
     elif conf["trainer"]["mode"] == "ddp":
-        model = DDP(vae, device_ids=[device])
+        model = DDP(neural_network, device_ids=[device])
     else:
-        model = vae
+        model = neural_network
 
     return model
 
@@ -294,21 +321,23 @@ def main(rank, world_size, conf, trial=False):
 
     # model
 
-    vae = load_model(conf)
-
-    num_params = sum(p.numel() for p in vae.parameters())
-    if rank == 0:
-        logging.info(f"Number of parameters in the model: {num_params}")
-    # summary(vae, input_size=(channels, height, width))
+    m = load_model(conf)
 
     # have to send the module to the correct device first
 
-    vae.to(device)
-    # vae = torch.compile(vae)
+    m.to(device)
+    # m = torch.compile(m)
+
+    if rank == 0:
+        channels = conf["model"]["levels"] * len(conf["data"]["variables"]) + len(conf["data"]["surface_variables"])
+        frames = conf["model"]["frames"]
+        height = conf["model"]["image_height"]
+        width = conf["model"]["image_width"]
+        summary(m, input_size=(channels, frames, height, width))
 
     # Wrap in DDP or FSDP module, or none
 
-    model = distributed_model_wrapper(conf, vae, device)
+    model = distributed_model_wrapper(conf, m, device)
 
     # Load an optimizer, scheduler, and gradient scaler from disk if epoch > 0
 
