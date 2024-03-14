@@ -11,6 +11,7 @@ import datetime
 import os
 from glob import glob
 from itertools import repeat
+from timeit import timeit
 
 
 def get_forward_data(filename) -> xr.DataArray:
@@ -351,9 +352,10 @@ from functools import reduce
 def flatten(array):
   return reduce(lambda a,b: a+b, array) 
 
-## lazy-load & merge zarr stores
+## lazy-load & merge zarr stores; compat="override" needed for mixing
+## 2D & 3D vars on different levels
 def lazymerge(zlist):
-    return xr.merge([get_forward_data(z) for z in zlist])
+    return xr.merge([get_forward_data(z) for z in zlist], compat="override")
 
 ## dataclass decorator avoids lots of self.x=x and gets us free __repr__
 @dataclass
@@ -467,7 +469,25 @@ class CONUS404Dataset(torch.utils.data.Dataset):
 
         return sample
 
-        
+
+## Test load speed of different number of vars & storage locs.  Full
+## load for C404 takes about 4 sec on campaign, 5 sec on scratch
+def testC4loader():
+    zdirs = { "worktest": "/glade/work/mcginnis/ML/GWC/testdata/zarr",
+            "scratch": "/glade/derecho/scratch/mcginnis/conus404/zarr",
+            "campaign": "/glade/campaign/ral/risc/DATA/conus404/zarr"
+             }
+    for zk in zdirs.keys():
+        src = zdirs[zk]
+        print("######## "+zk+" ########")
+        svars = os.listdir(src)
+        for i in range(1, len(svars)+1):
+            testvars = svars[slice(0,i)] 
+            print(testvars)
+            cmd = 'c4 = CONUS404Dataset("'+src+'",varnames='+str(testvars)+')'
+            print(cmd+"\t"+str(timeit(cmd, globals=globals(), number=1)))
+
+            
 ## Note: DistributedSequentialDataset & DistributedSequentialDataset
 ## are legacy; they wrap ERA5Dataset to send data batches to GPUs for
 ## (1 class of?) huge sharded models, but otherwise have been
