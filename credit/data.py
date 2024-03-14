@@ -421,10 +421,14 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         ## lazy-load & merge zarr stores
         self.zarrs = [lazymerge(z) for z in zlol]
 
-        ## name of time dimension may vary by dataset; look for attr axis="T"
-        cnames = list(self.zarrs[0].coords.keys())
-        axes = [self.zarrs[0].coords[cn].attrs.get("axis") for cn in cnames]
-        self.tdimname = cnames[axes.index('T')]
+        ## Name of time dimension may vary by dataset.  ERA5 is "time"
+        ## but C404 is "Time".  If dataset is CF-compliant, we
+        ## can/should look for a coordinate with the attribute
+        ## 'axis="T"', but C404 isn't CF, so instead we look for a dim
+        ## named "time" (any capitalization), and defer checking the
+        ## axis attribute until it actually comes up in practice.
+        dnames = list(self.zarrs[0].dims)
+        self.tdimname = dnames[[d.lower() for d in dnames].index("time")]
         
         ## construct indexing arrays
         zarrlen = [z.dims[self.tdimname] for z in self.zarrs]
