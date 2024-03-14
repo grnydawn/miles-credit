@@ -285,7 +285,7 @@ def colorbar_opt(fig, ax, cbar, cbar_extend):
     CBar.outline.set_linewidth(2.5)
     return CBar
 
-def draw_sigma_level(data, conf=None, times=None, forecast_count=None, save_location=None):
+def draw_sigma_level(pred, conf=None, save_location=None):
     '''
     This function produces figures for sigma-level variables. 
     '''
@@ -296,12 +296,11 @@ def draw_sigma_level(data, conf=None, times=None, forecast_count=None, save_loca
     
     ## variable names
     var_names = conf['visualization']['sigma_level_visualize']['variable_names']
-    title_string = '{}; level {}\ntime: {}; step: {}' #.format(var_name, level, datetime, step)
 
-    ## indices of diagnostic variables
-    var_inds = conf['visualization']['sigma_level_visualize']['variable_indices']
+    ## short names of diagnostic variables
+    vars = conf['visualization']['sigma_level_visualize']['variables']
     
-    ## variable factors
+    ## variable scaling factors
     var_factors = conf['visualization']['sigma_level_visualize']['variable_factors']
 
     ## variable range
@@ -309,11 +308,11 @@ def draw_sigma_level(data, conf=None, times=None, forecast_count=None, save_loca
     
     ## number of levels
     ## !<--- the weights of U is applied to determine the total number of levels
-    N_levels = int(len(conf['loss']['variable_weights']['U']))
+    #N_levels = int(len(conf['loss']['variable_weights']['U']))
     
     ## number of variables to plot
-    var_num = int(len(var_inds))
-    level_nums = conf['visualization']['sigma_level_visualize']['visualize_levels']
+    var_num = int(len(vars))
+    #level_nums = conf['visualization']['sigma_level_visualize']['visualize_levels']
     
     ## output figure options and names
     save_options = conf['visualization']['save_options']
@@ -321,59 +320,48 @@ def draw_sigma_level(data, conf=None, times=None, forecast_count=None, save_loca
     
     ## collect figure names
     filenames = []
-    
-    # ------------------------------ #
-    # get forecast step and file name
-    k, fn = data
-    t = times[k]
-    pred = np.load(fn)
-    
-    # ------------------------------ #
-    # get lat/lon grids
-    lat_lon_weights = xr.open_dataset(conf['loss']['latitude_weights'])
-    longitude = lat_lon_weights["longitude"]
-    latitude = lat_lon_weights["latitude"]
-    
-    for level_num in level_nums:
-        # ------------------------------ #
-        # Figure
-        fig, AX = figure_panel_planner(var_num, get_projection(conf['visualization']['map_projection']))
         
-        # pcolormesh / colorbar / title in loops
-        for i_var, ind_var in enumerate(var_inds):
-            # get the current axis
-            ax = AX[i_var]
-            
-            # get the current variable
-            var_ind_pick = ind_var*N_levels + level_num
-            pred_draw = pred[var_ind_pick]
-            pred_draw = pred_draw * var_factors[i_var]
-            
-            ## variable range
-            var_lim = var_range[i_var]
-            if var_lim == 'auto':
-                var_lim = get_variable_range(pred_draw)
-
-            ## colorbar settings
-            cbar_extend = get_colormap_extend(var_lim)
-            colormap = colormaps[i_var]
-            
-            # pcolormesh
-            cbar = ax.pcolormesh(longitude, latitude, pred_draw, vmin=var_lim[0], vmax=var_lim[1], 
-                                 cmap=colormap, transform=ccrs.PlateCarree())
-            # colorbar operations
-            CBar = colorbar_opt(fig, ax, cbar, cbar_extend)
-            
-            # title
-            var_name = var_names[i_var]
-            ax.set_title(title_string.format(var_name, level_num, t, k), fontsize=14)
+    # ------------------------------ #
+    # Figure
+    fig, AX = figure_panel_planner(var_num, get_projection(conf['visualization']['map_projection']))
     
-        save_name = '{}_level{:02d}_fcst{:03d}_step{:03d}.png'.format(save_name_head, level_num, forecast_count, k)
-        filename = join(save_location, save_name)
-        plt.savefig(filename, **save_options)
-        plt.close()
-        filenames.append(filename)
-    return k, filenames
+    # pcolormesh / colorbar / title in loops
+    for i_var, var in enumerate(vars):
+        # get the current axis
+        ax = AX[i_var]
+        
+        # get the current variable
+        pred_draw = pred.sel(var=var) * var_factors[i_var]
+        
+        ## variable range
+        var_lim = var_range[i_var]
+        if var_lim == 'auto':
+            var_lim = get_variable_range(pred_draw.to_numpy())
+
+        ## colorbar settings
+        cbar_extend = get_colormap_extend(var_lim)
+        colormap = colormaps[i_var]
+        
+        # pcolormesh
+        cbar = ax.pcolormesh(pred_draw.lon, pred_draw.lat, pred_draw, 
+                                vmin=var_lim[0], vmax=var_lim[1], 
+                                cmap=colormap, transform=ccrs.PlateCarree())
+        # colorbar operations
+        CBar = colorbar_opt(fig, ax, cbar, cbar_extend)
+        
+        # title
+        var_name = var_names[i_var]
+        level_num = pred.level.values 
+        dt_str = np.datetime_as_string(pred.datetime.values, unit='h', timezone='UTC')# convert to str format
+        #todo: incorporate step into title
+        ax.set_title(f'{var_name}, level {level_num}\ntime: {dt_str}', fontsize=14)
+
+    save_name = f'level{level_num}_datetime{dt_str}.png'
+    filename = join(save_location, save_name)
+    plt.savefig(filename, **save_options)
+    plt.close()
+    filenames.append(filename)
+    return filenames 
 
 
 def draw_diagnostics(data, conf=None, times=None, forecast_count=None, save_location=None):

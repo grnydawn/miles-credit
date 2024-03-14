@@ -91,10 +91,12 @@ predict:
         ["1989-12-31 00:00:00", "1990-01-02 00:00:00"],
         ["2018-06-01 00:00:00", "2018-06-07 00:00:00"]
     ]
+    x_save_loc: None
+    surf_save_loc: None
 
 visualization:
     sigma_level_visualize:
-        variable_indices: [0, 1, 2, 3]   # the variable indices in **[data][variables][...]**
+        variables: ['U','V','T','Q']  # the variable indices in **[data][variables][...]**
         visualize_levels: [4, 8, 12]     # sigma levels (by their indices) to visualize 
         variable_names: ['U wind [m/s]', # the name of each variable
                          'V wind [m/s]', # must be consistent with **variable_indices**
@@ -116,7 +118,7 @@ visualization:
         colormaps: ['Spectral_r', 'Spectral_r', 'viridis_plasma', 'Spectral_r', 'YlGn']
         file_name_prefix: 'global_diagnostics'
     surface_visualize:
-        variable_indices: [60, 61]
+        variables: ['SP', 't2m']
         variable_names: ['Surface Pressure [hPa]', 
                          '2-m Air Temperature [$^\circ$K]']
         variable_factors: [0.01, 1]
