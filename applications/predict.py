@@ -443,11 +443,12 @@ if __name__ == "__main__":
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
-    # Create directories if they do not exist and copy yml file
-    save_loc = os.path.expandvars(conf["save_loc"])
-    os.makedirs(save_loc, exist_ok=True)
-    if not os.path.exists(os.path.join(save_loc, "model.yml")):
-        shutil.copy(config, os.path.join(save_loc, "model.yml"))
+    x_save_loc = conf['predict']['x_save_loc']
+    surf_save_loc = conf['predict']['surf_save_loc']
+    if x_save_loc and surf_save_loc:
+        dir = make_images(x_save_loc, surf_save_loc, conf)
+        #make_movie(dir, conf)
+        sys.exit()
 
     # Launch PBS jobs
     if launch:
