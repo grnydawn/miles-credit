@@ -187,9 +187,9 @@ def load_model_and_optimizer(conf, model, device):
             optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
             optimizer = FSDPOptimizerWrapper(optimizer, model)
             checkpoint_io = TorchFSDPCheckpointIO()
-            checkpoint_io.load_unsharded_model(model, os.path.join(save_loc, "model_checkpoint.pth"))
+            checkpoint_io.load_unsharded_model(model, os.path.join(save_loc, "model_checkpoint.pt"))
             if 'load_optimizer' in conf['trainer'] and conf['trainer']['load_optimizer']:
-                checkpoint_io.load_unsharded_optimizer(optimizer, os.path.join(save_loc, "optimizer_checkpoint.pth"))
+                checkpoint_io.load_unsharded_optimizer(optimizer, os.path.join(save_loc, "optimizer_checkpoint.pt"))
             # wait for all workers to get the model loaded
             torch.distributed.barrier()
 
@@ -299,12 +299,12 @@ def main(rank, world_size, conf, trial=False):
     num_params = sum(p.numel() for p in vae.parameters())
     if rank == 0:
         logging.info(f"Number of parameters in the model: {num_params}")
-    #summary(vae, input_size=(channels, height, width))
+    # summary(vae, input_size=(channels, height, width))
 
     # have to send the module to the correct device first
 
     vae.to(device)
-    #vae = torch.compile(vae)
+    # vae = torch.compile(vae)
 
     # Wrap in DDP or FSDP module, or none
 

@@ -442,25 +442,33 @@ class Trainer:
                     logging.info(f"Saving FSDP model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
 
                     # Initialize the checkpoint I/O handler
+
                     checkpoint_io = TorchFSDPCheckpointIO()
 
                     # Save model and optimizer checkpoints
+
                     checkpoint_io.save_unsharded_model(
                         self.model,
-                        os.path.join(save_loc, "model_checkpoint.pth"),
+                        os.path.join(save_loc, "model_checkpoint.pt"),
                         gather_dtensor=True,
-                        use_safetensors=False
+                        use_safetensors=False,
+                        rank=self.rank
                     )
                     checkpoint_io.save_unsharded_optimizer(
                         optimizer,
-                        os.path.join(save_loc, "optimizer_checkpoint.pth"),
-                        gather_dtensor=True
+                        os.path.join(save_loc, "optimizer_checkpoint.pt"),
+                        gather_dtensor=True,
+                        rank=self.rank
                     )
+
+                    # Still need to save the scheduler and scaler states, just in another file for FSDP
+
                     state_dict = {
                         "epoch": epoch,
                         'scheduler_state_dict': scheduler.state_dict() if conf["trainer"]["use_scheduler"] else None,
                         'scaler_state_dict': scaler.state_dict()
                     }
+
                     torch.save(state_dict, os.path.join(save_loc, "checkpoint.pt"))
 
                 # This needs updated!

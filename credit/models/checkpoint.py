@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 import torch
 import torch.nn as nn
 
@@ -8,6 +7,7 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp import StateDictType
 
 from torch.optim import Optimizer
+from pathlib import Path
 from typing import Union
 
 from torch import Tensor
@@ -137,7 +137,7 @@ class TorchFSDPCheckpointIO:
         sharded_osd = FSDP.scatter_full_optim_state_dict(checkpoint, fsdp_model)
         optimizer.load_state_dict(sharded_osd)
 
-    def save_unsharded_model(self, model, checkpoint, gather_dtensor, use_safetensors):
+    def save_unsharded_model(self, model, checkpoint, gather_dtensor, use_safetensors, rank):
         """
         Save model to checkpoint but only on master process.
         """
@@ -145,15 +145,17 @@ class TorchFSDPCheckpointIO:
         cfg = FullStateDictConfig(offload_to_cpu=True, rank0_only=True)
         with FSDP.state_dict_type(model, StateDictType.FULL_STATE_DICT, cfg):
             full_model_state = model.state_dict()
-        save_state_dict(full_model_state, checkpoint_file_path=checkpoint, use_safetensors=use_safetensors)
+        if rank == 0:
+            save_state_dict(full_model_state, checkpoint_file_path=checkpoint, use_safetensors=use_safetensors)
 
-    def save_unsharded_optimizer(self, optimizer, checkpoint, gather_dtensor):
+    def save_unsharded_optimizer(self, optimizer, checkpoint, gather_dtensor, rank):
         """
         Save optimizer to checkpoint but only on master process.
         """
         fsdp_model = optimizer.unwrap_model()
         full_optimizer_state = FSDP.full_optim_state_dict(fsdp_model, optim=optimizer, rank0_only=True)
-        save_state_dict(full_optimizer_state, checkpoint_file_path=checkpoint, use_safetensors=False)
+        if rank == 0:
+            save_state_dict(full_optimizer_state, checkpoint_file_path=checkpoint, use_safetensors=False)
 
 
 class ModelWrapper(nn.Module):
@@ -188,7 +190,7 @@ class TorchFSDPModel(ModelWrapper):
     def unwrap(self):
         return self.module
 
-    def concat_and_reshape(self, x1, x2): # to be removed when data is updated
+    def concat_and_reshape(self, x1, x2):  # to be removed when data is updated
         x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
         x_concat = torch.cat((x1, x2), dim=2)
         return x_concat.permute(0, 2, 1, 3, 4)
