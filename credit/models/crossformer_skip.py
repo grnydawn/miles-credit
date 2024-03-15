@@ -464,11 +464,10 @@ class CrossFormer(nn.Module):
     @classmethod
     def load_model(cls, conf):
         save_loc = conf['save_loc']
-
         if conf["trainer"]["mode"] == "fsdp":
-            ckpt = os.path.join(f"{save_loc}", "model_checkpoint.pth")
+            ckpt = os.path.expandvars(os.path.join(f"{save_loc}", "model_checkpoint.pth"))
         else:
-            ckpt = os.path.join(f"{save_loc}", "checkpoint.pt")
+            ckpt = os.path.expandvars(os.path.join(f"{save_loc}", "checkpoint.pt"))
 
         if not os.path.isfile(ckpt):
             raise ValueError(

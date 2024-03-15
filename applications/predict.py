@@ -74,10 +74,6 @@ def setup(rank, world_size, mode):
     logging.info(f"Running {mode.upper()} on rank {rank} with world_size {world_size}.")
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
-channels = 4
-levels = 15
-surface_channels = 7
-
 def split_and_reshape(tensor, conf):
     # return x, surf for B, c, lat, lon output 
     levels = conf['model']['levels']
@@ -89,7 +85,7 @@ def split_and_reshape(tensor, conf):
     tensor1 = tensor1.view(tensor1.shape[0], channels, levels, tensor1.shape[-2], tensor1.shape[-1])
     return tensor1, tensor2
 
-def predict(rank, world_size, conf):
+def predict(rank, world_size, conf, pool):
 
     if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
         setup(rank, world_size, conf["trainer"]["mode"])
@@ -152,20 +148,17 @@ def predict(rank, world_size, conf):
     metrics = LatWeightedMetrics(conf)
     metrics_results = defaultdict(list)
     loss_fn = VariableTotalLoss2D(conf, validation=True)
-
-    # create save directory for numpy arrays
-    save_location = os.path.join(os.path.expandvars(conf['save_loc']), "forecasts")
-    os.makedirs(save_location, exist_ok=True)
-
+    
+    latds = xr.open_dataset(conf["loss"]["latitude_weights"])
     # Rollout
     with torch.no_grad():
 
         forecast_count = 0
-        forecast_datetimes = []
-        pred_files, true_files = [], []
+        x_dataArrs, surf_dataArrs = [], []
+        pool_jobs = []
+        sigma_levels = conf['visualization']['sigma_level_visualize']['visualize_levels']
         
         y_pred = None
-        preds = []
         for batch in data_loader:
             date_time = batch["datetime"].item()
             forecast_hour = batch["forecast_hour"].item()
@@ -176,6 +169,11 @@ def predict(rank, world_size, conf):
                     batch["x"],
                     batch["x_surf"]
                 ).to(device)
+
+                # setup save directory for images
+                init_time = datetime.datetime.utcfromtimestamp(date_time).strftime('%Y-%m-%dT%HZ')
+                img_save_loc = os.path.join(os.path.expandvars(conf["save_loc"]), f'forecasts/images_{init_time}')
+                os.makedirs(img_save_loc, exist_ok=True)
             
             y = model.concat_and_reshape(
                 batch["y"],
@@ -206,16 +204,23 @@ def predict(rank, world_size, conf):
             metrics_results["forecast_hour"].append(forecast_hour)
             metrics_results["datetime"].append(date_time)
             
-            preds.append(y_pred)
             utc_datetime = datetime.datetime.utcfromtimestamp(date_time)
-            forecast_datetimes.append(utc_datetime)
-            
             print_str = f"Forecast: {forecast_count} "
             print_str += f"Date: {utc_datetime.strftime('%Y-%m-%d %H:%M:%S')} "
             print_str += f"Hour: {batch['forecast_hour'].item()} "
             print_str += f"MAE: {mae.item()} "
             print_str += f"ACC: {metrics_dict['acc']}"
             print(print_str)
+
+            da_x, da_surf = make_xarray(y_pred, utc_datetime, latds.latitude.values, latds.longitude.values, conf)         
+            x_dataArrs.append(da_x)
+            surf_dataArrs.append(da_surf)
+
+            # submit jobs to pool
+            f = partial(draw_sigma_level, conf=conf, save_location=img_save_loc)
+            da_x_rmved_t = da_x.isel(datetime=0)
+            job_result = pool.map_async(f, [da_x_rmved_t.sel(level=lvl) for lvl in sigma_levels])
+            pool_jobs.append(job_result)
             
             # Explicitly release GPU memory
             torch.cuda.empty_cache()
@@ -224,40 +229,48 @@ def predict(rank, world_size, conf):
             if batch['stop_forecast'][0]:
                 break
 
-    x_surf_tensor_pairs = [split_and_reshape(p, conf) for p in preds]
-    catted_x = torch.cat([p[0] for p in x_surf_tensor_pairs], dim=0)
-    catted_surf = torch.cat([p[1] for p in x_surf_tensor_pairs], dim=0)
-    latds = xr.open_dataset(conf["loss"]["latitude_weights"])
+    return x_dataArrs, surf_dataArrs, pool_jobs, img_save_loc
 
-    da_x = xr.DataArray(catted_x, 
+def make_xarray(pred, forecast_datetime, lat, lon, conf):
+    x, surf = split_and_reshape(pred, conf)
+    da_x = xr.DataArray(x, 
                     dims=['datetime', 'var', 'level', 'lat', 'lon'],
                     coords=dict(
                         var = conf['data']['variables'],
-                        datetime = forecast_datetimes,
+                        datetime = [forecast_datetime],
                         level = range(conf['model']['levels']),
-                        lat = latds.latitude.to_numpy(),
-                        lon = latds.longitude.to_numpy())
+                        lat = lat,
+                        lon = lon)
                     )
-    da_surf = xr.DataArray(catted_surf, 
+    da_surf = xr.DataArray(surf, 
                     dims=['datetime', 'var', 'lat', 'lon'],
                     coords=dict(
                         var = conf['data']['surface_variables'],
-                        datetime = forecast_datetimes,
-                        lat = latds.latitude.to_numpy(),
-                        lon = latds.longitude.to_numpy())
+                        datetime = [forecast_datetime],
+                        lat = lat,
+                        lon = lon)
                     )
-    init_datetime_str = forecast_datetimes[0].strftime('%Y-%m-%d_%H:%M:%S')
+    return da_x, da_surf
+
+def save_netcdf(x_dataArrs, surf_dataArrs, conf):
+    da_x = xr.concat(x_dataArrs, dim='datetime')
+    da_surf = xr.concat(surf_dataArrs, dim='datetime')
+
+    init_datetime_str = np.datetime_as_string(da_x.datetime[0], unit='h', timezone='UTC')
     
+    # create save directory for xarrays
+    save_location = os.path.join(os.path.expandvars(conf['save_loc']), "forecasts")
+    os.makedirs(save_location, exist_ok=True)
+
     x_save_loc = os.path.join(save_location, f'pred_x_{init_datetime_str}.nc')
     surf_save_loc = os.path.join(save_location, f'pred_surf_{init_datetime_str}.nc')
     da_x.to_netcdf(path=x_save_loc)
     da_surf.to_netcdf(path=surf_save_loc)
-    print('wrote .nc files for column and surface vars\n{x_save_loc}\n{surf_save_loc}')
+    print(f'wrote .nc files for column and surface vars:\n{x_save_loc}\n{surf_save_loc}')
     
-    return x_save_loc, surf_save_loc
+    return x_save_loc, surf_save_loc, 
 
-
-def make_images(x_save_loc, surf_save_loc, conf):
+def make_images_from_xarray(x_save_loc, surf_save_loc, conf):
     da_x = xr.load_dataarray(x_save_loc)
     da_surf = xr.load_dataarray(surf_save_loc)
     
@@ -272,12 +285,10 @@ def make_images(x_save_loc, surf_save_loc, conf):
     # todo: parallelize over times
     for level in sigma_levels:
         datetimes = da_x.datetime.to_numpy()
-        for dt in datetimes:
-        #with Pool(processes=8) as pool:
-            #f = partial(draw_sigma_level, conf=conf, save_location=save_loc)
+        with Pool(processes=8) as pool:
+            f = partial(draw_sigma_level, conf=conf, save_location=save_loc)
             da_level = da_x.sel(level=level)
-            draw_sigma_level(da_level.sel(datetime=dt), conf, save_loc)
-        #pool.map(f, [da_level.sel(datetime=dt) for dt in datetimes])
+            pool.map(f, [da_level.sel(datetime=dt) for dt in datetimes])
 
     return save_loc
 
@@ -410,8 +421,11 @@ if __name__ == "__main__":
 
     x_save_loc = conf['predict']['x_save_loc']
     surf_save_loc = conf['predict']['surf_save_loc']
+
+    # if xarray already exists, just make images and movies
     if x_save_loc and surf_save_loc:
-        dir = make_images(x_save_loc, surf_save_loc, conf)
+        print(f'making image from xarray files:\n{x_save_loc}\nsurf_save_loc\n')
+        dir = make_images_from_xarray(x_save_loc, surf_save_loc, conf)
         #make_movie(dir, conf)
         sys.exit()
 
@@ -437,12 +451,27 @@ if __name__ == "__main__":
 
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
-
-    if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
-        x_save_loc, surf_save_loc = predict(int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf)
-    else:
-        x_save_loc, surf_save_loc = predict(0, 1, conf)
     
-    # always make images and movies at same time
-    dir = make_images(x_save_loc, surf_save_loc, conf)
-    #make_movie(dir, conf)
+    with Pool(processes=4) as pool:
+        if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
+            x_dataArrs, surf_dataArrs, pool_jobs, img_save_loc = predict(int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf, pool)
+        else:
+            x_dataArrs, surf_dataArrs, pool_jobs, img_save_loc = predict(0, 1, conf, pool)
+        # save out to file
+        x_save_loc, surf_save_loc = save_netcdf(x_dataArrs, surf_dataArrs, conf)
+        
+        print('waiting for all image files to write before making movies')
+        print(f'num pool jobs: {len(pool_jobs)}')
+
+        # now check if everything was successful
+        try:
+            print("\n filepaths written")
+            print([res.get() for res in pool_jobs])
+        except:
+            print("\n errors:")
+            print([res._value for res in pool_jobs])
+            raise
+                
+
+    #write make_movie to use directory as arg so its reuseable
+    #make_movie(img_save_loc, conf)

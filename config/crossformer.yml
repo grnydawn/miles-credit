@@ -91,7 +91,7 @@ predict:
         ["1989-12-31 00:00:00", "1990-01-02 00:00:00"],
         ["2018-06-01 00:00:00", "2018-06-07 00:00:00"]
     ]
-    x_save_loc: None
+    x_save_loc: None # leave empty if no file exists
     surf_save_loc: None
 
 visualization:

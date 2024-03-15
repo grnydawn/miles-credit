@@ -336,7 +336,7 @@ def draw_sigma_level(pred, conf=None, save_location=None):
         ## variable range
         var_lim = var_range[i_var]
         if var_lim == 'auto':
-            var_lim = get_variable_range(pred_draw.to_numpy())
+            var_lim = get_variable_range(pred_draw.values)
 
         ## colorbar settings
         cbar_extend = get_colormap_extend(var_lim)
@@ -356,12 +356,12 @@ def draw_sigma_level(pred, conf=None, save_location=None):
         #todo: incorporate step into title
         ax.set_title(f'{var_name}, level {level_num}\ntime: {dt_str}', fontsize=14)
 
-    save_name = f'level{level_num}_datetime{dt_str}.png'
+    save_name = f'sigma_level{level_num}_{dt_str}.png'
     filename = join(save_location, save_name)
     plt.savefig(filename, **save_options)
     plt.close()
-    filenames.append(filename)
-    return filenames 
+    print(f'wrote {filename}')
+    return filename 
 
 
 def draw_diagnostics(data, conf=None, times=None, forecast_count=None, save_location=None):
@@ -375,7 +375,6 @@ def draw_diagnostics(data, conf=None, times=None, forecast_count=None, save_loca
     
     ## variable names
     var_names = conf['visualization']['diagnostic_variable_visualize']['variable_names']
-    title_string = '{}\ntime: {}; step: {}' #.format(var_name, datetime, step)
     
     ## indices of diagnostic variables
     var_inds = conf['visualization']['diagnostic_variable_visualize']['variable_indices']

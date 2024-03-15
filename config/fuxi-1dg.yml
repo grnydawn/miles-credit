@@ -1,10 +1,10 @@
-save_loc: "/glade/work/$USER/repos/global/miles-credit/results/fuxi/"
+save_loc: "/glade/work/$USER/repos/global/miles-credit/results/fuxiPSDbatch/"
 seed: 1000
 
 data:
     variables: ['U','V','T','Q']
     surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
-    save_loc: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
+    save_loc: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/ONE*.zarr'
     mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
     std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
     history_len: 2 
@@ -40,20 +40,20 @@ trainer:
   
 model:
     type: "fuxi"
-    image_height: 640    # Image height (default: 640)
+    image_height: 192    # Image height (default: 640)
     patch_height: 16     # Patch height (default: 16)
-    image_width: 1280    # Image width (default: 1280)
+    image_width: 288    # Image width (default: 1280)
     patch_width: 16      # Patch width (default: 16)
     levels: 15           # Number of levels (default: 15)
     frames: 2            # Number of frames (default: 2)
     frame_patch_size: 2  # Frame patch size (default: 2)
-    dim: 1024            # Dimension (default: 1536)
+    dim: 512            # Dimension (default: 1536)
     num_groups: 32       # Number of groups (default: 32)
     channels: 4          # Channels (default: 4)
     surface_channels: 7  # Surface channels (default: 7)
     num_heads: 8         # Number of heads (default: 8)
     window_size: 7       # Window size (default: 7)
-    depth: 4            # Depth of the swin transformer (default: 48)
+    depth: 4             # Depth of the swin transformer (default: 48)
     
 loss: 
     training_loss: "mse"
@@ -61,9 +61,9 @@ loss:
     use_power_loss: True # use either power or spectral loss
     use_spectral_loss: False
     spectral_wavenum_init: 20
-    spectral_lambda_reg: 0.1 # power loss is order of 1e1 (usually between 1-10)
+    spectral_lambda_reg: 0.1
     use_latitude_weights: True
-    latitude_weights: "/glade/u/home/wchapman/MLWPS/DataLoader/static_variables_ERA5_zhght.nc"
+    latitude_weights: "/glade/u/home/wchapman/MLWPS/DataLoader/static_variables_ERA5_zhght_onedeg.nc"
     use_variable_weights: False
     variable_weights:
         U: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
@@ -80,16 +80,16 @@ loss:
 
 predict:
     forecasts: [
-        ["1989-12-31 00:00:00", "1990-01-02 00:00:00"],
-        ["2018-06-01 00:00:00", "2018-06-07 00:00:00"]
+        #["1989-12-31 00:00:00", "1990-01-02 00:00:00"],
+        ["2018-06-01 00:00:00", "2018-06-02 00:00:00"]
     ]
-    x_save_loc: # leave empty if no file exists
-    surf_save_loc: 
+    x_save_loc: #'/glade/u/home/dkimpara/miles-credit/results/fuxiPSDbatch/forecasts/pred_x_2018-06-01T00Z.nc'
+    surf_save_loc: #'/glade/u/home/dkimpara/miles-credit/results/fuxiPSDbatch/forecasts/pred_surf_2018-06-01T00Z.nc'
 
 visualization:
     sigma_level_visualize:
         variables: ['U','V','T','Q']  # the variable indices in **[data][variables][...]**
-        visualize_levels: [4, 8, 12]     # sigma levels (by their indices) to visualize 
+        visualize_levels: [1]     # sigma levels (by their indices) to visualize 
         variable_names: ['U wind [m/s]', # the name of each variable
                          'V wind [m/s]', # must be consistent with **variable_indices**
                          'Air temperature [$^\circ$K]',
@@ -99,7 +99,7 @@ visualization:
         colormaps: ['Spectral_r', 'Spectral_r', 'viridis_plasma', 'YlGn']
         file_name_prefix: 'global_sigma'
     diagnostic_variable_visualize:
-        variable_indices: [62, 63, 64, 65, 66]
+        variables: ['V500','U500','T500','Z500','Q500']
         variable_names: ['500 hPa V Wind [m/s]', 
                          '500 hPa U Wind [m/s]',
                          '500 hPa Air temperature [$^\circ$K]',
@@ -110,7 +110,7 @@ visualization:
         colormaps: ['Spectral_r', 'Spectral_r', 'viridis_plasma', 'Spectral_r', 'YlGn']
         file_name_prefix: 'global_diagnostics'
     surface_visualize:
-        variables: ['SP', 't2m']
+        variables: ['SP','t2m']
         variable_names: ['Surface Pressure [hPa]', 
                          '2-m Air Temperature [$^\circ$K]']
         variable_factors: [0.01, 1]
@@ -125,26 +125,26 @@ visualization:
                    'transparent':False,
                    'format':'png'}
 
-pbs: #derecho
-    conda: "holodec"
-    project: "NAML0001"
-    job_name: "fuxi"
-    walltime: "24:00:00"
-    nodes: 8
-    ncpus: 64
-    ngpus: 4
-    mem: '480GB'
-    queue: 'preempt'
+
+#pbs: #derecho
+#    conda: "holodec"
+#    project: "NAML0001"
+#    job_name: "fuxi-1deg"
+#    walltime: "24:00:00"
+#    nodes: 8
+#    ncpus: 64
+#    ngpus: 4
+#    mem: '480GB'
+#    queue: 'preempt'
     
-# pbs: # casper
-#     conda: "/glade/work/schreck/miniconda3/envs/evidential"
-#     job_name: 'latlon'
-#     nodes: 1
-#     ncpus: 8
-#     ngpus: 1
-#     mem: '128GB'
-#     walltime: '12:00:00'
-#     gpu_type: 'a100'
-#     cpu_type: 'milan'
-#     project: 'NAML0001'
-#     queue: 'casper'
+pbs: # casper
+    conda: "/glade/work/dkimpara/conda-envs/credit-cuda"
+    job_name: 'fuxiPSD'
+    nodes: 1
+    ncpus: 8
+    ngpus: 1
+    mem: '64GB'
+    walltime: '15:00:00'
+    gpu_type: 'v100'
+    project: 'NAML0001'
+    queue: 'casper'
