@@ -342,7 +342,92 @@ def draw_variables(pred, step, visualization_key, conf=None, save_location=None)
         
         # pcolormesh
         cbar = ax.pcolormesh(pred_draw.lon, pred_draw.lat, pred_draw, 
+<<<<<<< HEAD
                              vmin=var_lim[0], vmax=var_lim[1], 
+=======
+                                vmin=var_lim[0], vmax=var_lim[1], 
+                                cmap=colormap, transform=ccrs.PlateCarree())
+        # colorbar operations
+        CBar = colorbar_opt(fig, ax, cbar, cbar_extend)
+        
+        # title
+        var_name = var_names[i_var]
+        level_num = pred.level.values 
+        dt_str = np.datetime_as_string(pred.datetime.values, unit='h', timezone='UTC')# convert to str format
+        #todo: incorporate step into title
+        ax.set_title(f'{var_name}, level {level_num}\ntime: {dt_str}', fontsize=14)
+
+    save_name = f'sigma_level{level_num}_{dt_str}.png'
+    filename = join(save_location, save_name)
+    plt.savefig(filename, **save_options)
+    plt.close()
+    print(f'wrote {filename}')
+    return filename 
+
+
+def draw_diagnostics(data, conf=None, times=None, forecast_count=None, save_location=None):
+    '''
+    This function produces figures for diagnostics.
+    '''
+    # ------------------------------ #
+    # visualization settings
+    ## colormap
+    colormaps = get_colormap(conf['visualization']['diagnostic_variable_visualize']['colormaps'])
+    
+    ## variable names
+    var_names = conf['visualization']['diagnostic_variable_visualize']['variable_names']
+    
+    ## indices of diagnostic variables
+    var_inds = conf['visualization']['diagnostic_variable_visualize']['variable_indices']
+
+    ## variable range
+    var_range = conf['visualization']['diagnostic_variable_visualize']['variable_range']
+    
+    ## variable factors
+    var_factors = conf['visualization']['diagnostic_variable_visualize']['variable_factors']
+    
+    ## number of variables to plot
+    var_num = int(len(var_inds))
+    
+    ## output figure options and names
+    save_options = conf['visualization']['save_options']
+    save_name_head = conf['visualization']['diagnostic_variable_visualize']['file_name_prefix']
+    
+    
+    # ------------------------------ #
+    # get forecast step and file name
+    k, fn = data
+    t = times[k]
+    pred = np.load(fn)
+
+    # ------------------------------ #
+    # get lat/lon grids
+    lat_lon_weights = xr.open_dataset(conf['loss']['latitude_weights'])
+    longitude = lat_lon_weights["longitude"]
+    latitude = lat_lon_weights["latitude"]
+    
+    # ------------------------------ #
+    # Figure
+    fig, AX = figure_panel_planner(var_num, get_projection(conf['visualization']['map_projection']))
+    
+    for i_var, ind_var in enumerate(var_inds):
+        # get the current axis
+        ax = AX[i_var]
+        pred_draw = pred[ind_var]
+        pred_draw = pred_draw * var_factors[i_var]
+        
+        ## variable range
+        var_lim = var_range[i_var]
+        if var_lim == 'auto':
+            var_lim = get_variable_range(pred_draw)
+
+        ## colorbar settings
+        cbar_extend = get_colormap_extend(var_lim)
+        colormap = colormaps[i_var]
+    
+        # pcolormesh
+        cbar = ax.pcolormesh(longitude, latitude, pred_draw, vmin=var_lim[0], vmax=var_lim[1], 
+>>>>>>> 81d1a57 (asynchronous image generation in predict.py inference loop. added config options for viz, including to generate images from saved xarray)
                              cmap=colormap, transform=ccrs.PlateCarree())
         # colorbar operations
         CBar = colorbar_opt(fig, ax, cbar, cbar_extend)

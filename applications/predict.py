@@ -244,11 +244,8 @@ def predict(rank, world_size, conf, pool):
     metrics = LatWeightedMetrics(conf)
     metrics_results = defaultdict(list)
     loss_fn = VariableTotalLoss2D(conf, validation=True)
-
-    # create save directory for numpy arrays
-    save_location = os.path.join(os.path.expandvars(conf['save_loc']), "forecasts")
-    os.makedirs(save_location, exist_ok=True)
-
+    
+    latds = xr.open_dataset(conf["loss"]["latitude_weights"])
     # Rollout
     with torch.no_grad():
         # forecast count = a constant for each run
@@ -445,8 +442,11 @@ if __name__ == "__main__":
 
     x_save_loc = conf['predict']['x_save_loc']
     surf_save_loc = conf['predict']['surf_save_loc']
+
+    # if xarray already exists, just make images and movies
     if x_save_loc and surf_save_loc:
-        dir = make_images(x_save_loc, surf_save_loc, conf)
+        print(f'making image from xarray files:\n{x_save_loc}\nsurf_save_loc\n')
+        dir = make_images_from_xarray(x_save_loc, surf_save_loc, conf)
         #make_movie(dir, conf)
         sys.exit()
 
