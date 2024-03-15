@@ -1,3 +1,4 @@
+import copy
 import logging
 from importlib.metadata import version
 
@@ -25,6 +26,7 @@ model_types = {
 
 
 def load_model(conf, load_weights=False):
+    conf = copy.deepcopy(conf)
     model_conf = conf["model"]
 
     if "type" not in model_conf:

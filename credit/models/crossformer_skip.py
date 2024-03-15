@@ -298,13 +298,15 @@ class CrossFormer(nn.Module):
         levels=15,
         dim=(64, 128, 256, 512),
         depth=(2, 2, 8, 2),
+        dim_head=32,
         global_window_size=(5, 5, 2, 1),
         local_window_size=10,
         cross_embed_kernel_sizes=((4, 8, 16, 32), (2, 4), (2, 4), (2, 4)),
         cross_embed_strides=(4, 2, 2, 2),
         attn_dropout=0.,
         ff_dropout=0.,
-        pad=0,
+        pad_lon=0,
+        pad_lat=0,
         use_spectral_norm=False
     ):
         super().__init__()
@@ -322,7 +324,8 @@ class CrossFormer(nn.Module):
         self.channels = channels
         self.surface_channels = surface_channels
         self.levels = levels
-        self.pad = pad
+        self.pad_lon = pad_lon
+        self.pad_lat = pad_lat
         self.use_spectral_norm = use_spectral_norm
         input_channels = channels * levels + surface_channels
 
@@ -354,7 +357,7 @@ class CrossFormer(nn.Module):
         for (dim_in, dim_out), layers, global_wsz, local_wsz, cel_kernel_sizes, cel_stride in zip(dim_in_and_out, depth, global_window_size, local_window_size, cross_embed_kernel_sizes, cross_embed_strides):
             self.layers.append(nn.ModuleList([
                 CrossEmbedLayer(dim_in, dim_out, cel_kernel_sizes, stride=cel_stride),
-                Transformer(dim_out, local_window_size=local_wsz, global_window_size=global_wsz, depth=layers, attn_dropout=attn_dropout, ff_dropout=ff_dropout)
+                Transformer(dim_out, local_window_size=local_wsz, global_window_size=global_wsz, depth=layers, dim_head=dim_head, attn_dropout=attn_dropout, ff_dropout=ff_dropout)
             ]))
 
         self.cube_embedding = CubeEmbedding(
@@ -373,13 +376,27 @@ class CrossFormer(nn.Module):
             logger.info("Adding spectral norm to all conv and linear layers")
             apply_spectral_norm(self)
 
-        if self.pad > 0:
-            logger.info(f"Padding each longitudinal boundary with {self.pad} pixels from the other side")
+        if self.pad_lon > 0:
+            logger.info(f"Padding each longitudinal boundary with {self.pad_lon} pixels from the other side")
+        if self.pad_lat > 0:
+            logger.info(f"Padding each pole using a reflection with {self.pad_lat} pixels")
 
     def forward(self, x):
 
-        if self.pad > 0:
-            x = circular_pad1d(x, pad=self.pad)
+        if self.pad_lon > 0:
+            x = circular_pad1d(x, pad=self.pad_lon)
+
+        if self.pad_lat > 0:
+            x_shape = x.shape
+
+            # Reshape the tensor to (B, C*2, lat, lon) using the values from x_shape
+            x = torch.reshape(x, (x_shape[0], x_shape[1] * x_shape[2], x_shape[3], x_shape[4]))
+
+            # Pad the tensor with reflect mode
+            x = F.pad(x, (0, 0, self.pad_lat, self.pad_lat), mode='reflect')
+
+            # Reshape the tensor back to (B, C, 2, new lat, lon) using the values from x_shape
+            x = torch.reshape(x, (x_shape[0], x_shape[1], x_shape[2], x_shape[3] + 2 * self.pad_lat, x_shape[4]))
 
         if self.patch_width > 1 and self.patch_height > 1:
             x = self.cube_embedding(x)
@@ -400,15 +417,19 @@ class CrossFormer(nn.Module):
         x = torch.cat([x, encodings[0]], dim=1)
         x = self.up_block4(x)
 
-        if self.pad > 0:
+        if self.pad_lon > 0:
             # calculate the average at the boundaries
-            avg = (x[..., :self.pad] + x[..., -self.pad:]) / 2
+            avg = (x[..., :self.pad_lon] + x[..., -self.pad_lon:]) / 2
             # replace the boundaries of x_padded with the average
-            x[..., :self.pad] = avg[..., :self.pad]
-            x[..., -self.pad:] = avg[..., -self.pad:]
+            x[..., :self.pad_lon] = avg[..., :self.pad_lon]
+            x[..., -self.pad_lon:] = avg[..., -self.pad_lon:]
 
             # slice to original size
-            x = x[..., self.pad:-self.pad]
+            x = x[..., self.pad_lon:-self.pad_lon]
+
+        if self.pad_lat > 0:
+            # Slice to original size
+            x = x[..., self.pad_lat:-self.pad_lat, :]
 
         x = F.interpolate(x, size=(self.image_height, self.image_width), mode="bilinear")
 
@@ -443,7 +464,11 @@ class CrossFormer(nn.Module):
     @classmethod
     def load_model(cls, conf):
         save_loc = conf['save_loc']
-        ckpt = os.path.join(f"{save_loc}", "checkpoint.pt")
+
+        if conf["trainer"]["mode"] == "fsdp":
+            ckpt = os.path.join(f"{save_loc}", "model_checkpoint.pth")
+        else:
+            ckpt = os.path.join(f"{save_loc}", "checkpoint.pt")
 
         if not os.path.isfile(ckpt):
             raise ValueError(
@@ -461,21 +486,9 @@ class CrossFormer(nn.Module):
 
         model_class = cls(**conf["model"])
 
-        if conf["trainer"]["mode"] == "fsdp":
-            FSDP.set_state_dict_type(
-                model_class,
-                StateDictType.SHARDED_STATE_DICT,
-            )
-            state_dict = {
-                "model_state_dict": model_class.state_dict(),
-            }
-            DCP.load_state_dict(
-                state_dict=state_dict,
-                storage_reader=DCP.FileSystemReader(os.path.join(save_loc, "checkpoint")),
-            )
-            model_class.load_state_dict(state_dict["model_state_dict"])
-        else:
-            model_class.load_state_dict(checkpoint["model_state_dict"])
+        model_class.load_state_dict(
+            checkpoint if conf["trainer"]["mode"] == "fsdp" else checkpoint["model_state_dict"]
+        )
 
         return model_class
 
@@ -488,8 +501,44 @@ class CrossFormer(nn.Module):
 
 
 if __name__ == "__main__":
-    image_height = 640  # 640
-    image_width = 1280  # 1280
+    # image_height = 192  # 640, 192
+    # image_width = 288  # 1280, 288
+    # levels = 15
+    # frames = 2
+    # channels = 4
+    # surface_channels = 7
+    # patch_height = 1
+    # patch_width = 1
+    # frame_patch_size = 2
+    # pad_lon=48
+    # pad_lat=48
+
+    # input_tensor = torch.randn(1, channels * levels + surface_channels, frames, image_height, image_width).to("cuda")
+
+    # model = CrossFormer(
+    #     image_height=image_height,
+    #     patch_height=patch_height,
+    #     image_width=image_width,
+    #     patch_width=patch_width,
+    #     frames=frames,
+    #     frame_patch_size=frame_patch_size,
+    #     channels=channels,
+    #     surface_channels=surface_channels,
+    #     levels=levels,
+    #     dim=(64, 128, 256, 512),
+    #     depth=(2, 2, 8, 2),
+    #     global_window_size=(4, 4, 2, 1),
+    #     local_window_size=3,
+    #     cross_embed_kernel_sizes=((4, 8, 16, 32), (2, 4), (2, 4), (2, 4)),
+    #     cross_embed_strides=(2, 2, 2, 2),
+    #     attn_dropout=0.,
+    #     ff_dropout=0.,
+    #     pad_lon=pad_lon,
+    #     pad_lat=pad_lat
+    # ).to("cuda")
+
+    image_height = 640  # 640, 192
+    image_width = 1280  # 1280, 288
     levels = 15
     frames = 2
     channels = 4
@@ -497,6 +546,8 @@ if __name__ == "__main__":
     patch_height = 1
     patch_width = 1
     frame_patch_size = 2
+    pad_lon = 80
+    pad_lat = 80
 
     input_tensor = torch.randn(1, channels * levels + surface_channels, frames, image_height, image_width).to("cuda")
 
@@ -518,6 +569,8 @@ if __name__ == "__main__":
         cross_embed_strides=(2, 2, 2, 2),
         attn_dropout=0.,
         ff_dropout=0.,
+        pad_lon=pad_lon,
+        pad_lat=pad_lat
     ).to("cuda")
 
     num_params = sum(p.numel() for p in model.parameters())
