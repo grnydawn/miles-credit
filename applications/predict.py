@@ -57,6 +57,8 @@ from credit.pbs import launch_script, launch_script_mpi
 # try:
 #     from credit.visualization_tools import draw_variables
 # except:
+
+# use the local version for now
 from visualization_tools import draw_variables
     
 # import wandb

@@ -158,7 +158,7 @@ def figure_panel_planner(var_num, proj):
     elif var_num == 5 or var_num == 6:
         return cartopy_panel6(var_num, figsize=(13, 9.75), proj=proj)
     else:
-        print('Built-in visualization tools do cannot plot more than 6 variables at once.')
+        print('Built-in visualization tools cannot plot more than 6 variables at once.')
         raise
         
 def cartopy_single_panel(figsize=(13, 6.5), proj=ccrs.EckertIII()):
@@ -287,7 +287,7 @@ def colorbar_opt(fig, ax, cbar, cbar_extend):
 
 def draw_variables(pred, step, visualization_key, conf=None, save_location=None):
     '''
-    This function produces figures for sigma-level variables. 
+    This function produces figures for given variables. 
     '''
     # ------------------------------ #
     # visualization settings
@@ -371,142 +371,4 @@ def draw_variables(pred, step, visualization_key, conf=None, save_location=None)
     plt.close()
     print(f'wrote {filename}')
     return filename 
-
-
-# def draw_diagnostics(pred, step, conf=None, save_location=None):
-#     '''
-#     This function produces figures for diagnostics.
-#     '''
-#     # ------------------------------ #
-#     # visualization settings
-#     ## colormap
-#     colormaps = get_colormap(conf['visualization']['diagnostic_variable_visualize']['colormaps'])
-    
-#     ## variable names
-#     var_names = conf['visualization']['diagnostic_variable_visualize']['variable_names']
-
-#     ## variable keys from x-array
-#     vars = conf['visualization']['diagnostic_variable_visualize']['variable_keys']
-    
-#     ## variable range
-#     var_range = conf['visualization']['diagnostic_variable_visualize']['variable_range']
-    
-#     ## variable factors
-#     var_factors = conf['visualization']['diagnostic_variable_visualize']['variable_factors']
-    
-#     ## number of variables to plot
-#     var_num = int(len(vars))
-    
-#     ## output figure options and names
-#     save_options = conf['visualization']['save_options']
-#     save_name_head = conf['visualization']['diagnostic_variable_visualize']['file_name_prefix']
-    
-#     # ------------------------------ #
-#     # Figure
-#     fig, AX = figure_panel_planner(var_num, get_projection(conf['visualization']['map_projection']))
-    
-#     for i_var, var in enumerate(vars):
-#         # get the current axis
-#         ax = AX[i_var]
-        
-#         pred_draw = pred.sel(var=var) * var_factors[i_var]
-        
-#         ## variable range
-#         var_lim = var_range[i_var]
-#         if var_lim == 'auto':
-#             var_lim = get_variable_range(pred_draw.values)
-
-#         ## colorbar settings
-#         cbar_extend = get_colormap_extend(var_lim)
-#         colormap = colormaps[i_var]
-    
-#         # pcolormesh
-#         cbar = ax.pcolormesh(pred_draw.lon, pred_draw.lat, pred_draw, 
-#                              vmin=var_lim[0], vmax=var_lim[1], 
-#                              cmap=colormap, transform=ccrs.PlateCarree())
-    
-#         # colorbar operations
-#         CBar = colorbar_opt(fig, ax, cbar, cbar_extend)
-        
-#         # title
-#         var_name = var_names[i_var]
-#         dt_str = np.datetime_as_string(pred.datetime.values, unit='h', timezone='UTC')
-#         ax.set_title('{}\ntime: {}, step: {:03d}'.format(var_name, dt_str, step), fontsize=14)
-    
-#     save_name = '{}_{}.png'.format(save_name_head, dt_str)
-#     filename = join(save_location, save_name)
-    
-#     plt.savefig(filename, **save_options)
-#     plt.close()
-#     print(f'wrote {filename}')
-#     return filename
-
-
-# def draw_surface(pred, step, conf=None, save_location=None):
-#     '''
-#     This function produces figures for diagnostics.
-#     '''
-#     # ------------------------------ #
-#     # visualization settings
-#     ## colormap
-#     colormaps = get_colormap(conf['visualization']['surface_visualize']['colormaps'])
-    
-#     ## variable names
-#     var_names = conf['visualization']['surface_visualize']['variable_names']
-
-#     ## variable keys from x-array
-#     vars = conf['visualization']['surface_visualize']['variable_keys']
-    
-#     ## variable range
-#     var_range = conf['visualization']['surface_visualize']['variable_range']
-    
-#     ## variable factors
-#     var_factors = conf['visualization']['surface_visualize']['variable_factors']
-    
-#     ## number of variables to plot
-#     var_num = int(len(vars))
-    
-#     ## output figure options and names
-#     save_options = conf['visualization']['save_options']
-#     save_name_head = conf['visualization']['surface_visualize']['file_name_prefix']
-    
-#     # ------------------------------ #
-#     # Figure
-#     fig, AX = figure_panel_planner(var_num, get_projection(conf['visualization']['map_projection']))
-    
-#     for i_var, var in enumerate(vars):
-#         # get the current axis
-#         ax = AX[i_var]
-        
-#         pred_draw = pred.sel(var=var) * var_factors[i_var]
-        
-#         ## variable range
-#         var_lim = var_range[i_var]
-#         if var_lim == 'auto':
-#             var_lim = get_variable_range(pred_draw.values)
-
-#         ## colorbar settings
-#         cbar_extend = get_colormap_extend(var_lim)
-#         colormap = colormaps[i_var]
-    
-#         # pcolormesh
-#         cbar = ax.pcolormesh(pred_draw.lon, pred_draw.lat, pred_draw, 
-#                              vmin=var_lim[0], vmax=var_lim[1], 
-#                              cmap=colormap, transform=ccrs.PlateCarree())
-    
-#         # colorbar operations
-#         CBar = colorbar_opt(fig, ax, cbar, cbar_extend)
-        
-#         # title
-#         var_name = var_names[i_var]
-#         dt_str = np.datetime_as_string(pred.datetime.values, unit='h', timezone='UTC')
-#         ax.set_title('{}\ntime: {}, step: {:03d}'.format(var_name, dt_str, step), fontsize=14)
-    
-#     save_name = '{}_{}.png'.format(save_name_head, dt_str)
-#     filename = join(save_location, save_name)
-    
-#     plt.savefig(filename, **save_options)
-#     plt.close()
-#     print(f'wrote {filename}')
-#     return filename
 
