@@ -84,97 +84,100 @@ def split_and_reshape(tensor, conf):
     # get the number of levels
     levels = conf['model']['levels']
 
-    # get upper air variables
+    # get number of channels
     channels = len(conf['data']['variables'])
-
-    # get surface variables
-    surface_channels = len(conf['data']['surface_variables'])
+    single_level_channels = len(conf['data']['surface_variables'])
 
     # subset upper air variables
-    tensor1 = tensor[:, :int(channels * levels), :, :]
-    tensor1 = tensor1.view(tensor1.shape[0], channels, levels, tensor1.shape[-2], tensor1.shape[-1])
+    tensor_upper_air = tensor[:, :int(channels * levels), :, :]
+    
+    shape_upper_air = tensor_upper_air.shape
+    tensor_upper_air = tensor_upper_air.view(shape_upper_air[0], channels, levels, shape_upper_air[-2], shape_upper_air[-1])
 
     # subset surface variables
-    tensor2 = tensor[:, -int(surface_channels):, :, :]
+    tensor_single_level = tensor[:, -int(single_level_channels):, :, :]
     
     # return x, surf for B, c, lat, lon output 
-    return tensor1, tensor2
+    return tensor_upper_air, tensor_single_level
 
 def make_xarray(pred, forecast_datetime, lat, lon, conf):
 
     # subset upper air and surface variables
-    x, surf = split_and_reshape(pred, conf)
+    tensor_upper_air, tensor_single_level = split_and_reshape(pred, conf)
     
     # save upper air variables variables
-    da_x = xr.DataArray(x, dims=['datetime', 'var', 'level', 'lat', 'lon'],
-                        coords=dict(
-                            var = conf['data']['variables'],
-                            datetime = [forecast_datetime],
-                            level = range(conf['model']['levels']),
-                            lat = lat,
-                            lon = lon))
+    coords_info = dict(var=conf['data']['variables'],
+                       datetime=[forecast_datetime],
+                       level=range(conf['model']['levels']),
+                       lat=lat, lon=lon)
+    
+    darray_upper_air = xr.DataArray(tensor_upper_air, 
+                                    dims=['datetime', 'var', 'level', 'lat', 'lon'],
+                                    coords=coords_info)
     
     # save diagnostics and surface variables
-    da_surf = xr.DataArray(surf, dims=['datetime', 'var', 'lat', 'lon'],
-                           coords=dict(
-                               var = conf['data']['surface_variables'],
-                               datetime = [forecast_datetime],
-                               lat = lat,
-                               lon = lon))
+    coords_info = dict(var=conf['data']['surface_variables'],
+                       datetime=[forecast_datetime],
+                       lat=lat, lon=lon)
+    
+    darray_single_level = xr.DataArray(tensor_single_level,
+                                       dims=['datetime', 'var', 'lat', 'lon'],
+                                       coords=coords_info)
     
     # return x-arrays as outputs 
-    return da_x, da_surf
+    return darray_upper_air, darray_single_level
 
-def save_netcdf(x_dataArrs, surf_dataArrs, conf):
+def save_netcdf(list_darray_upper_air, list_darray_single_level, conf):
     '''
     Save netCDF files from x-array inputs
     '''
-    # get upper air variables from x-array
-    da_x = xr.concat(x_dataArrs, dim='datetime')
+    # concate full upper air variables from a list of x-arrays
+    darray_upper_air_merge = xr.concat(list_darray_upper_air, dim='datetime')
 
-    # get surface variables from x-array
-    da_surf = xr.concat(surf_dataArrs, dim='datetime')
+    # concate full single level variables from a list of x-arrays
+    darray_single_level_merge = xr.concat(list_darray_single_level, dim='datetime')
 
     # produce datetime string
-    init_datetime_str = np.datetime_as_string(da_x.datetime[0], unit='h', timezone='UTC')
+    init_datetime_str = np.datetime_as_string(darray_upper_air_merge.datetime[0], unit='h', timezone='UTC')
     
     # create save directory for xarrays
     save_location = os.path.join(os.path.expandvars(conf['save_loc']), "forecasts")
     os.makedirs(save_location, exist_ok=True)
 
     # create file name to save upper air variables
-    x_save_loc = os.path.join(save_location, f'pred_x_{init_datetime_str}.nc')
+    nc_filename_upper_air = os.path.join(save_location, f'pred_x_{init_datetime_str}.nc')
 
     # create file name to save surface variables
-    surf_save_loc = os.path.join(save_location, f'pred_surf_{init_datetime_str}.nc')
+    nc_filename_single_level = os.path.join(save_location, f'pred_surf_{init_datetime_str}.nc')
 
     # save x-arrays to  
-    da_x.to_netcdf(path=x_save_loc)
-    da_surf.to_netcdf(path=surf_save_loc)
+    darray_upper_air_merge.to_netcdf(path=nc_filename_upper_air)
+    darray_single_level_merge.to_netcdf(path=nc_filename_single_level)
 
     # print out the saved file names
-    print(f'wrote .nc files for upper air and surface vars:\n{x_save_loc}\n{surf_save_loc}')
+    print(f'wrote .nc files for upper air and surface vars:\n{nc_filename_upper_air}\n{nc_filename_single_level}')
 
     # return saved file names
-    return x_save_loc, surf_save_loc, 
+    return nc_filename_upper_air, nc_filename_single_level
 
-# # Debugging purposes only
-# def make_images_from_xarray(x_save_loc, surf_save_loc, conf):
+# # ------------------------------------------------------------------------------------------ #
+# # Debugging function
+# def make_images_from_xarray(nc_filename_upper_air, nc_filename_single_level, conf):
 #     '''
 #     Produce images from x-array inputs
 #     '''
 #     # import upper air variables
-#     da_x = xr.load_dataarray(x_save_loc)
+#     darray_upper_air = xr.load_dataarray(nc_filename_upper_air)
 
 #     # import surface variables
-#     da_surf = xr.load_dataarray(surf_save_loc)
+#     darray_single_level = xr.load_dataarray(nc_filename_single_level)
 
-#     # ------------------------------------------------------------------------------------------ #
+
 #     # Create directories to save images, overwrite files if already exists, 
 #     # filenames have uniquely id
     
 #     ## create image folder based on the first forecasted time 
-#     init_time = np.datetime_as_string(da_x.datetime[0], unit='h', timezone='UTC')
+#     init_time = np.datetime_as_string(darray_upper_air.datetime[0], unit='h', timezone='UTC')
 #     save_loc = os.path.join(os.path.expandvars(conf["save_loc"]), f'forecasts/images_{init_time}')
 #     os.makedirs(save_loc, exist_ok=True)
     
@@ -183,32 +186,49 @@ def save_netcdf(x_dataArrs, surf_dataArrs, conf):
     
 #     # todo: parallelize over times
 #     for level in sigma_levels:
-#         datetimes = da_x.datetime.to_numpy()
+#         datetimes = darray_upper_air.datetime.to_numpy()
 #         with Pool(processes=8) as pool:
 #             f = partial(draw_sigma_level, conf=conf, save_location=save_loc)
-#             da_level = da_x.sel(level=level)
+#             da_level = darray_upper_air.sel(level=level)
 #             pool.map(f, [da_level.sel(datetime=dt) for dt in datetimes])
 
 #     return save_loc
+# # ------------------------------------------------------------------------------------------ #
 
-def make_movie(filenames, conf, save_location): #level, datetime
-    '''
-    Make movies based on produced images
-    '''
-    # get the required model levels to plot
-    sigma_levels = conf['visualization']['sigma_level_visualize']['visualize_levels']
+# def make_movie(filenames, conf, save_location): #level, datetime
+#     '''
+#     Make movies based on produced images
+#     '''
+#     # get the required model levels to plot
+#     sigma_levels = conf['visualization']['sigma_level_visualize']['visualize_levels']
 
-    # produce videos on each required upper air level
-    for level_idx, sigma_level in enumerate(sigma_levels):
-        level_image_filenames = [filename_list[level_idx] for filename_list in filenames]
+#     # produce videos on each required upper air level
+#     for level_idx, sigma_level in enumerate(sigma_levels):
+#         level_image_filenames = [filename_list[level_idx] for filename_list in filenames]
 
-        ## send all png files to the gif maker 
-        gif_name = '{}_level{:02d}.gif'.format(gif_name_prefix, sigma_level)
-        command_str = f'convert -delay 20 -loop 0 {" ".join(level_image_filenames)} {save_location}/{gif_name}'
+#         ## send all png files to the gif maker 
+#         gif_name = '{}_level{:02d}.gif'.format(gif_name_prefix, sigma_level)
+#         command_str = f'convert -delay 20 -loop 0 {" ".join(level_image_filenames)} {save_location}/{gif_name}'
+#         out = subprocess.Popen(command_str, shell=True, 
+#                                 stdout=subprocess.PIPE, 
+#                                 stderr=subprocess.PIPE).communicate()
+#         print(out)
+
+
+def make_video(video_name_prefix, save_location, image_file_names, format='gif'):
+    output_name = '{}.{}'.format(video_name_prefix, format)
+    
+    ## send all png files to the gif maker
+    if format == 'gif':
+        command_str = f'convert -delay 20 -loop 0 {" ".join(image_file_names)} {save_location}/{output_name}'
         out = subprocess.Popen(command_str, shell=True, 
-                                stdout=subprocess.PIPE, 
-                                stderr=subprocess.PIPE).communicate()
-        print(out)
+                               stdout=subprocess.PIPE, 
+                               stderr=subprocess.PIPE).communicate()
+    elif format == 'mp4':
+        command_str = f'convert -delay 20 -loop 0 {" ".join(image_file_names)} {save_location}/{output_name}'
+        out = subprocess.Popen(command_str, shell=True, 
+                               stdout=subprocess.PIPE, 
+                               stderr=subprocess.PIPE).communicate()
 
 
 def predict(rank, world_size, conf, pool):
@@ -282,15 +302,15 @@ def predict(rank, world_size, conf, pool):
         forecast_count = 0
 
         # lists to collect x-arrays
-        x_dataArrs = []
-        surf_dataArrs = []
+        list_darray_upper_air = []
+        list_darray_single_level = []
 
         # a list that collects image file names        
-        pool_jobs = []
-
-        # get the required model levels to plot
-        sigma_levels = conf['visualization']['sigma_level_visualize']['visualize_levels']
-
+        job_info = []
+        filenames_upper_air = []
+        filenames_diagnostics = []
+        filenames_surface = []
+        
         # y_pred allocation
         y_pred = None
 
@@ -351,11 +371,12 @@ def predict(rank, world_size, conf, pool):
             print(print_str)
 
             # convert the current step result as x-array
-            da_x, da_surf = make_xarray(y_pred, utc_datetime, latds.latitude.values, latds.longitude.values, conf)  
+            darray_upper_air, darray_single_level = make_xarray(y_pred, utc_datetime, 
+                                                                latlons.latitude.values, latlons.longitude.values, conf)  
 
             # collect x-arrays for upper air and surface variables
-            x_dataArrs.append(da_x)
-            surf_dataArrs.append(da_surf)
+            list_darray_upper_air.append(darray_upper_air)
+            list_darray_single_level.append(darray_single_level)
 
             # ---------------------------------------------------------------------------------- #
             # Draw upper air variables
@@ -364,16 +385,20 @@ def predict(rank, world_size, conf, pool):
             N_vars = len(conf['visualization']['sigma_level_visualize']['variable_keys'])
             
             if N_vars > 0:
+                # get the required model levels to plot
+                sigma_levels = conf['visualization']['sigma_level_visualize']['visualize_levels']
                 
                 f = partial(draw_variables, visualization_key='sigma_level_visualize', 
                             step=forecast_hour, conf=conf, save_location=img_save_loc)
                 
                 # slice x-array on its time dimension
-                da_x_rmved_t = da_x.isel(datetime=0)
+                darray_upper_air_slice = darray_upper_air.isel(datetime=0)
     
                 # produce images
-                job_result = pool.map_async(f, [da_x_rmved_t.sel(level=lvl) for lvl in sigma_levels])
-                pool_jobs.append(job_result)
+                job_result = pool.map_async(f, [darray_upper_air_slice.sel(level=lvl) for lvl in sigma_levels])
+                job_info.append(job_result)
+                filenames_upper_air += job_result.get()
+
 
             # ---------------------------------------------------------------------------------- #
             # Draw diagnostics
@@ -387,12 +412,13 @@ def predict(rank, world_size, conf, pool):
                             step=forecast_hour, conf=conf, save_location=img_save_loc)
                 
                 # slice x-array on its time dimension
-                da_surf_rmved_t = da_surf.isel(datetime=0)
+                darray_single_level_slice = darray_single_level.isel(datetime=0)
                 
                 # produce images
-                job_result = pool.map_async(f, [da_surf_rmved_t,])
-                pool_jobs.append(job_result)
-
+                job_result = pool.map_async(f, [darray_single_level_slice,])
+                filenames_diagnostics.append(job_result.get()[0])
+                job_info.append(job_result)
+                
             # ---------------------------------------------------------------------------------- #
             # Draw surface variables
 
@@ -405,11 +431,12 @@ def predict(rank, world_size, conf, pool):
                             step=forecast_hour, conf=conf, save_location=img_save_loc)
                 
                 # slice x-array on its time dimension
-                da_surf_rmved_t = da_surf.isel(datetime=0)
+                darray_single_level_slice = darray_single_level.isel(datetime=0)
                 
                 # produce images
-                job_result = pool.map_async(f, [da_surf_rmved_t,])
-                pool_jobs.append(job_result)
+                job_result = pool.map_async(f, [darray_single_level_slice,])
+                filenames_surface.append(job_result.get()[0])
+                job_info.append(job_result)
                 
             # Explicitly release GPU memory
             torch.cuda.empty_cache()
@@ -418,7 +445,13 @@ def predict(rank, world_size, conf, pool):
             if batch['stop_forecast'][0]:
                 break
 
-    return x_dataArrs, surf_dataArrs, pool_jobs, img_save_loc
+    # collect all image file names for making movies
+    filename_bundle = {}
+    filename_bundle['sigma_level_visualize'] = filenames_upper_air
+    filename_bundle['diagnostic_variable_visualize'] = filenames_diagnostics
+    filename_bundle['surface_visualize'] = filenames_surface
+    
+    return list_darray_upper_air, list_darray_single_level, job_info, img_save_loc, filename_bundle
 
 
 
@@ -488,27 +521,67 @@ if __name__ == "__main__":
     
     with Pool(processes=4) as pool:
         if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
-            x_dataArrs, surf_dataArrs, pool_jobs, img_save_loc = predict(
-                int(os.environ["RANK"]), 
-                int(os.environ["WORLD_SIZE"]), conf, pool)
+            list_darray_upper_air, list_darray_single_level, job_info, img_save_loc, filename_bundle = predict(
+                int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf, pool)
         else:
-            x_dataArrs, surf_dataArrs, pool_jobs, img_save_loc = predict(0, 1, conf, pool)
-            
-        # save out to file
-        x_save_loc, surf_save_loc = save_netcdf(x_dataArrs, surf_dataArrs, conf)
+            list_darray_upper_air, list_darray_single_level, job_info, img_save_loc, filename_bundle = predict(0, 1, conf, pool)
         
-        print('waiting for all image files to write before making movies')
-        print(f'num pool jobs: {len(pool_jobs)}')
+        # save forecast results to file
+        if conf['predict']['save_format'] == 'nc':
+            print('Save forecasts as netCDF format')
+            filename_upper_air, filename_single_level = save_netcdf(list_darray_upper_air, list_darray_single_level, conf)
+        else:
+            print('Warnning: forecast results will not be saved')
+            
+        # ---------------------------------------------------------------------------------- #
+        # Making movies
+        filenames_upper_air = filename_bundle['sigma_level_visualize']
+        filenames_diagnostics = filename_bundle['diagnostic_variable_visualize']
+        filenames_surface = filename_bundle['surface_visualize']
 
-        # now check if everything was successful
-        try:
-            print("\n filepaths written")
-            print([res.get() for res in pool_jobs])
-        except:
-            print("\n errors:")
-            print([res._value for res in pool_jobs])
-            raise
+        ## more than one image --> making video for upper air variables
+        print(filenames_upper_air)
+        
+        if len(filenames_upper_air) > 1:
+            print('Making video for upper air variables')
+
+            # # get the required model levels to plot
+            sigma_levels = conf['visualization']['sigma_level_visualize']['visualize_levels']
+            N_levels = len(sigma_levels)
+            
+            for i_level, level in enumerate(sigma_levels):
                 
+                # add level info into the video file name
+                video_name_prefix = conf['visualization']['sigma_level_visualize']['file_name_prefix']
+                video_name_prefix += '_level{:02d}'.format(level)
 
-    #write make_movie to use directory as arg so its reuseable
-    #make_movie(img_save_loc, conf)
+                # get current level files
+                filename_current_level = filenames_upper_air[i_level::N_levels]
+
+                # make video
+                make_video(video_name_prefix, img_save_loc, filename_current_level, format='gif')
+        
+        ## more than one image --> making video for diagnostics 
+        if len(filenames_diagnostics) > 1:
+            print('Making video for diagnostic variables')
+            video_name_prefix = conf['visualization']['diagnostic_variable_visualize']['file_name_prefix']
+            make_video(video_name_prefix, img_save_loc, filenames_diagnostics, format='gif')
+
+        ## more than one image --> making video for surface variables
+        if len(filenames_surface) > 1:
+            print('Making video for surface variables')
+            video_name_prefix = conf['visualization']['surface_visualize']['file_name_prefix']
+            make_video(video_name_prefix, img_save_loc, filenames_surface, format='gif')
+            
+        # ------------------------------------------ #
+        # # Debugging section
+        # print(f'num pool jobs: {len(job_info)}')
+        # # now check if everything was successful
+        # try:
+        #     print("\n filepaths written")
+        #     print([res.get() for res in job_info])
+        # except:
+        #     print("\n errors:")
+        #     print([res._value for res in job_info])
+        #     raise
+        # ------------------------------------------ #
