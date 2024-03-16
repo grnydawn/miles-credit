@@ -1,9 +1,7 @@
 '''
 Run model and produce outputs 
 ------------------------------
-Output tensor size: (variables, latitude, longitude)
-Atmospheric level arrangement: top-of-atmosphere--> near-surface --> single layer
-An example: U (top-of-atmosphere) --> U (near-surface) --> V (top-of-atmosphere) --> V (near-surface)
+
 
 Yingkai Sha
 ksha@ucar.edu
@@ -56,10 +54,10 @@ from credit.pbs import launch_script, launch_script_mpi
 
 # ---------- #
 # visualization_tools is part of the credit now, but it requires a pip update
-try:
-    from credit.visualization_tools import draw_sigma_level, draw_diagnostics, draw_surface
-except:
-    from visualization_tools import draw_sigma_level, draw_diagnostics, draw_surface
+# try:
+#     from credit.visualization_tools import draw_variables
+# except:
+from visualization_tools import draw_variables
     
 # import wandb
 
@@ -74,13 +72,151 @@ def setup(rank, world_size, mode):
     logging.info(f"Running {mode.upper()} on rank {rank} with world_size {world_size}.")
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
-def predict(rank, world_size, conf):
+def split_and_reshape(tensor, conf):
+    '''
+    Split the output tensor of the model to upper air variables and diagnostics/surface variables.
+    
+    tensor size: (variables, latitude, longitude)
+    Upperair level arrangement: top-of-atmosphere--> near-surface --> single layer
+    An example: U (top-of-atmosphere) --> U (near-surface) --> V (top-of-atmosphere) --> V (near-surface)
+    '''
+    
+    # get the number of levels
+    levels = conf['model']['levels']
+
+    # get upper air variables
+    channels = len(conf['data']['variables'])
+
+    # get surface variables
+    surface_channels = len(conf['data']['surface_variables'])
+
+    # subset upper air variables
+    tensor1 = tensor[:, :int(channels * levels), :, :]
+    tensor1 = tensor1.view(tensor1.shape[0], channels, levels, tensor1.shape[-2], tensor1.shape[-1])
+
+    # subset surface variables
+    tensor2 = tensor[:, -int(surface_channels):, :, :]
+    
+    # return x, surf for B, c, lat, lon output 
+    return tensor1, tensor2
+
+def make_xarray(pred, forecast_datetime, lat, lon, conf):
+
+    # subset upper air and surface variables
+    x, surf = split_and_reshape(pred, conf)
+    
+    # save upper air variables variables
+    da_x = xr.DataArray(x, dims=['datetime', 'var', 'level', 'lat', 'lon'],
+                        coords=dict(
+                            var = conf['data']['variables'],
+                            datetime = [forecast_datetime],
+                            level = range(conf['model']['levels']),
+                            lat = lat,
+                            lon = lon))
+    
+    # save diagnostics and surface variables
+    da_surf = xr.DataArray(surf, dims=['datetime', 'var', 'lat', 'lon'],
+                           coords=dict(
+                               var = conf['data']['surface_variables'],
+                               datetime = [forecast_datetime],
+                               lat = lat,
+                               lon = lon))
+    
+    # return x-arrays as outputs 
+    return da_x, da_surf
+
+def save_netcdf(x_dataArrs, surf_dataArrs, conf):
+    '''
+    Save netCDF files from x-array inputs
+    '''
+    # get upper air variables from x-array
+    da_x = xr.concat(x_dataArrs, dim='datetime')
+
+    # get surface variables from x-array
+    da_surf = xr.concat(surf_dataArrs, dim='datetime')
+
+    # produce datetime string
+    init_datetime_str = np.datetime_as_string(da_x.datetime[0], unit='h', timezone='UTC')
+    
+    # create save directory for xarrays
+    save_location = os.path.join(os.path.expandvars(conf['save_loc']), "forecasts")
+    os.makedirs(save_location, exist_ok=True)
+
+    # create file name to save upper air variables
+    x_save_loc = os.path.join(save_location, f'pred_x_{init_datetime_str}.nc')
+
+    # create file name to save surface variables
+    surf_save_loc = os.path.join(save_location, f'pred_surf_{init_datetime_str}.nc')
+
+    # save x-arrays to  
+    da_x.to_netcdf(path=x_save_loc)
+    da_surf.to_netcdf(path=surf_save_loc)
+
+    # print out the saved file names
+    print(f'wrote .nc files for upper air and surface vars:\n{x_save_loc}\n{surf_save_loc}')
+
+    # return saved file names
+    return x_save_loc, surf_save_loc, 
+
+# # Debugging purposes only
+# def make_images_from_xarray(x_save_loc, surf_save_loc, conf):
+#     '''
+#     Produce images from x-array inputs
+#     '''
+#     # import upper air variables
+#     da_x = xr.load_dataarray(x_save_loc)
+
+#     # import surface variables
+#     da_surf = xr.load_dataarray(surf_save_loc)
+
+#     # ------------------------------------------------------------------------------------------ #
+#     # Create directories to save images, overwrite files if already exists, 
+#     # filenames have uniquely id
+    
+#     ## create image folder based on the first forecasted time 
+#     init_time = np.datetime_as_string(da_x.datetime[0], unit='h', timezone='UTC')
+#     save_loc = os.path.join(os.path.expandvars(conf["save_loc"]), f'forecasts/images_{init_time}')
+#     os.makedirs(save_loc, exist_ok=True)
+    
+#     # get the required model levels to plot
+#     sigma_levels = conf['visualization']['sigma_level_visualize']['visualize_levels']
+    
+#     # todo: parallelize over times
+#     for level in sigma_levels:
+#         datetimes = da_x.datetime.to_numpy()
+#         with Pool(processes=8) as pool:
+#             f = partial(draw_sigma_level, conf=conf, save_location=save_loc)
+#             da_level = da_x.sel(level=level)
+#             pool.map(f, [da_level.sel(datetime=dt) for dt in datetimes])
+
+#     return save_loc
+
+def make_movie(filenames, conf, save_location): #level, datetime
+    '''
+    Make movies based on produced images
+    '''
+    # get the required model levels to plot
+    sigma_levels = conf['visualization']['sigma_level_visualize']['visualize_levels']
+
+    # produce videos on each required upper air level
+    for level_idx, sigma_level in enumerate(sigma_levels):
+        level_image_filenames = [filename_list[level_idx] for filename_list in filenames]
+
+        ## send all png files to the gif maker 
+        gif_name = '{}_level{:02d}.gif'.format(gif_name_prefix, sigma_level)
+        command_str = f'convert -delay 20 -loop 0 {" ".join(level_image_filenames)} {save_location}/{gif_name}'
+        out = subprocess.Popen(command_str, shell=True, 
+                                stdout=subprocess.PIPE, 
+                                stderr=subprocess.PIPE).communicate()
+        print(out)
+
+
+def predict(rank, world_size, conf, pool):
 
     if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
         setup(rank, world_size, conf["trainer"]["mode"])
 
     # infer device id from rank
-
     device = torch.device(f"cuda:{rank % torch.cuda.device_count()}") if torch.cuda.is_available() else torch.device("cpu")
     torch.cuda.set_device(rank % torch.cuda.device_count())
 
@@ -111,8 +247,7 @@ def predict(rank, world_size, conf):
         transform=transform,
         rank=rank,
         world_size=world_size,
-        shuffle=False
-    )
+        shuffle=False)
 
     # setup the dataloder for this process
     data_loader = torch.utils.data.DataLoader(
@@ -121,8 +256,7 @@ def predict(rank, world_size, conf):
         shuffle=False,
         pin_memory=True,
         num_workers=0,
-        drop_last=False
-    )
+        drop_last=False)
 
     # load model
     model = load_model(conf, load_weights=True).to(device)
@@ -144,45 +278,62 @@ def predict(rank, world_size, conf):
 
     # Rollout
     with torch.no_grad():
-
+        # forecast count = a constant for each run
         forecast_count = 0
-        forecast_datetimes = []
-        pred_files, true_files = [], []
 
+        # lists to collect x-arrays
+        x_dataArrs = []
+        surf_dataArrs = []
+
+        # a list that collects image file names        
+        pool_jobs = []
+
+        # get the required model levels to plot
+        sigma_levels = conf['visualization']['sigma_level_visualize']['visualize_levels']
+
+        # y_pred allocation
         y_pred = None
-        for batch in data_loader:
 
+        # model inference loop
+        for batch in data_loader:
+            
+            # get the datetime and forecasted hours
             date_time = batch["datetime"].item()
             forecast_hour = batch["forecast_hour"].item()
 
+            # initialization on the first forecast hour
             if forecast_hour == 1:
                 # Initialize x and x_surf with the first time step
                 x = model.concat_and_reshape(
                     batch["x"],
-                    batch["x_surf"]
-                ).to(device)
+                    batch["x_surf"]).to(device)
 
+                # setup save directory for images
+                init_time = datetime.datetime.utcfromtimestamp(date_time).strftime('%Y-%m-%dT%HZ')
+                img_save_loc = os.path.join(os.path.expandvars(conf["save_loc"]), f'forecasts/images_{init_time}')
+                os.makedirs(img_save_loc, exist_ok=True)
+            
             y = model.concat_and_reshape(
                 batch["y"],
-                batch["y_surf"]
-                ).to(device)
-
+                batch["y_surf"]).to(device)
+            
             # Predict
             y_pred = model(x)
-
+            
             # Update the input
             if history_len == 1:
                 x = y_pred.detach()
             else:
+                # use multiple past forecast steps as inputs
                 x_detach = x[:, :, 1:].detach()
                 x = torch.cat([x_detach, y_pred.detach()], dim=2)
                 y = y.squeeze(2)
                 y_pred = y_pred.squeeze(2)
-
+            
             # Convert back to quantites with physical units before computing metrics
             y = state_transformer.inverse_transform(y.cpu())
             y_pred = state_transformer.inverse_transform(y_pred.cpu())
-
+            
             # Compute metrics
             mae = loss_fn(y, y_pred)
             metrics_dict = metrics(y_pred.float(), y.float())
@@ -190,157 +341,85 @@ def predict(rank, world_size, conf):
                 metrics_results[k].append(m.item())
             metrics_results["forecast_hour"].append(forecast_hour)
             metrics_results["datetime"].append(date_time)
-
-            formatted_datetime = datetime.datetime.utcfromtimestamp(date_time).strftime('%Y-%m-%d %H:%M:%S')
-            forecast_datetimes.append(formatted_datetime)
-
+            
+            utc_datetime = datetime.datetime.utcfromtimestamp(date_time)
             print_str = f"Forecast: {forecast_count} "
-            print_str += f"Date: {formatted_datetime} "
+            print_str += f"Date: {utc_datetime.strftime('%Y-%m-%d %H:%M:%S')} "
             print_str += f"Hour: {batch['forecast_hour'].item()} "
             print_str += f"MAE: {mae.item()} "
             print_str += f"ACC: {metrics_dict['acc']}"
             print(print_str)
 
-            # Save as numpy arrays for now
-            # save_arr = state_transformer.inverse_transform(y_pred.cpu()).squeeze(0)
-            np.save(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_pred.npy"), y_pred.squeeze(0))
-            # np.save(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_true.npy"), y.cpu())
+            # convert the current step result as x-array
+            da_x, da_surf = make_xarray(y_pred, utc_datetime, latds.latitude.values, latds.longitude.values, conf)  
 
-            pred_files.append(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_pred.npy"))
-            # true_files.append(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_true.npy"))
+            # collect x-arrays for upper air and surface variables
+            x_dataArrs.append(da_x)
+            surf_dataArrs.append(da_surf)
 
+            # ---------------------------------------------------------------------------------- #
+            # Draw upper air variables
+            
+            # get the number of variables to draw
+            N_vars = len(conf['visualization']['sigma_level_visualize']['variable_keys'])
+            
+            if N_vars > 0:
+                
+                f = partial(draw_variables, visualization_key='sigma_level_visualize', 
+                            step=forecast_hour, conf=conf, save_location=img_save_loc)
+                
+                # slice x-array on its time dimension
+                da_x_rmved_t = da_x.isel(datetime=0)
+    
+                # produce images
+                job_result = pool.map_async(f, [da_x_rmved_t.sel(level=lvl) for lvl in sigma_levels])
+                pool_jobs.append(job_result)
+
+            # ---------------------------------------------------------------------------------- #
+            # Draw diagnostics
+
+            # get the number of variables to draw
+            N_vars = len(conf['visualization']['diagnostic_variable_visualize']['variable_keys'])
+
+            if N_vars > 0:
+                
+                f = partial(draw_variables, visualization_key='diagnostic_variable_visualize', 
+                            step=forecast_hour, conf=conf, save_location=img_save_loc)
+                
+                # slice x-array on its time dimension
+                da_surf_rmved_t = da_surf.isel(datetime=0)
+                
+                # produce images
+                job_result = pool.map_async(f, [da_surf_rmved_t,])
+                pool_jobs.append(job_result)
+
+            # ---------------------------------------------------------------------------------- #
+            # Draw surface variables
+
+            # get the number of variables to draw
+            N_vars = len(conf['visualization']['surface_visualize']['variable_keys'])
+
+            if N_vars > 0:
+                
+                f = partial(draw_variables, visualization_key='surface_visualize', 
+                            step=forecast_hour, conf=conf, save_location=img_save_loc)
+                
+                # slice x-array on its time dimension
+                da_surf_rmved_t = da_surf.isel(datetime=0)
+                
+                # produce images
+                job_result = pool.map_async(f, [da_surf_rmved_t,])
+                pool_jobs.append(job_result)
+                
             # Explicitly release GPU memory
             torch.cuda.empty_cache()
             gc.collect()
-
-            # Make a movie
+            
             if batch['stop_forecast'][0]:
+                break
 
-                df = pd.DataFrame(metrics_results)
-                df.to_csv(os.path.join(save_location, "metrics.csv"))
+    return x_dataArrs, surf_dataArrs, pool_jobs, img_save_loc
 
-
-                # =============================================================================== #
-                # Data visualization for sigma level variables
-                sigma_levels = conf['visualization']['sigma_level_visualize']['visualize_levels']
-                
-                # start producing figures if level is not empty
-                if len(sigma_levels) > 0:
-                
-                    # collect forecast outputs
-                    forecast_paths = os.path.join(save_location, f"{forecast_count}_*_*_pred.npy")
-                    # generator of file_name, file_count
-                    file_list = enumerate(sorted(glob.glob(forecast_paths)))
-                    
-                    # the output session begins
-                    print('Preparing sigma level outputs')
-                    video_files = []
-                    
-                    ## parallelize draw_forecast func
-                    with Pool(processes=8) as pool:
-                        f = partial(draw_sigma_level, conf=conf, times=forecast_datetimes,
-                                    forecast_count=forecast_count, save_location=save_location)
-                        # collect output png file names
-                        video_files = pool.map(f, file_list)
-                        
-                    ## collect all png file names
-                    ## video_files[0] = f; video_files[1] = file_names
-                    video_files_all = [x[1] for x in sorted(video_files)]
-                    
-                    ## gif outpout name = png output name
-                    gif_name_prefix = conf['visualization']['sigma_level_visualize']['file_name_prefix']
-                    
-                    ## separate file names based on verticial levels
-                    ## one gif per level 
-                    for n_gif, sigma_level in enumerate(sigma_levels):
-                        video_files_single = []
-                        for filename_list in video_files_all:
-                            video_files_single.append(filename_list[n_gif])
-                            
-                        ## send all png files to the gif maker 
-                        gif_name = '{}_level{:02d}.gif'.format(gif_name_prefix, sigma_level)
-                        command_str = f'convert -delay 20 -loop 0 {" ".join(video_files_single)} {save_location}/{gif_name}'
-                        out = subprocess.Popen(command_str, shell=True, 
-                                               stdout=subprocess.PIPE, 
-                                               stderr=subprocess.PIPE).communicate()
-                        print(out)
-                        
-                # =============================================================================== #
-                # Data visualization for diagnostics
-                N_vars = len(conf['visualization']['diagnostic_variable_visualize']['variable_indices'])
-                
-                if N_vars > 0:
-                
-                    # collect forecast outputs
-                    forecast_paths = os.path.join(save_location, f"{forecast_count}_*_*_pred.npy")
-                    # generator of file_name, file_count
-                    file_list = enumerate(sorted(glob.glob(forecast_paths)))
-                    
-                    # the output session begins
-                    print('Preparing diagnostic outputs')
-                    video_files = []
-                    
-                    with Pool(processes=8) as pool:
-                        f = partial(draw_diagnostics, conf=conf, times=forecast_datetimes,
-                                    forecast_count=forecast_count, save_location=save_location)
-                        # collect output png file names
-                        video_files = pool.map(f, file_list)
-                        
-                    ## collect all png file names
-                    ## video_files[0] = f; video_files[1] = file_names
-                    video_files_all = [x[1] for x in sorted(video_files)]
-                    
-                    ## gif outpout name = png output name
-                    gif_name_prefix = conf['visualization']['diagnostic_variable_visualize']['file_name_prefix']
-                    
-                    ## send all png files to the gif maker 
-                    gif_name = '{}.gif'.format(gif_name_prefix)
-                    command_str = f'convert -delay 20 -loop 0 {" ".join(video_files_all)} {save_location}/{gif_name}'
-                    out = subprocess.Popen(command_str, shell=True, 
-                                           stdout=subprocess.PIPE, 
-                                           stderr=subprocess.PIPE).communicate()
-                    print(out)
-
-                # =============================================================================== #
-                # Data visualization for diagnostics
-                N_vars = len(conf['visualization']['surface_visualize']['variable_indices'])
-                
-                if N_vars > 0:
-                
-                    # collect forecast outputs
-                    forecast_paths = os.path.join(save_location, f"{forecast_count}_*_*_pred.npy")
-                    # generator of file_name, file_count
-                    file_list = enumerate(sorted(glob.glob(forecast_paths)))
-                    
-                    # the output session begins
-                    print('Preparing surface outputs')
-                    video_files = []
-                    
-                    with Pool(processes=8) as pool:
-                        f = partial(draw_surface, conf=conf, times=forecast_datetimes,
-                                    forecast_count=forecast_count, save_location=save_location)
-                        # collect output png file names
-                        video_files = pool.map(f, file_list)
-                        
-                    ## collect all png file names
-                    ## video_files[0] = f; video_files[1] = file_names
-                    video_files_all = [x[1] for x in sorted(video_files)]
-                    
-                    ## gif outpout name = png output name
-                    gif_name_prefix = conf['visualization']['surface_visualize']['file_name_prefix']
-                    
-                    ## send all png files to the gif maker 
-                    gif_name = '{}.gif'.format(gif_name_prefix)
-                    command_str = f'convert -delay 20 -loop 0 {" ".join(video_files_all)} {save_location}/{gif_name}'
-                    out = subprocess.Popen(command_str, shell=True, 
-                                           stdout=subprocess.PIPE, 
-                                           stderr=subprocess.PIPE).communicate()
-                    print(out)
-                    
-                forecast_count += 1
-                metrics_results = defaultdict(list)
-                pred_files = []
-                # true_files = []
 
 
 if __name__ == "__main__":
@@ -406,8 +485,30 @@ if __name__ == "__main__":
 
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
+    
+    with Pool(processes=4) as pool:
+        if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
+            x_dataArrs, surf_dataArrs, pool_jobs, img_save_loc = predict(
+                int(os.environ["RANK"]), 
+                int(os.environ["WORLD_SIZE"]), conf, pool)
+        else:
+            x_dataArrs, surf_dataArrs, pool_jobs, img_save_loc = predict(0, 1, conf, pool)
+            
+        # save out to file
+        x_save_loc, surf_save_loc = save_netcdf(x_dataArrs, surf_dataArrs, conf)
+        
+        print('waiting for all image files to write before making movies')
+        print(f'num pool jobs: {len(pool_jobs)}')
 
-    if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
-        predict(int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf)
-    else:
-        predict(0, 1, conf)
+        # now check if everything was successful
+        try:
+            print("\n filepaths written")
+            print([res.get() for res in pool_jobs])
+        except:
+            print("\n errors:")
+            print([res._value for res in pool_jobs])
+            raise
+                
+
+    #write make_movie to use directory as arg so its reuseable
+    #make_movie(img_save_loc, conf)
