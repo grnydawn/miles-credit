@@ -45,12 +45,10 @@ from credit.pbs import launch_script, launch_script_mpi
 
 # ---------- #
 # visualization_tools is part of the credit now, but it requires a pip update
-# try:
-#     from credit.visualization_tools import draw_variables
-# except:
-
-# use the local version for now
-from visualization_tools import draw_variables
+try:
+    from credit.visualization_tools import draw_variables
+except:
+    from visualization_tools import draw_variables
     
 # import wandb
 
