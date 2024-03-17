@@ -1,12 +1,3 @@
-'''
-Run model and produce outputs 
-------------------------------
-
-
-Yingkai Sha
-ksha@ucar.edu
-'''
-
 
 # ---------- #
 # System
@@ -106,7 +97,7 @@ def make_xarray(pred, forecast_datetime, lat, lon, conf):
     # subset upper air and surface variables
     tensor_upper_air, tensor_single_level = split_and_reshape(pred, conf)
     
-    # save upper air variables variables
+    # save upper air variables
     coords_info = dict(var=conf['data']['variables'],
                        datetime=[forecast_datetime],
                        level=range(conf['model']['levels']),
@@ -151,7 +142,7 @@ def save_netcdf(list_darray_upper_air, list_darray_single_level, conf):
     # create file name to save surface variables
     nc_filename_single_level = os.path.join(save_location, f'pred_surf_{init_datetime_str}.nc')
 
-    # save x-arrays to  
+    # save x-arrays to netCDF
     darray_upper_air_merge.to_netcdf(path=nc_filename_upper_air)
     darray_single_level_merge.to_netcdf(path=nc_filename_single_level)
 
@@ -513,7 +504,7 @@ if __name__ == "__main__":
         video_format = conf['visualization']['video_format']
         
         ## more than one image --> making video for upper air variables
-        if len(filenames_upper_air) > 1:
+        if len(filenames_upper_air) > 1 and video_format in ['gif', 'mp4']:
             print('Making video for upper air variables')
 
             # get the required model levels to plot
@@ -531,9 +522,11 @@ if __name__ == "__main__":
 
                 # make video
                 make_video(video_name_prefix, img_save_loc, filename_current_level, format=video_format)
-        
+        else:
+            print('SKipping video production for upper air variables')
+            
         ## more than one image --> making video for diagnostics 
-        if len(filenames_diagnostics) > 1:
+        if len(filenames_diagnostics) > 1 and video_format in ['gif', 'mp4']:
             print('Making video for diagnostic variables')
 
             # get file names
@@ -541,9 +534,11 @@ if __name__ == "__main__":
 
             # make video
             make_video(video_name_prefix, img_save_loc, filenames_diagnostics, format=video_format)
-
+        else:
+            print('SKipping video production for diagnostic variables')
+        
         ## more than one image --> making video for surface variables
-        if len(filenames_surface) > 1:
+        if len(filenames_surface) > 1 and video_format in ['gif', 'mp4']:
             print('Making video for surface variables')
 
             # get file names
@@ -551,7 +546,8 @@ if __name__ == "__main__":
 
             # make video
             make_video(video_name_prefix, img_save_loc, filenames_surface, format=video_format)
-            
+        else:
+            print('SKipping video production for surface variables')
         # ------------------------------------------ #
         # # Debugging section
         # print(f'num pool jobs: {len(job_info)}')
