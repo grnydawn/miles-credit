@@ -32,6 +32,7 @@ dependencies:
     - bridgescaler
     - rotary-embedding-torch
 #    - segmentation-models-pytorch
+    - torchsummary
     - vector_quantize_pytorch
     - timm>=0.9.12
     - .
