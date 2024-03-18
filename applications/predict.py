@@ -492,72 +492,71 @@ if __name__ == "__main__":
             filename_upper_air, filename_single_level = save_netcdf(list_darray_upper_air, list_darray_single_level, conf)
         else:
             print('Warnning: forecast results will not be saved')
-            
-        # ---------------------------------------------------------------------------------- #
-        # Making videos
-        filenames_upper_air = filename_bundle['sigma_level_visualize']
-        filenames_diagnostics = filename_bundle['diagnostic_variable_visualize']
-        filenames_surface = filename_bundle['surface_visualize']
-        
-        video_format = conf['visualization']['video_format']
-        
-        ## more than one image --> making video for upper air variables
-        if len(filenames_upper_air) > 1 and video_format in ['gif', 'mp4']:
-            print('Making video for upper air variables')
-
-            # get the required model levels to plot
-            sigma_levels = conf['visualization']['sigma_level_visualize']['visualize_levels']
-            N_levels = len(sigma_levels)
-            
-            for i_level, level in enumerate(sigma_levels):
-                
-                # add level info into the video file name
-                video_name_prefix = conf['visualization']['sigma_level_visualize']['file_name_prefix']
-                video_name_prefix += '_level{:02d}'.format(level)
-
-                # get current level files
-                filename_current_level = filenames_upper_air[i_level::N_levels]
-
-                # make video
-                make_video(video_name_prefix, img_save_loc, filename_current_level, format=video_format)
-        else:
-            print('SKipping video production for upper air variables')
-            
-        ## more than one image --> making video for diagnostics 
-        if len(filenames_diagnostics) > 1 and video_format in ['gif', 'mp4']:
-            print('Making video for diagnostic variables')
-
-            # get file names
-            video_name_prefix = conf['visualization']['diagnostic_variable_visualize']['file_name_prefix']
-
-            # make video
-            make_video(video_name_prefix, img_save_loc, filenames_diagnostics, format=video_format)
-        else:
-            print('SKipping video production for diagnostic variables')
-        
-        ## more than one image --> making video for surface variables
-        if len(filenames_surface) > 1 and video_format in ['gif', 'mp4']:
-            print('Making video for surface variables')
-
-            # get file names
-            video_name_prefix = conf['visualization']['surface_visualize']['file_name_prefix']
-
-            # make video
-            make_video(video_name_prefix, img_save_loc, filenames_surface, format=video_format)
-        else:
-            print('SKipping video production for surface variables')
         # ------------------------------------------ #
         # # Debugging section
-        # print(f'num pool jobs: {len(job_info)}')
-        # # now check if everything was successful
-        # try:
-        #     print("\n filepaths written")
-        #     print([res.get() for res in job_info])
-        # except:
-        #     print("\n errors:")
-        #     print([res._value for res in job_info])
-        #     raise
-        # ------------------------------------------ #
+        print(f'num pool jobs: {len(job_info)}')
+        # now check if everything was successful
+        try:
+            print("\n filepaths written")
+            print([res.get() for res in job_info])
+        except:
+            print("\n errors:")
+            print([res._value for res in job_info])
+            raise
+        
+    # ---------------------------------------------------------------------------------- #
+    # Making videos
+    filenames_upper_air = filename_bundle['sigma_level_visualize']
+    filenames_diagnostics = filename_bundle['diagnostic_variable_visualize']
+    filenames_surface = filename_bundle['surface_visualize']
+    
+    video_format = conf['visualization']['video_format']
+    
+    ## more than one image --> making video for upper air variables
+    if len(filenames_upper_air) > 1 and video_format in ['gif', 'mp4']:
+        print('Making video for upper air variables')
+
+        # get the required model levels to plot
+        sigma_levels = conf['visualization']['sigma_level_visualize']['visualize_levels']
+        N_levels = len(sigma_levels)
+        
+        for i_level, level in enumerate(sigma_levels):
+            
+            # add level info into the video file name
+            video_name_prefix = conf['visualization']['sigma_level_visualize']['file_name_prefix']
+            video_name_prefix += '_level{:02d}'.format(level)
+
+            # get current level files
+            filename_current_level = filenames_upper_air[i_level::N_levels]
+
+            # make video
+            make_video(video_name_prefix, img_save_loc, filename_current_level, format=video_format)
+    else:
+        print('SKipping video production for upper air variables')
+        
+    ## more than one image --> making video for diagnostics 
+    if len(filenames_diagnostics) > 1 and video_format in ['gif', 'mp4']:
+        print('Making video for diagnostic variables')
+
+        # get file names
+        video_name_prefix = conf['visualization']['diagnostic_variable_visualize']['file_name_prefix']
+
+        # make video
+        make_video(video_name_prefix, img_save_loc, filenames_diagnostics, format=video_format)
+    else:
+        print('SKipping video production for diagnostic variables')
+    
+    ## more than one image --> making video for surface variables
+    if len(filenames_surface) > 1 and video_format in ['gif', 'mp4']:
+        print('Making video for surface variables')
+
+        # get file names
+        video_name_prefix = conf['visualization']['surface_visualize']['file_name_prefix']
+
+        # make video
+        make_video(video_name_prefix, img_save_loc, filenames_surface, format=video_format)
+    else:
+        print('SKipping video production for surface variables')
 
 
 # # ------------------------------------------------------------------------------------------ #
