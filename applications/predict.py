@@ -1,47 +1,73 @@
-import warnings
-import torch
-import torch.distributed as dist
-from argparse import ArgumentParser
-from pathlib import Path
+'''
+Run model and produce outputs 
+------------------------------
+Output tensor size: (variables, latitude, longitude)
+Atmospheric level arrangement: top-of-atmosphere--> near-surface --> single layer
+An example: U (top-of-atmosphere) --> U (near-surface) --> V (top-of-atmosphere) --> V (near-surface)
 
-import torch.fft
-import logging
-import shutil
+Yingkai Sha
+ksha@ucar.edu
+'''
 
-import wandb
-import glob
+
+# ---------- #
+# System
+import gc
 import os
 import sys
 import yaml
+import glob
+import shutil
+import logging
+import warnings
+import subprocess
+from os.path import join
+from pathlib import Path
+from functools import partial
+from multiprocessing import Pool
+from collections import defaultdict
+from argparse import ArgumentParser
 
+# ---------- #
+# Numerics
+import datetime
+import numpy as np
+import pandas as pd
+import xarray as xr
+
+# ---------- #
+# AI libs
+import torch
+#import torch.fft
+import torch.distributed as dist
 from torch.distributed.fsdp import StateDictType
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision import transforms
 from credit.models.vit2d import ViT2D
 from credit.models.rvt import RViT
 from credit.loss import VariableTotalLoss2D
+
+# ---------- #
+# credit
 from credit.data import PredictForecast
-from credit.transforms import ToTensor, NormalizeState
+from credit.loss import VariableTotalLoss2D
+from credit.models import load_model
 from credit.metrics import LatWeightedMetrics
-from credit.pbs import launch_script, launch_script_mpi
+from credit.transforms import ToTensor, NormalizeState
 from credit.seed import seed_everything
-import xarray as xr
-from collections import defaultdict
-import numpy as np
-import gc
+from credit.pbs import launch_script, launch_script_mpi
 
-import matplotlib.pyplot as plt
-import cartopy.crs as ccrs
-from os.path import join
-import datetime
-import subprocess
-from multiprocessing import Pool
-from functools import partial
-import pandas as pd
+# ---------- #
+# visualization_tools is part of the credit now, but it requires a pip update
+try:
+    from credit.visualization_tools import draw_sigma_level, draw_diagnostics, draw_surface
+except:
+    from visualization_tools import draw_sigma_level, draw_diagnostics, draw_surface
+    
+# import wandb
 
-
+logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")
-
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -50,35 +76,6 @@ os.environ["MKL_NUM_THREADS"] = "1"
 def setup(rank, world_size, mode):
     logging.info(f"Running {mode.upper()} on rank {rank} with world_size {world_size}.")
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
-
-
-def draw_forecast(data, conf=None, times=None, forecast_count=None, save_location=None):
-    k, fn = data
-    lat_lon_weights = xr.open_dataset(conf['loss']['latitude_weights'])
-    pred = np.load(fn)
-    t = times[k]
-    pred = pred[8]
-    fig = plt.figure(figsize=(10, 8))
-    ax = fig.add_subplot(1, 1, 1, projection=ccrs.EckertIII())
-    ax.set_global()
-    ax.coastlines('110m', alpha=0.5)
-
-    pout = ax.pcolormesh(
-        lat_lon_weights["longitude"],
-        lat_lon_weights["latitude"],
-        pred,  #(pred * sds["U"].values[8] + means["U"].values[8]),
-        transform=ccrs.PlateCarree(),
-        vmin=-30,
-        vmax=30,
-        cmap='RdBu'
-    )
-    plt.colorbar(pout, ax=ax, orientation="horizontal", fraction=0.05, pad=0.01)
-    plt.title(f"Q (g/kg) D ({t}) H ({k})")
-    filename = join(save_location, f"global_q_{forecast_count}_{k}.png")
-    plt.savefig(filename, dpi=300, bbox_inches="tight")
-    plt.close()
-    return k, filename
-
 
 def predict(rank, world_size, conf):
 
@@ -96,13 +93,13 @@ def predict(rank, world_size, conf):
 
     history_len = conf["data"]["history_len"]
     forecast_len = conf["data"]["forecast_len"]
-    time_step = conf["data"]["time_step"]
+    time_step = conf["data"]["time_step"] if "time_step" in conf["data"] else None
 
     # Load paths to all ERA5 data available
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
 
     # Preprocessing transformations
-    state_transformer = NormalizeState(conf["data"]["mean_path"],conf["data"]["std_path"])
+    state_transformer = NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"])
     transform = transforms.Compose([
         state_transformer,
         ToTensor(history_len=history_len, forecast_len=forecast_len)
@@ -131,14 +128,7 @@ def predict(rank, world_size, conf):
     )
 
     # load model
-    if 'use_rotary' in conf['model'] and conf['model']['use_rotary']:
-        model = RViT.load_model(conf).to(device)
-    else:
-        if 'use_rotary' in conf['model']:
-            del conf['model']['use_rotary']
-            del conf['model']['use_ds_conv']
-            del conf['model']['use_glu']
-        model = ViT2D.load_model(conf).to(device)
+    model = load_model(conf, load_weights=True).to(device)
 
     # Warning -- see next line
     if conf["trainer"]["mode"] == "ddp":  # A new field needs to be added to predict
@@ -152,7 +142,7 @@ def predict(rank, world_size, conf):
     loss_fn = VariableTotalLoss2D(conf, validation=True)
 
     # create save directory for numpy arrays
-    save_location = os.path.join(conf['save_loc'], "forecasts")
+    save_location = os.path.join(os.path.expandvars(conf['save_loc']), "forecasts")
     os.makedirs(save_location, exist_ok=True)
 
     # Rollout
@@ -168,21 +158,33 @@ def predict(rank, world_size, conf):
             date_time = batch["datetime"].item()
             forecast_hour = batch["forecast_hour"].item()
 
-            if forecast_hour == 0:
+            if forecast_hour == 1:
                 # Initialize x and x_surf with the first time step
-                x_atmo = batch["x"].squeeze(1)
-                x_surf = batch["x_surf"].squeeze(1)
-                x = model.concat_and_reshape(x_atmo, x_surf).to(device)
-            else:
-                x = y_pred.detach()
+                x = model.concat_and_reshape(
+                    batch["x"],
+                    batch["x_surf"]
+                ).to(device)
 
-            y_atmo = batch["y"].squeeze(1)
-            y_surf = batch["y_surf"].squeeze(1)
-            y = model.concat_and_reshape(y_atmo, y_surf).to(device)
+            y = model.concat_and_reshape(
+                batch["y"],
+                batch["y_surf"]
+                ).to(device)
 
             # Predict
-
             y_pred = model(x)
+
+            # Update the input
+            if history_len == 1:
+                x = y_pred.detach()
+            else:
+                x_detach = x[:, :, 1:].detach()
+                x = torch.cat([x_detach, y_pred.detach()], dim=2)
+                y = y.squeeze(2)
+                y_pred = y_pred.squeeze(2)
+
+            # Convert back to quantites with physical units before computing metrics
+            y = state_transformer.inverse_transform(y.cpu())
+            y_pred = state_transformer.inverse_transform(y_pred.cpu())
 
             # Compute metrics
             mae = loss_fn(y, y_pred)
@@ -203,12 +205,12 @@ def predict(rank, world_size, conf):
             print(print_str)
 
             # Save as numpy arrays for now
-            save_arr = state_transformer.inverse_transform(y_pred.cpu()).squeeze(0)
-            np.save(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_pred.npy"), save_arr)
-            #np.save(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_true.npy"), y.cpu())
+            # save_arr = state_transformer.inverse_transform(y_pred.cpu()).squeeze(0)
+            np.save(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_pred.npy"), y_pred.squeeze(0))
+            # np.save(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_true.npy"), y.cpu())
 
             pred_files.append(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_pred.npy"))
-            #true_files.append(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_true.npy"))
+            # true_files.append(os.path.join(save_location, f"{forecast_count}_{date_time}_{forecast_hour}_true.npy"))
 
             # Explicitly release GPU memory
             torch.cuda.empty_cache()
@@ -220,56 +222,145 @@ def predict(rank, world_size, conf):
                 df = pd.DataFrame(metrics_results)
                 df.to_csv(os.path.join(save_location, "metrics.csv"))
 
-                video_files = []
-                forecast_paths = os.path.join(save_location, f"{forecast_count}_*_*_pred.npy")
-                file_list = enumerate(sorted(glob.glob(forecast_paths)))
 
-                with Pool(processes=8) as pool:
-                    f = partial(
-                        draw_forecast,
-                        conf=conf,
-                        times=forecast_datetimes,
-                        forecast_count=forecast_count,
-                        save_location=save_location
-                    )
-                    video_files = pool.map(f, file_list)
+                # =============================================================================== #
+                # Data visualization for sigma level variables
+                sigma_levels = conf['visualization']['sigma_level_visualize']['visualize_levels']
+                
+                # start producing figures if level is not empty
+                if len(sigma_levels) > 0:
+                
+                    # collect forecast outputs
+                    forecast_paths = os.path.join(save_location, f"{forecast_count}_*_*_pred.npy")
+                    # generator of file_name, file_count
+                    file_list = enumerate(sorted(glob.glob(forecast_paths)))
+                    
+                    # the output session begins
+                    print('Preparing sigma level outputs')
+                    video_files = []
+                    
+                    ## parallelize draw_forecast func
+                    with Pool(processes=8) as pool:
+                        f = partial(draw_sigma_level, conf=conf, times=forecast_datetimes,
+                                    forecast_count=forecast_count, save_location=save_location)
+                        # collect output png file names
+                        video_files = pool.map(f, file_list)
+                        
+                    ## collect all png file names
+                    ## video_files[0] = f; video_files[1] = file_names
+                    video_files_all = [x[1] for x in sorted(video_files)]
+                    
+                    ## gif outpout name = png output name
+                    gif_name_prefix = conf['visualization']['sigma_level_visualize']['file_name_prefix']
+                    
+                    ## separate file names based on verticial levels
+                    ## one gif per level 
+                    for n_gif, sigma_level in enumerate(sigma_levels):
+                        video_files_single = []
+                        for filename_list in video_files_all:
+                            video_files_single.append(filename_list[n_gif])
+                            
+                        ## send all png files to the gif maker 
+                        gif_name = '{}_level{:02d}.gif'.format(gif_name_prefix, sigma_level)
+                        command_str = f'convert -delay 20 -loop 0 {" ".join(video_files_single)} {save_location}/{gif_name}'
+                        out = subprocess.Popen(command_str, shell=True, 
+                                               stdout=subprocess.PIPE, 
+                                               stderr=subprocess.PIPE).communicate()
+                        print(out)
+                        
+                # =============================================================================== #
+                # Data visualization for diagnostics
+                N_vars = len(conf['visualization']['diagnostic_variable_visualize']['variable_indices'])
+                
+                if N_vars > 0:
+                
+                    # collect forecast outputs
+                    forecast_paths = os.path.join(save_location, f"{forecast_count}_*_*_pred.npy")
+                    # generator of file_name, file_count
+                    file_list = enumerate(sorted(glob.glob(forecast_paths)))
+                    
+                    # the output session begins
+                    print('Preparing diagnostic outputs')
+                    video_files = []
+                    
+                    with Pool(processes=8) as pool:
+                        f = partial(draw_diagnostics, conf=conf, times=forecast_datetimes,
+                                    forecast_count=forecast_count, save_location=save_location)
+                        # collect output png file names
+                        video_files = pool.map(f, file_list)
+                        
+                    ## collect all png file names
+                    ## video_files[0] = f; video_files[1] = file_names
+                    video_files_all = [x[1] for x in sorted(video_files)]
+                    
+                    ## gif outpout name = png output name
+                    gif_name_prefix = conf['visualization']['diagnostic_variable_visualize']['file_name_prefix']
+                    
+                    ## send all png files to the gif maker 
+                    gif_name = '{}.gif'.format(gif_name_prefix)
+                    command_str = f'convert -delay 20 -loop 0 {" ".join(video_files_all)} {save_location}/{gif_name}'
+                    out = subprocess.Popen(command_str, shell=True, 
+                                           stdout=subprocess.PIPE, 
+                                           stderr=subprocess.PIPE).communicate()
+                    print(out)
 
-                video_files = [x[1] for x in sorted(video_files)]
-                command_str = f'convert -delay 20 -loop 0 {" ".join(video_files)} {save_location}/global.gif'
-                out = subprocess.Popen(command_str, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE).communicate()
-                print(out)
-
+                # =============================================================================== #
+                # Data visualization for diagnostics
+                N_vars = len(conf['visualization']['surface_visualize']['variable_indices'])
+                
+                if N_vars > 0:
+                
+                    # collect forecast outputs
+                    forecast_paths = os.path.join(save_location, f"{forecast_count}_*_*_pred.npy")
+                    # generator of file_name, file_count
+                    file_list = enumerate(sorted(glob.glob(forecast_paths)))
+                    
+                    # the output session begins
+                    print('Preparing surface outputs')
+                    video_files = []
+                    
+                    with Pool(processes=8) as pool:
+                        f = partial(draw_surface, conf=conf, times=forecast_datetimes,
+                                    forecast_count=forecast_count, save_location=save_location)
+                        # collect output png file names
+                        video_files = pool.map(f, file_list)
+                        
+                    ## collect all png file names
+                    ## video_files[0] = f; video_files[1] = file_names
+                    video_files_all = [x[1] for x in sorted(video_files)]
+                    
+                    ## gif outpout name = png output name
+                    gif_name_prefix = conf['visualization']['surface_visualize']['file_name_prefix']
+                    
+                    ## send all png files to the gif maker 
+                    gif_name = '{}.gif'.format(gif_name_prefix)
+                    command_str = f'convert -delay 20 -loop 0 {" ".join(video_files_all)} {save_location}/{gif_name}'
+                    out = subprocess.Popen(command_str, shell=True, 
+                                           stdout=subprocess.PIPE, 
+                                           stderr=subprocess.PIPE).communicate()
+                    print(out)
+                    
                 forecast_count += 1
                 metrics_results = defaultdict(list)
                 pred_files = []
-                true_files = []
+                # true_files = []
 
 
 if __name__ == "__main__":
 
     description = "Rollout AI-NWP forecasts"
     parser = ArgumentParser(description=description)
-    parser.add_argument(
-        "-c",
-        dest="model_config",
-        type=str,
-        default=False,
-        help="Path to the model configuration (yml) containing your inputs.",
-    )
-    parser.add_argument(
-        "-l",
-        dest="launch",
-        type=int,
-        default=0,
-        help="Submit workers to PBS.",
-    )
-    parser.add_argument(
-        "-w",
-        "--world-size",
-        type=int,
-        default=4,
-        help="Number of processes (world size) for multiprocessing"
-    )
+    # -------------------- #
+    # parser args: -c, -l, -w
+    parser.add_argument("-c", dest="model_config", type=str, default=False,
+                        help="Path to the model configuration (yml) containing your inputs.",)
+    
+    parser.add_argument("-l", dest="launch", type=int, default=0,
+                        help="Submit workers to PBS.",)
+    
+    parser.add_argument("-w", "--world-size", type=int, default=4,
+                        help="Number of processes (world size) for multiprocessing")
+    # parse
     args = parser.parse_args()
     args_dict = vars(args)
     config = args_dict.pop("model_config")
@@ -291,9 +382,10 @@ if __name__ == "__main__":
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
     # Create directories if they do not exist and copy yml file
-    os.makedirs(conf["save_loc"], exist_ok=True)
-    if not os.path.exists(os.path.join(conf["save_loc"], "model.yml")):
-        shutil.copy(config, os.path.join(conf["save_loc"], "model.yml"))
+    save_loc = os.path.expandvars(conf["save_loc"])
+    os.makedirs(save_loc, exist_ok=True)
+    if not os.path.exists(os.path.join(save_loc, "model.yml")):
+        shutil.copy(config, os.path.join(save_loc, "model.yml"))
 
     # Launch PBS jobs
     if launch:

@@ -69,114 +69,103 @@ class MSLELoss(nn.Module):
         loss = F.mse_loss(log_prediction, log_target, reduction=self.reduction)
         return loss
 
-
-class SpectralLossLocal(nn.Module):
-    def __init__(self, wavenum_init=20, reduction='none'):
-        super(SpectralLossLocal, self).__init__()
-        self.wavenum_init = wavenum_init
-        self.reduction = reduction
-
-    def forward(self, output, target, fft_dim=3):
-        device, dtype = output.device, output.dtype
-        output = output.float()
-        target = target.float()
-
-        # Take FFT over the 'lon' dimension
-        out_fft = torch.fft.rfft(output, dim=fft_dim)
-        target_fft = torch.fft.rfft(target, dim=fft_dim)
-
-        # Take absolute value
-        out_fft_abs = torch.abs(out_fft)
-        target_fft_abs = torch.abs(target_fft)
-
-        # Average over spatial dims
-        out_fft_mean = torch.mean(out_fft_abs, dim=(fft_dim - 1))
-        target_fft_mean = torch.mean(target_fft_abs, dim=(fft_dim - 1))
-
-        # Calculate loss2
-        loss2 = torch.abs(out_fft_mean[:, 0, self.wavenum_init:] - target_fft_mean[:, 0, self.wavenum_init:])
-        if self.reduction != 'none':
-            loss2 = torch.mean(loss2)
-
-        # Calculate loss3
-        loss3 = torch.abs(out_fft_mean[:, 1, self.wavenum_init:] - target_fft_mean[:, 1, self.wavenum_init:])
-        if self.reduction != 'none':
-            loss3 = torch.mean(loss3)
-
-        # Compute total loss
-        loss = 0.5 * loss2 + 0.5 * loss3
-
-        return loss.to(device=device, dtype=dtype)
-
 class SpectralLoss2D(torch.nn.Module):
     def __init__(self, wavenum_init=20, reduction='none'):
         super(SpectralLoss2D, self).__init__()
         self.wavenum_init = wavenum_init
         self.reduction = reduction
 
-    def forward(self, output, target, weights=None, fft_dim=3):
-        
+    def forward(self, output, target, weights=None, fft_dim=-1):
+        # code is currently for (..., lat, lon)
+        # todo: write for  (... lat, lon, ... ) 
         device, dtype = output.device, output.dtype
         output = output.float()
         target = target.float()
 
         # Take FFT over the 'lon' dimension
+        # (B, c, lat, lon)
+        # reduced fft to save memory, only computes up to nyquist freq. dims will always match
         out_fft = torch.fft.rfft(output, dim=fft_dim)
         target_fft = torch.fft.rfft(target, dim=fft_dim)
+        # (B, c, lat, wavenum)
 
         # Take absolute value
         out_fft_abs = torch.abs(out_fft)
         target_fft_abs = torch.abs(target_fft)
 
         if weights is not None:
-            color_channels = out_fft_abs.shape[1]
-            weights = weights.unsqueeze(1).permute(0, 3, 1, 2).to(device=device, dtype=dtype)
+            #weights.shape = (1, lat, 1)
+            weights = weights.permute(0, 2, 1).to(device=device, dtype=dtype)
+            # (1, 1, lat), matmul will broadcast as long as last dim is lat
             out_fft_abs = torch.matmul(weights, out_fft_abs)
             target_fft_abs = torch.matmul(weights, target_fft_abs)
-        
-        # Average over spatial dims
-        out_fft_mean = torch.mean(out_fft_abs, dim=(fft_dim - 1))
-        target_fft_mean = torch.mean(target_fft_abs, dim=(fft_dim - 1))
+            # matmul broadcasts over dims except last two, where it does a matrix mult
+            # (1, 1, 1, lat) x (B, c, T, lat, wavenum)
+            # does multiplication on submatrices (2d tensors) defined by last two dims
+            # result: (B, c, T, 1, wavenum), weighted sum over all wavenums 
+            # would probably be clearer to rewrite this using torch.mean and weight vector
+            
+            # to get average, need to normalize by the norm of the lat weights 
+            # so divide everything by |lat| to get a true average
+            # then remove lat dim, since its now averaged
+            out_fft_mean = (out_fft_abs / weights.shape[-1]).squeeze(fft_dim - 1) 
+            target_fft_mean = (target_fft_abs / weights.shape[-1]).squeeze(fft_dim - 1) 
+            # (B, c, T, wavenum)
+        else: # do regular average over latitudes
+            out_fft_mean = torch.mean(out_fft_abs, dim=(fft_dim - 1))
+            target_fft_mean = torch.mean(target_fft_abs, dim=(fft_dim - 1))
 
-        # Compute MSE 
-        loss = torch.square(out_fft_mean[:, :, self.wavenum_init:] -  target_fft_mean[:, :, self.wavenum_init:])
-        loss = torch.sqrt(loss.mean())
-
+        # Compute MSE, no sqrt according to FouRKS paper/ repo
+        loss = torch.square(out_fft_mean[..., self.wavenum_init:] - target_fft_mean[..., self.wavenum_init:])
+        loss = loss.mean()
         return loss.to(device=device, dtype=dtype)
+        
 
-
-class SpectralLoss3D(nn.Module):
+class PSDLoss(nn.Module):
     def __init__(self, wavenum_init=20):
-        super(SpectralLoss3D, self).__init__()
+        super(PSDLoss, self).__init__()
         self.wavenum_init = wavenum_init
 
-    def forward(self, output, target, fft_dim=4):
-        device, dtype = output.device, output.dtype
-        output = output.float()
+    def forward(self, target, pred, weights=None):
+        # weights.shape = (1, lat, 1)
+        device, dtype = pred.device, pred.dtype
         target = target.float()
+        pred = pred.float()
+        
+        # Calculate power spectra for true and predicted data
+        true_psd = self.get_psd(target, device, dtype)
+        pred_psd = self.get_psd(pred, device, dtype)
 
-        # Take FFT over the 'lon' dimension
-        out_fft = torch.fft.rfft(output, dim=fft_dim)
-        target_fft = torch.fft.rfft(target, dim=fft_dim)
-
-        # Take absolute value
-        out_fft_abs = torch.abs(out_fft)
-        target_fft_abs = torch.abs(target_fft)
-
-        # Average over spatial dims
-        out_fft_mean = torch.mean(out_fft_abs, dim=(fft_dim-1, fft_dim-2))
-        target_fft_mean = torch.mean(target_fft_abs, dim=(fft_dim-1, fft_dim-2))
-
-        # Calculate loss2
-        loss2 = torch.mean(torch.abs(out_fft_mean[:, 0, self.wavenum_init:] - target_fft_mean[:, 0, self.wavenum_init:]))
-
-        # Calculate loss3
-        loss3 = torch.mean(torch.abs(out_fft_mean[:, 1, self.wavenum_init:] - target_fft_mean[:, 1, self.wavenum_init:]))
-
-        # Compute total loss
-        loss = 0.5 * loss2 + 0.5 * loss3
-
+        # Logarithm transformation to normalize magnitudes
+        # Adding epsilon to avoid log(0)
+        true_psd_log = torch.log(true_psd + 1e-8)  
+        pred_psd_log = torch.log(pred_psd + 1e-8)
+        
+        # Calculate mean of squared distance weighted by latitude
+        lat_shape = pred_psd.shape[-2]
+        if weights is None: # weights for a normal average
+            weights = torch.full((1, lat_shape), 
+                                 1 / lat_shape, 
+                                 dtype=torch.float32
+                                ).to(device=device, dtype=dtype)
+        else:
+            weights = weights.permute(0,2,1).to(device=device, dtype=dtype) / weights.sum() 
+            # (1, lat, 1) -> (1, 1, lat)
+        #(B, C, t, lat, coeffs)
+        sq_diff = (true_psd_log[..., self.wavenum_init:] - pred_psd_log[..., self.wavenum_init:]) ** 2
+        
+        loss = torch.mean(torch.matmul(weights, sq_diff))
+        #(B, C, t, lat, coeffs) -> (B, C, t, 1, coeffs) -> ()
         return loss.to(device=device, dtype=dtype)
+    
+    def get_psd(self, f_x, device, dtype):
+        # (B, C, t, lat, lon)
+        f_k = torch.fft.rfft(f_x, dim=-1, norm='forward')
+        mult_by_two = torch.full(f_k.shape[-1:], 2.0, dtype=torch.float32).to(device=device, dtype=dtype)
+        mult_by_two[0] = 1.0 # except first coord
+        magnitudes = torch.real(f_k * torch.conj(f_k)) * mult_by_two
+        #(B, C, t, lat, coeffs)
+        return magnitudes  
 
 
 def latititude_weights(conf):
@@ -223,52 +212,6 @@ def variable_weights(conf, channels, surface_channels, frames):
     return variable_weights
 
 
-class TotalLoss2D(nn.Module):
-    def __init__(self, conf, validation=False):
-
-        super(TotalLoss2D, self).__init__()
-
-        self.conf = conf
-        self.training_loss = conf["loss"]["training_loss"]
-
-        channels = conf["model"]["channels"]
-        surface_channels = conf["model"]["surface_channels"]
-        frames = conf["model"]["frames"]
-        self.var_weights = variable_weights(conf, channels, surface_channels, frames) if conf["loss"][
-            "use_variable_weights"] else None
-        self.lat_weights = latititude_weights(conf) if conf["loss"]["use_latitude_weights"] else None
-
-        self.use_spectral_loss = conf["loss"]["use_spectral_loss"]
-        if self.use_spectral_loss:
-            self.spectral_lambda_reg = conf["loss"]["spectral_lambda_reg"]
-            self.spectral_loss_surface = SpectralLoss2D(
-                wavenum_init=conf["loss"]["spectral_wavenum_init"],
-                reduction='none'
-            )
-
-        self.validation = validation
-        if self.validation:
-            self.loss_fn = nn.L1Loss(reduction='none')
-        else:
-            self.loss_fn = load_loss(self.training_loss, reduction='none')  # nn.MSELoss(reduction='none')
-
-    def forward(self, target, pred):
-        loss = self.loss_fn(target, pred)
-
-        if self.lat_weights is not None:
-            loss *= self.lat_weights.to(target.device)
-        if not self.validation and self.var_weights is not None:
-            loss *= self.var_weights.to(target.device)
-
-        loss = loss.mean()
-
-        if not self.validation and self.use_spectral_loss:
-            # Add the spectral loss to the overall loss
-            loss += self.spectral_lambda_reg * self.spectral_loss_surface(target, pred).mean()
-
-        return loss
-
-
 class VariableTotalLoss2D(torch.nn.Module):
     def __init__(self, conf, validation=False):
 
@@ -280,7 +223,7 @@ class VariableTotalLoss2D(torch.nn.Module):
         lat_file = conf['loss']['latitude_weights']
         atmos_vars = conf['data']['variables']
         surface_vars = conf['data']['surface_variables']
-        levels = conf['model']['frames']
+        levels = conf['model']['levels'] if 'levels' in conf['model'] else conf['model']['frames']
 
         self.vars = [f"{v}_{k}" for v in atmos_vars for k in range(levels)]
         self.vars += surface_vars
@@ -291,7 +234,7 @@ class VariableTotalLoss2D(torch.nn.Module):
             w_lat = np.cos(np.deg2rad(lat))
             w_lat = w_lat / w_lat.mean()
             self.lat_weights = torch.from_numpy(w_lat).unsqueeze(0).unsqueeze(-1)
-            
+
         self.var_weights = None
         if conf["loss"]["use_variable_weights"]:
             var_weights = [value if isinstance(value, list) else [value] for value in conf["loss"]["variable_weights"].values()]
@@ -306,6 +249,11 @@ class VariableTotalLoss2D(torch.nn.Module):
                 reduction='none'
             )
 
+        self.use_power_loss = conf["loss"]["use_power_loss"] if "use_power_loss" in conf["loss"] else False
+        if self.use_power_loss:
+            self.power_lambda_reg = conf["loss"]["spectral_lambda_reg"]
+            self.power_loss = PSDLoss(wavenum_init=conf["loss"]["spectral_wavenum_init"])
+
         self.validation = validation
         if self.validation:
             self.loss_fn = nn.L1Loss(reduction='none')
@@ -313,12 +261,8 @@ class VariableTotalLoss2D(torch.nn.Module):
             self.loss_fn = load_loss(self.training_loss, reduction='none')
 
     def forward(self, target, pred):
-
         # User defined loss
-
         loss = self.loss_fn(target, pred)
-
-        # Add the spectral loss
 
         loss_dict = {}
         for i, var in enumerate(self.vars):
@@ -333,6 +277,10 @@ class VariableTotalLoss2D(torch.nn.Module):
             loss_dict[f"loss_{var}"] = loss_dict[f"loss_{var}"].mean()
 
         loss = torch.mean(torch.stack([loss for loss in loss_dict.values()]))
+        
+        # Add the spectral loss
+        if not self.validation and self.use_power_loss:
+            loss += self.power_lambda_reg * self.power_loss(target, pred, weights=self.lat_weights)
 
         if not self.validation and self.use_spectral_loss:
             loss += self.spectral_lambda_reg * self.spectral_loss_surface(target, pred, weights=self.lat_weights).mean()

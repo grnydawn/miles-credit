@@ -1,4 +1,4 @@
-save_loc: "/glade/work/schreck/repos/global/miles-credit/results/vit_multi_step_input/"
+save_loc: "/glade/work/$USER/repos/global/miles-credit/results/vit_multi_step_input/"
 seed: 1000
 
 data:
@@ -7,9 +7,9 @@ data:
     save_loc: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
     mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
     std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
-    history_len: 2 
+    history_len: 1
     forecast_len: 0
-    valid_history_len: 2
+    valid_history_len: 1
     valid_forecast_len: 0
     time_step: 1
     
@@ -75,9 +75,10 @@ model:
 loss: 
     training_loss: "mse"
     use_vgg: False
+    use_power_loss: True # use either power or spectral loss
     use_spectral_loss: False
-    spectral_wavenum_init: 15
-    spectral_lambda_reg: 0.025791372491084097
+    spectral_wavenum_init: 20
+    spectral_lambda_reg: 0.1 # power loss is order of 1e1 (usually between 1-10)
     use_latitude_weights: True
     latitude_weights: "/glade/u/home/wchapman/MLWPS/DataLoader/static_variables_ERA5_zhght.nc"
     use_variable_weights: False

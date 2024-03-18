@@ -1,4 +1,4 @@
-save_loc: "/glade/work/$USER/repos/global/miles-credit/results/fuxi/"
+save_loc: "/glade/work/$USER/repos/global/miles-credit/results/crossformer/"
 seed: 1000
 
 data:
@@ -15,8 +15,8 @@ data:
     
 trainer:
     mode: none # none, ddp, fsdp
-    train_batch_size: 1
-    valid_batch_size: 1
+    train_batch_size: 4
+    valid_batch_size: 4
     batches_per_epoch: 0 # Set to 0 to use len(dataloader)
     valid_batches_per_epoch: 100
     learning_rate: 5.0e-04
@@ -39,21 +39,29 @@ trainer:
     scheduler: {'scheduler_type': 'lambda'}
   
 model:
-    type: "fuxi"
+    type: "crossformer"
     image_height: 640    # Image height (default: 640)
-    patch_height: 16     # Patch height (default: 16)
+    patch_height: 2      # Patch height (default: 2)
     image_width: 1280    # Image width (default: 1280)
-    patch_width: 16      # Patch width (default: 16)
+    patch_width: 2       # Patch width (default: 2)
     levels: 15           # Number of levels (default: 15)
     frames: 2            # Number of frames (default: 2)
     frame_patch_size: 2  # Frame patch size (default: 2)
-    dim: 1024            # Dimension (default: 1536)
-    num_groups: 32       # Number of groups (default: 32)
     channels: 4          # Channels (default: 4)
     surface_channels: 7  # Surface channels (default: 7)
-    num_heads: 8         # Number of heads (default: 8)
-    window_size: 7       # Window size (default: 7)
-    depth: 4            # Depth of the swin transformer (default: 48)
+    dim: [64, 128, 256, 512]              # Dimensionality of each layer (default: [64, 128, 256, 512])
+    depth: [2, 2, 8, 2]                    # Depth of each layer (default: [2, 2, 8, 2])
+    global_window_size: [10, 5, 2, 1]      # Global window size for each layer (default: [10, 5, 2, 1])
+    local_window_size: 10                  # Local window size (default: 10)
+    cross_embed_kernel_sizes:             # Kernel sizes for cross-embedding (default: [[4, 8, 16, 32], [2, 4], [2, 4], [2, 4]])
+    - [4, 8, 16, 32]
+    - [2, 4]
+    - [2, 4]
+    - [2, 4]
+    cross_embed_strides: [4, 2, 2, 2]     # Strides for cross-embedding (default: [4, 2, 2, 2])
+    attn_dropout: 0.                      # Dropout probability for attention layers (default: 0.0)
+    ff_dropout: 0.                        # Dropout probability for feed-forward layers (default: 0.0)
+
     
 loss: 
     training_loss: "mse"
@@ -83,6 +91,45 @@ predict:
         ["1989-12-31 00:00:00", "1990-01-02 00:00:00"],
         ["2018-06-01 00:00:00", "2018-06-07 00:00:00"]
     ]
+
+visualization:
+    sigma_level_visualize:
+        variable_indices: [0, 1, 2, 3]   # the variable indices in **[data][variables][...]**
+        visualize_levels: [4, 8, 12]     # sigma levels (by their indices) to visualize 
+        variable_names: ['U wind [m/s]', # the name of each variable
+                         'V wind [m/s]', # must be consistent with **variable_indices**
+                         'Air temperature [$^\circ$K]',
+                         'Specific humidity [kg/kg]']
+        variable_factors: [1, 1, 1, 1]
+        variable_range: [auto, auto, auto, auto] # use auto or provide a list of [min_var, max_var]; it applies to all levels
+        colormaps: ['Spectral_r', 'Spectral_r', 'viridis_plasma', 'YlGn']
+        file_name_prefix: 'global_sigma'
+    diagnostic_variable_visualize:
+        variable_indices: [62, 63, 64, 65, 66]
+        variable_names: ['500 hPa V Wind [m/s]', 
+                         '500 hPa U Wind [m/s]',
+                         '500 hPa Air temperature [$^\circ$K]',
+                         '500 hPa Geopotential Height [km]',
+                         '500 hPa Specific humidity [kg/kg]']
+        variable_factors: [1, 1, 1, 0.001, 1]
+        variable_range: [auto, auto, [220, 300], auto, auto]
+        colormaps: ['Spectral_r', 'Spectral_r', 'viridis_plasma', 'Spectral_r', 'YlGn']
+        file_name_prefix: 'global_diagnostics'
+    surface_visualize:
+        variable_indices: [60, 61]
+        variable_names: ['Surface Pressure [hPa]', 
+                         '2-m Air Temperature [$^\circ$K]']
+        variable_factors: [0.01, 1]
+        variable_range: [[650, 1100], [200, 350]]
+        colormaps: ['Spectral_r', 'viridis_plasma',]
+        file_name_prefix: 'global_surface'
+    map_projection: 'EckertIII' # PlateCarree, LambertCylindrical, Miller, EckertIII, Mollweide, Robinson
+    save_options: {'dpi':250, 
+                   'orientation':'portrait', 
+                   'bbox_inches':'tight', 
+                   'pad_inches':0.1, 
+                   'transparent':False,
+                   'format':'png'}
 
 pbs: #derecho
     conda: "holodec"
