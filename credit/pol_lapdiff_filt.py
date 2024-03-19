@@ -69,7 +69,6 @@ def create_sigmoid_ramp_function(array_length, ramp_length):
     Returns:
     - An array of the specified length with the described ramp up and down using a sigmoid function.
     """
-    import numpy as np
     
     # Calculate the positions for ramp start and end
     ramp_up_end = ramp_length
@@ -357,7 +356,6 @@ class Diffusion_and_Pole_Filter:
         Returns:
         - Tuple of Tensors: The modified T components of the scalar field.
         """
-        T=T.clone()
         T = polfiltT(T.clone().detach(),self.indpol)
     
         for suby in range(substeps):
