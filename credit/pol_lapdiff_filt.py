@@ -222,14 +222,14 @@ class Diffusion_and_Pole_Filter:
         divspec2 = (self.lap*chispec)
     
         if idim == 1:
-            uchi, vchi = self.getuv(torch.stack((torch.zeros([divspec2.shape[0],divspec2.shape[1]]).to(device),divspec2)))
+            uchi, vchi = self.getuv(torch.stack((torch.zeros([divspec2.shape[0],divspec2.shape[1]]).to(self.device),divspec2)))
             return torch.squeeze(uchi), torch.squeeze(vchi)
         elif idim == 2:
-            uchi, vchi = self.getuv(torch.stack((torch.zeros([divspec2.shape[0],divspec2.shape[1]]).to(device),divspec2)))
+            uchi, vchi = self.getuv(torch.stack((torch.zeros([divspec2.shape[0],divspec2.shape[1]]).to(self.device),divspec2)))
             return uchi, vchi
         elif idim == 3:
             new_shape = (divspec2.shape[0], 2, *divspec2.shape[1:])
-            stacked_divspec = torch.zeros(new_shape,dtype=torch.complex64, device=device)
+            stacked_divspec = torch.zeros(new_shape,dtype=torch.complex64, device=self.device)
             # Copy the original data into the second slice of the new dimension
             stacked_divspec[:, 1, :, :] = divspec2
             backy = self.getuv(stacked_divspec)
