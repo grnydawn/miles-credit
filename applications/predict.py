@@ -280,7 +280,8 @@ def predict(rank, world_size, conf, pool, smm):
     metrics_results = defaultdict(list)
     loss_fn = VariableTotalLoss2D(conf, validation=True)
     
-    latds = xr.open_dataset(conf["loss"]["latitude_weights"])
+    # get lat/lons from x-array
+    latlons = xr.open_dataset(conf["loss"]["latitude_weights"])
     # Rollout
     with torch.no_grad():
         # forecast count = a constant for each run
@@ -463,16 +464,6 @@ if __name__ == "__main__":
     # Load the configuration and get the relevant variables
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
-
-    x_save_loc = conf['predict']['x_save_loc']
-    surf_save_loc = conf['predict']['surf_save_loc']
-
-    # if xarray already exists, just make images and movies
-    if x_save_loc and surf_save_loc:
-        print(f'making image from xarray files:\n{x_save_loc}\nsurf_save_loc\n')
-        dir = make_images_from_xarray(x_save_loc, surf_save_loc, conf)
-        #make_movie(dir, conf)
-        sys.exit()
 
     # Launch PBS jobs
     if launch:
