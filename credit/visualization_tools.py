@@ -292,7 +292,6 @@ def shared_mem_draw_wrapper(shm, level, step, visualization_key, conf, save_loca
     return draw_variables(pred, step, visualization_key, conf, save_location)
 
 
-
 def draw_variables(pred, step, visualization_key, conf=None, save_location=None):
     '''
     This function produces figures for given variables. 

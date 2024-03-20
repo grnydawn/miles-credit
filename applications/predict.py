@@ -190,9 +190,13 @@ def make_video(video_name_prefix, save_location, image_file_names, format='gif')
         cmd_cd = 'cd {}; '.format(save_location)
         cmd_ffmpeg = 'ffmpeg -y -f concat -i input.txt -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -r 1 -pix_fmt yuv420p {}'.format(output_name)
         command_str = cmd_cd + cmd_ffmpeg
-        out = subprocess.Popen(command_str, shell=True, 
+        out, err = subprocess.Popen(command_str, shell=True, 
                                stdout=subprocess.PIPE, 
                                stderr=subprocess.PIPE).communicate()
+        if err:
+            print('The process raised an error:', err.decode())
+        else:
+            print('--No errors--\n', out.decode())
     else:
         print('Video format not supported')
         raise
@@ -496,7 +500,7 @@ if __name__ == "__main__":
             print('Warning: forecast results will not be saved')
         pool.close()
         pool.join()
-
+    #exit the context before making videos
     
             
     # ---------------------------------------------------------------------------------- #
