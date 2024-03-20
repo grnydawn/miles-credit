@@ -296,7 +296,7 @@ class Fuxi(nn.Module):
     @classmethod
     def load_model(cls, conf):
         save_loc = conf['save_loc']
-        ckpt = os.path.join(save_loc, "checkpoint.pt")
+        ckpt = os.path.expandvars(os.path.join(save_loc, "checkpoint.pt"))
 
         if not os.path.isfile(ckpt):
             raise ValueError(

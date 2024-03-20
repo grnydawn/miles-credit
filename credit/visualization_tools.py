@@ -285,6 +285,14 @@ def colorbar_opt(fig, ax, cbar, cbar_extend):
     CBar.outline.set_linewidth(2.5)
     return CBar
 
+def shared_mem_draw_wrapper(shm, level, step, visualization_key, conf, save_location):
+    pred = xr.open_dataarray(bytes(shm.buf))
+    if visualization_key == 'sigma_level_visualize':
+        pred = pred.sel(level=level)
+    return draw_variables(pred, step, visualization_key, conf, save_location)
+
+
+
 def draw_variables(pred, step, visualization_key, conf=None, save_location=None):
     '''
     This function produces figures for given variables. 
