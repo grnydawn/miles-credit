@@ -43,6 +43,8 @@ from credit.metrics import LatWeightedMetrics
 from credit.transforms import ToTensor, NormalizeState
 from credit.seed import seed_everything
 from credit.pbs import launch_script, launch_script_mpi
+from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
+
 
 # ---------- #
 # visualization_tools is part of the credit now, but it requires a pip update
@@ -117,7 +119,7 @@ def make_xarray(pred, forecast_datetime, lat, lon, conf):
                                                 lat=lat, lon=lon))
     
     # save diagnostics and surface variables    
-    darray_single_level = xr.DataArray(tensor_single_level,
+    darray_single_level = xr.DataArray(tensor_single_level.squeeze(2),
                                        dims=['datetime', 'vars', 'lat', 'lon'],
                                        coords=dict(vars=conf['data']['surface_variables'],
                                                     datetime=[forecast_datetime],
@@ -282,6 +284,11 @@ def predict(rank, world_size, conf, pool, smm):
     
     # get lat/lons from x-array
     latlons = xr.open_dataset(conf["loss"]["latitude_weights"])
+
+    # Set up the diffusion and pole filters
+    dpf = Diffusion_and_Pole_Filter(nlat=conf["model"]["image_height"],
+                                    nlon=conf["model"]["image_width"], 
+                                    device=device)
     # Rollout
     with torch.no_grad():
         # forecast count = a constant for each run
@@ -325,21 +332,12 @@ def predict(rank, world_size, conf, pool, smm):
             
             # Predict
             y_pred = model(x)
-            
-            # Update the input
-            if history_len == 1:
-                x = y_pred.detach()
-            else:
-                # use multiple past forecast steps as inputs
-                x_detach = x[:, :, 1:].detach()
-                x = torch.cat([x_detach, y_pred.detach()], dim=2)
-                y = y.squeeze(2)
-                y_pred = y_pred.squeeze(2)
-            
-            # Convert back to quantites with physical units before computing metrics
-            y = state_transformer.inverse_transform(y.cpu())
+            # convert to real space for laplace filter and metrics
             y_pred = state_transformer.inverse_transform(y_pred.cpu())
-            
+            y = state_transformer.inverse_transform(y.cpu())
+
+            y_pred = dpf.diff_lap2d_filt(y_pred.to(device).squeeze()).unsqueeze(0).unsqueeze(2).cpu()
+
             # Compute metrics
             mae = loss_fn(y, y_pred)
             metrics_dict = metrics(y_pred.float(), y.float())
@@ -412,7 +410,19 @@ def predict(rank, world_size, conf, pool, smm):
                 job_result = pool.map_async(f, [shm_single_level,])
                 job_info.append(job_result)
                 filenames_surface.append(job_result)
-                
+            
+
+            # Update the input
+            # setup for next iteration, transform to z-space and send to device
+            y_pred = state_transformer.transform_array(y_pred).to(device)
+
+            if history_len == 1:
+                x = y_pred.detach()
+            else:
+                # use multiple past forecast steps as inputs
+                x_detach = x[:, :, 1:].detach()
+                x = torch.cat([x_detach, y_pred.detach()], dim=2)
+
             # Explicitly release GPU memory
             torch.cuda.empty_cache()
             gc.collect()

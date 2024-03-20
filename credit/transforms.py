@@ -33,6 +33,31 @@ class NormalizeState:
             return self.inverse_transform(sample)
         else:
             return self.transform(sample)
+        
+    def transform_array(self, x: torch.Tensor) -> torch.Tensor:
+        device = x.device
+        tensor = x[:, :(len(self.variables)*self.levels), :, :]
+        surface_tensor = x[:, (len(self.variables)*self.levels):, :, :]
+
+        # Reverse z-score normalization using the pre-loaded mean and std
+        transformed_tensor = tensor.clone()
+        k = 0
+        for name in self.variables:
+            for level in range(self.levels):
+                mean = self.mean_ds[name].values[level]
+                std = self.std_ds[name].values[level]
+                transformed_tensor[:, k] = (tensor[:, k] - mean) / std
+                k += 1
+
+        transformed_surface_tensor = surface_tensor.clone()
+        for k, name in enumerate(self.surface_variables):
+            mean = self.mean_ds[name].values
+            std = self.std_ds[name].values
+            transformed_surface_tensor[:, k] = (surface_tensor[:, k] - mean) / std
+
+        transformed_x = torch.cat((transformed_tensor, transformed_surface_tensor), dim=1)
+
+        return transformed_x.to(device)
 
     def transform(self, sample: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
         normalized_sample = {}
