@@ -58,6 +58,18 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 
+def get_num_cpus():
+    if "glade" in os.getcwd():
+        num_cpus = subprocess.run(
+            f"qstat -f $PBS_JOBID | grep Resource_List.ncpus",
+            shell=True,
+            capture_output=True,
+            encoding="utf-8",
+        ).stdout.split()[-1]
+    else:
+        num_cpus = os.cpu_count()
+    return int(num_cpus)
+
 def setup(rank, world_size, mode):
     logging.info(f"Running {mode.upper()} on rank {rank} with world_size {world_size}.")
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
@@ -473,7 +485,7 @@ if __name__ == "__main__":
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
     
-    with Pool(processes=4) as pool:
+    with Pool(processes=get_num_cpus()) as pool:
         if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
             list_darray_upper_air, list_darray_single_level, job_info, img_save_loc, filename_bundle = predict(
                 int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf, pool)
