@@ -14,7 +14,7 @@ def launch_script(config_file, script_path, launch=True):
     # Extract PBS options from the config
     pbs_options = config['pbs']
 
-    config_save_path = os.path.join(config["save_loc"], "model.yml")
+    config_save_path = os.path.expandvars(os.path.join(config["save_loc"], "model.yml"))
 
     # Generate the PBS script
     script = f"""#!/bin/bash -l
@@ -50,7 +50,7 @@ def launch_script(config_file, script_path, launch=True):
         jobid = jobid.decode("utf-8").strip("\n")
         print(jobid)
         if not os.path.exists(os.path.join(config["save_loc"], "launch.sh")):
-            shutil.copy('launch.sh', os.path.join(config["save_loc"], "launch.sh"))
+            shutil.copy('launch.sh', os.path.expandvars(os.path.join(config["save_loc"], "launch.sh")))
         os.remove("launch.sh")
 
 
@@ -70,7 +70,7 @@ def launch_script_mpi(config_file, script_path, launch=True):
     # Create the CUDA_VISIBLE_DEVICES string
     cuda_devices = ",".join(str(i) for i in range(total_gpus))
 
-    config_save_path = os.path.join(config["save_loc"], "model.yml")
+    config_save_path = os.path.expandvars(os.path.join(config["save_loc"], "model.yml"))
 
     # Generate the PBS script
     script = f'''#!/bin/bash

@@ -336,7 +336,7 @@ def draw_variables(pred, step, visualization_key, conf=None, save_location=None)
         ax = AX[i_var]
         
         # get the current variable
-        pred_draw = pred.sel(var=var) * var_factors[i_var]
+        pred_draw = pred.sel(vars=var) * var_factors[i_var]
         
         ## variable range
         var_lim = var_range[i_var]

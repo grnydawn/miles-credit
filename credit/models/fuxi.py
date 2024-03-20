@@ -307,7 +307,8 @@ class Fuxi(nn.Module):
             f"Loading a model with pre-trained weights from path {ckpt}"
         )
 
-        checkpoint = torch.load(ckpt)
+        checkpoint = torch.load(ckpt,
+                                map_location=torch.device('cpu') if not torch.cuda.is_available() else None)
 
         if "type" in conf["model"]:
             del conf["model"]["type"]

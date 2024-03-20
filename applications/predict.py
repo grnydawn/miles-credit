@@ -109,23 +109,19 @@ def make_xarray(pred, forecast_datetime, lat, lon, conf):
     tensor_upper_air, tensor_single_level = split_and_reshape(pred, conf)
     
     # save upper air variables
-    coords_info = dict(var=conf['data']['variables'],
-                       datetime=[forecast_datetime],
-                       level=range(conf['model']['levels']),
-                       lat=lat, lon=lon)
-    
     darray_upper_air = xr.DataArray(tensor_upper_air, 
-                                    dims=['datetime', 'var', 'level', 'lat', 'lon'],
-                                    coords=coords_info)
+                                    dims=['datetime', 'vars', 'level', 'lat', 'lon'],
+                                    coords=dict(vars=conf['data']['variables'],
+                                                datetime=[forecast_datetime],
+                                                level=range(conf['model']['levels']),
+                                                lat=lat, lon=lon))
     
-    # save diagnostics and surface variables
-    coords_info = dict(var=conf['data']['surface_variables'],
-                       datetime=[forecast_datetime],
-                       lat=lat, lon=lon)
-    
+    # save diagnostics and surface variables    
     darray_single_level = xr.DataArray(tensor_single_level,
-                                       dims=['datetime', 'var', 'lat', 'lon'],
-                                       coords=coords_info)
+                                       dims=['datetime', 'vars', 'lat', 'lon'],
+                                       coords=dict(vars=conf['data']['surface_variables'],
+                                                    datetime=[forecast_datetime],
+                                                    lat=lat, lon=lon))
     
     # return x-arrays as outputs 
     return darray_upper_air, darray_single_level
@@ -154,8 +150,18 @@ def save_netcdf(list_darray_upper_air, list_darray_single_level, conf):
     nc_filename_single_level = os.path.join(save_location, f'pred_surf_{init_datetime_str}.nc')
 
     # save x-arrays to netCDF
-    darray_upper_air_merge.to_netcdf(path=nc_filename_upper_air)
-    darray_single_level_merge.to_netcdf(path=nc_filename_single_level)
+    darray_upper_air_merge.name = 'upper_air'
+    darray_upper_air_merge.to_netcdf(path=nc_filename_upper_air, 
+                                    format='NETCDF4',
+                                    engine="netcdf4",
+                                    encoding=dict(upper_air={"zlib": True, "complevel": 1})
+                                    )
+    darray_single_level_merge.name = 'single_level'
+    darray_single_level_merge.to_netcdf(path=nc_filename_upper_air, 
+                                        format='NETCDF4',
+                                        engine="netcdf4",
+                                        encoding=dict(single_level={"zlib": True, "complevel": 1})
+                                        )
 
     # print out the saved file names
     print(f'wrote .nc files for upper air and surface vars:\n{nc_filename_upper_air}\n{nc_filename_single_level}')
@@ -194,6 +200,7 @@ def make_video(video_name_prefix, save_location, image_file_names, format='gif')
                                stdout=subprocess.PIPE, 
                                stderr=subprocess.PIPE).communicate()
         if err:
+            print(f'making movie with\n{command_str}\n')
             print('The process raised an error:', err.decode())
         else:
             print('--No errors--\n', out.decode())
@@ -214,8 +221,13 @@ def predict(rank, world_size, conf, pool, smm):
         setup(rank, world_size, conf["trainer"]["mode"])
 
     # infer device id from rank
-    device = torch.device(f"cuda:{rank % torch.cuda.device_count()}") if torch.cuda.is_available() else torch.device("cpu")
-    torch.cuda.set_device(rank % torch.cuda.device_count())
+    if torch.cuda.is_available(): 
+        device = torch.device(f"cuda:{rank % torch.cuda.device_count()}") 
+        torch.cuda.set_device(rank % torch.cuda.device_count())
+    else:
+        device = torch.device("cpu")
+    
+
 
     # Config settings
     seed = 1000 if "seed" not in conf else conf["seed"]
@@ -485,7 +497,9 @@ if __name__ == "__main__":
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
     
-    with Pool(processes=get_num_cpus() - 1) as pool, SharedMemoryManager() as smm:
+    num_cpus = get_num_cpus() 
+    print(f'using {num_cpus} cpus for image generation')
+    with Pool(processes=num_cpus - 1) as pool, SharedMemoryManager() as smm:
         if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
             list_darray_upper_air, list_darray_single_level, job_info, img_save_loc, filename_bundle = predict(
                 int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf, pool, smm)
