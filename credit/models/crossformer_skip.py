@@ -1,13 +1,15 @@
+import os
+import copy
 import torch
+import logging
+import torch.nn.functional as F
+import torch.distributed.checkpoint as DCP
+
 from torch import nn, einsum
 from einops import rearrange
 from einops.layers.torch import Rearrange
-import torch.nn.functional as F
-import os
-import torch.distributed.checkpoint as DCP
 from torch.distributed.fsdp import StateDictType
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-import logging
 
 
 logger = logging.getLogger(__name__)
@@ -307,7 +309,7 @@ class CrossFormer(nn.Module):
         ff_dropout=0.,
         pad_lon=0,
         pad_lat=0,
-        use_spectral_norm=False
+        use_spectral_norm=True
     ):
         super().__init__()
 
@@ -418,11 +420,11 @@ class CrossFormer(nn.Module):
         x = self.up_block4(x)
 
         if self.pad_lon > 0:
-            # calculate the average at the boundaries
-            avg = (x[..., :self.pad_lon] + x[..., -self.pad_lon:]) / 2
-            # replace the boundaries of x_padded with the average
-            x[..., :self.pad_lon] = avg[..., :self.pad_lon]
-            x[..., -self.pad_lon:] = avg[..., -self.pad_lon:]
+            # # calculate the average at the boundaries
+            # avg = (x[..., :self.pad_lon] + x[..., -self.pad_lon:]) / 2
+            # # replace the boundaries of x_padded with the average
+            # x[..., :self.pad_lon] = avg[..., :self.pad_lon]
+            # x[..., -self.pad_lon:] = avg[..., -self.pad_lon:]
 
             # slice to original size
             x = x[..., self.pad_lon:-self.pad_lon]
@@ -463,11 +465,15 @@ class CrossFormer(nn.Module):
 
     @classmethod
     def load_model(cls, conf):
-        save_loc = conf['save_loc']
-        if conf["trainer"]["mode"] == "fsdp":
-            ckpt = os.path.expandvars(os.path.join(f"{save_loc}", "model_checkpoint.pth"))
+        conf = copy.deepcopy(conf)
+        save_loc = os.path.expandvars(conf['save_loc'])
+
+        if os.path.isfile(os.path.join(save_loc, "model_checkpoint.pt")):
+            ckpt = os.path.join(save_loc, "model_checkpoint.pt")
+            fsdp = True
         else:
-            ckpt = os.path.expandvars(os.path.join(f"{save_loc}", "checkpoint.pt"))
+            ckpt = os.path.join(save_loc, "checkpoint.pt")
+            fsdp = False
 
         if not os.path.isfile(ckpt):
             raise ValueError(
@@ -487,7 +493,7 @@ class CrossFormer(nn.Module):
         model_class = cls(**conf["model"])
 
         model_class.load_state_dict(
-            checkpoint if conf["trainer"]["mode"] == "fsdp" else checkpoint["model_state_dict"]
+            checkpoint if fsdp else checkpoint["model_state_dict"]
         )
 
         return model_class
@@ -497,7 +503,7 @@ class CrossFormer(nn.Module):
         state_dict = {
             "model_state_dict": self.state_dict(),
         }
-        torch.save(state_dict, f"{save_loc}/checkpoint.pt")
+        torch.save(state_dict, os.path.join(f"{save_loc}", "checkpoint.pt"))
 
 
 if __name__ == "__main__":
