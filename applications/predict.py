@@ -215,7 +215,7 @@ def make_video(video_name_prefix, save_location, image_file_names, format="gif")
         ).communicate()
     elif format == "mp4":
         # write "input.txt" to summarize input images and frame settings
-        input_txt = os.path.join(save_location, "input.txt")
+        input_txt = os.path.join(save_location, f"input_{video_name_prefix}.txt")
         f = open(input_txt, "w")
         for i_file, filename in enumerate(image_file_names):
             if i_file == 0:
@@ -226,9 +226,7 @@ def make_video(video_name_prefix, save_location, image_file_names, format="gif")
 
         # cd to the save_location and run ffmpeg
         cmd_cd = "cd {}; ".format(save_location)
-        cmd_ffmpeg = 'ffmpeg -y -f concat -i input.txt -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -r 1 -pix_fmt yuv420p {}'.format(
-            output_name
-        )
+        cmd_ffmpeg = f'ffmpeg -y -f concat -i input_{video_name_prefix}.txt -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -r 1 -pix_fmt yuv420p {output_name}'
         command_str = cmd_cd + cmd_ffmpeg
         out, err = subprocess.Popen(
             command_str, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE

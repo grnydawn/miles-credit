@@ -10,7 +10,6 @@ dependencies:
   - pandas
   - matplotlib
   - cartopy
-  - ffmpeg
   - scikit-learn
   - pyarrow
   - pytest
@@ -36,5 +35,6 @@ dependencies:
     - torchsummary
     - vector_quantize_pytorch
     - timm>=0.9.12
+    - ffmpeg
     - .
 
