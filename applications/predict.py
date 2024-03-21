@@ -150,38 +150,55 @@ def save_netcdf(list_darray_upper_air, list_darray_single_level, conf):
     os.makedirs(save_location, exist_ok=True)
 
     # create file name to save upper air variables
-    nc_filename_upper_air = os.path.join(
-        save_location, f"pred_x_{init_datetime_str}.nc"
-    )
+    # nc_filename_upper_air = os.path.join(
+    #     save_location, f"pred_x_{init_datetime_str}.nc"
+    # )
 
-    # create file name to save surface variables
-    nc_filename_single_level = os.path.join(
-        save_location, f"pred_surf_{init_datetime_str}.nc"
-    )
+    # # create file name to save surface variables
+    # nc_filename_single_level = os.path.join(
+    #     save_location, f"pred_surf_{init_datetime_str}.nc"
+    # )
 
-    # save x-arrays to netCDF
-    darray_upper_air_merge.name = "upper_air"
-    darray_upper_air_merge.to_netcdf(
-        path=nc_filename_upper_air,
+    nc_filename_all = os.path.join(
+        save_location, f"pred_{init_datetime_str}.nc"
+    )
+    ds_x = darray_upper_air_merge.to_dataset(dim="vars")
+    ds_surf = darray_single_level_merge.to_dataset(dim="vars")
+    ds = xr.merge([ds_x, ds_surf])
+
+    ds.to_netcdf(
+        path=nc_filename_all,
         format="NETCDF4",
         engine="netcdf4",
-        encoding=dict(upper_air={"zlib": True, "complevel": 1}),
+        encoding={variable:{"zlib": True, "complevel": 1} for variable in ds.data_vars}
     )
-    darray_single_level_merge.name = "single_level"
-    darray_single_level_merge.to_netcdf(
-        path=nc_filename_single_level,
-        format="NETCDF4",
-        engine="netcdf4",
-        encoding=dict(single_level={"zlib": True, "complevel": 1}),
+    logger.info(
+        f"wrote .nc file for prediction: \n{nc_filename_all}"
     )
 
-    # print out the saved file names
-    print(
-        f"wrote .nc files for upper air and surface vars:\n{nc_filename_upper_air}\n{nc_filename_single_level}"
-    )
+    # # save x-arrays to netCDF
+    # darray_upper_air_merge.name = "upper_air"
+    # darray_upper_air_merge.to_netcdf(
+    #     path=nc_filename_upper_air,
+    #     format="NETCDF4",
+    #     engine="netcdf4",
+    #     encoding=dict(upper_air={"zlib": True, "complevel": 1}),
+    # )
+    # darray_single_level_merge.name = "single_level"
+    # darray_single_level_merge.to_netcdf(
+    #     path=nc_filename_single_level,
+    #     format="NETCDF4",
+    #     engine="netcdf4",
+    #     encoding=dict(single_level={"zlib": True, "complevel": 1}),
+    # )
+
+    # # print out the saved file names
+    # logger.info(
+    #     f"wrote .nc files for upper air and surface vars:\n{nc_filename_upper_air}\n{nc_filename_single_level}"
+    # )
 
     # return saved file names
-    return nc_filename_upper_air, nc_filename_single_level
+    return nc_filename_all
 
 
 def make_video(video_name_prefix, save_location, image_file_names, format="gif"):
@@ -217,12 +234,12 @@ def make_video(video_name_prefix, save_location, image_file_names, format="gif")
             command_str, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE
         ).communicate()
         if err:
-            print(f"making movie with\n{command_str}\n")
-            print("The process raised an error:", err.decode())
+            logger.info(f"making movie with\n{command_str}\n")
+            logger.info(f"The process raised an error:{err.decode()}")
         else:
-            print("--No errors--\n", out.decode())
+            logger.info(f"--No errors--\n{out.decode()}")
     else:
-        print("Video format not supported")
+        logger.info("Video format not supported")
         raise
 
 
@@ -507,8 +524,10 @@ def predict(rank, world_size, conf, pool, smm):
             if batch["stop_forecast"][0]:
                 break
     # save metrics csv
+    save_location = os.path.join(os.path.expandvars(conf["save_loc"]), "forecasts")
+    os.makedirs(save_location, exist_ok=True)  # should already be made above
     df = pd.DataFrame(metrics_results)
-    df.to_csv(os.path.join(os.path.expandvars(conf["save_loc"]), "metrics.csv"))
+    df.to_csv(os.path.join(save_location, f"metrics{init_time}.csv"))
 
     # collect all image file names for making videos
     filename_bundle = {}
@@ -599,7 +618,7 @@ if __name__ == "__main__":
     seed_everything(seed)
 
     num_cpus = get_num_cpus()
-    print(f"using {num_cpus} cpus for image generation")
+    logger.info(f"using {num_cpus} cpus for image generation")
     with Pool(processes=num_cpus - 1) as pool, SharedMemoryManager() as smm:
         if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
             (
@@ -622,12 +641,12 @@ if __name__ == "__main__":
 
         # save forecast results to file
         if conf["predict"]["save_format"] == "nc":
-            print("Save forecasts as netCDF format")
-            filename_upper_air, filename_single_level = save_netcdf(
+            logger.info("Save forecasts as netCDF format")
+            filename_netcdf = save_netcdf(
                 list_darray_upper_air, list_darray_single_level, conf
             )
         else:
-            print("Warning: forecast results will not be saved")
+            logger.info("Warning: forecast results will not be saved")
         pool.close()
         pool.join()
     # exit the context before making videos
@@ -646,7 +665,7 @@ if __name__ == "__main__":
 
     # more than one image --> making video for upper air variables
     if len(filenames_upper_air) > 1 and video_format in ["gif", "mp4"]:
-        print("Making video for upper air variables")
+        logger.info("Making video for upper air variables")
 
         # get the required model levels to plot
         sigma_levels = conf["visualization"]["sigma_level_visualize"][
@@ -674,11 +693,11 @@ if __name__ == "__main__":
                 format=video_format,
             )
     else:
-        print("SKipping video production for upper air variables")
+        logger.info("SKipping video production for upper air variables")
 
     # more than one image --> making video for diagnostics
     if len(filenames_diagnostics) > 1 and video_format in ["gif", "mp4"]:
-        print("Making video for diagnostic variables")
+        logger.info("Making video for diagnostic variables")
 
         # get file names
         video_name_prefix = conf["visualization"]["diagnostic_variable_visualize"][
@@ -690,11 +709,11 @@ if __name__ == "__main__":
             video_name_prefix, img_save_loc, filenames_diagnostics, format=video_format
         )
     else:
-        print("SKipping video production for diagnostic variables")
+        logger.info("SKipping video production for diagnostic variables")
 
     # more than one image --> making video for surface variables
     if len(filenames_surface) > 1 and video_format in ["gif", "mp4"]:
-        print("Making video for surface variables")
+        logger.info("Making video for surface variables")
 
         # get file names
         video_name_prefix = conf["visualization"]["surface_visualize"][
@@ -706,7 +725,7 @@ if __name__ == "__main__":
             video_name_prefix, img_save_loc, filenames_surface, format=video_format
         )
     else:
-        print("SKipping video production for surface variables")
+        logger.info("SKipping video production for surface variables")
 
 
 # # ------------------------------------------------------------------------------------------ #
