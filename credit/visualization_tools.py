@@ -25,7 +25,7 @@ ksha@ucar.edu
 # ---------- #
 # System
 from os.path import join
-
+import logging
 # ---------- #
 # Numerics
 import datetime
@@ -43,6 +43,8 @@ import cartopy.crs as ccrs
 import cartopy.mpl.geoaxes
 import cartopy.feature as cfeature
 
+
+logger = logging.getLogger(__name__)
 
 def cmap_combine(cmap1, cmap2):
     '''
@@ -72,7 +74,7 @@ def get_projection(proj_name):
     elif proj_name == 'EckertIII':
         return ccrs.EckertIII()
     else:
-        print('Porjection name unkown')
+        logger.info('Porjection name unkown')
         raise
 
 def get_colormap(cmap_strings):
@@ -158,7 +160,7 @@ def figure_panel_planner(var_num, proj):
     elif var_num == 5 or var_num == 6:
         return cartopy_panel6(var_num, figsize=(13, 9.75), proj=proj)
     else:
-        print('Built-in visualization tools cannot plot more than 6 variables at once.')
+        logger.info('Built-in visualization tools cannot plot more than 6 variables at once.')
         raise
         
 def cartopy_single_panel(figsize=(13, 6.5), proj=ccrs.EckertIII()):
@@ -375,5 +377,5 @@ def draw_variables(pred, step, visualization_key, conf=None, save_location=None)
     filename = join(save_location, save_name)
     plt.savefig(filename, **save_options)
     plt.close()
-    print(f'wrote {filename}')
+    logger.info(f'wrote {filename}')
     return filename 
