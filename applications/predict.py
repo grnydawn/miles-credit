@@ -45,13 +45,10 @@ from credit.seed import seed_everything
 from credit.pbs import launch_script, launch_script_mpi
 from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
 
-
+###
 # ---------- #
 # visualization_tools is part of the credit now, but it requires a pip update
-try:
-    from credit.visualization_tools import shared_mem_draw_wrapper
-except:
-    from visualization_tools import draw_variables
+from credit.visualization_tools import shared_mem_draw_wrapper
     
 # import wandb
 
@@ -286,9 +283,10 @@ def predict(rank, world_size, conf, pool, smm):
     latlons = xr.open_dataset(conf["loss"]["latitude_weights"])
 
     # Set up the diffusion and pole filters
-    dpf = Diffusion_and_Pole_Filter(nlat=conf["model"]["image_height"],
-                                    nlon=conf["model"]["image_width"], 
-                                    device=device)
+    if 'use_laplace_filter' in conf['predict'] and conf['predict']['use_laplace_filter']:
+        dpf = Diffusion_and_Pole_Filter(nlat=conf["model"]["image_height"],
+                                        nlon=conf["model"]["image_width"], 
+                                        device=device)
     # Rollout
     with torch.no_grad():
         # forecast count = a constant for each run
@@ -336,7 +334,8 @@ def predict(rank, world_size, conf, pool, smm):
             y_pred = state_transformer.inverse_transform(y_pred.cpu())
             y = state_transformer.inverse_transform(y.cpu())
 
-            y_pred = dpf.diff_lap2d_filt(y_pred.to(device).squeeze()).unsqueeze(0).unsqueeze(2).cpu()
+            if 'use_laplace_filter' in conf['predict'] and conf['predict']['use_laplace_filter']:
+                y_pred = dpf.diff_lap2d_filt(y_pred.to(device).squeeze()).unsqueeze(0).unsqueeze(2).cpu()
 
             # Compute metrics
             mae = loss_fn(y, y_pred)
@@ -429,6 +428,9 @@ def predict(rank, world_size, conf, pool, smm):
             
             if batch['stop_forecast'][0]:
                 break
+    # save metrics csv
+    df = pd.DataFrame(metrics_results)
+    df.to_csv(os.path.join(os.path.expandvars(conf["save_loc"]), "metrics.csv"))
 
     # collect all image file names for making videos
     filename_bundle = {}
