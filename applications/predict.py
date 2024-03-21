@@ -169,7 +169,7 @@ def save_netcdf(list_darray_upper_air, list_darray_single_level, conf):
     )
     darray_single_level_merge.name = "single_level"
     darray_single_level_merge.to_netcdf(
-        path=nc_filename_upper_air,
+        path=nc_filename_single_level,
         format="NETCDF4",
         engine="netcdf4",
         encoding=dict(single_level={"zlib": True, "complevel": 1}),
