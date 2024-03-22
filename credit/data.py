@@ -440,7 +440,7 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         self.tdimname = dnames[[d.lower() for d in dnames].index("time")]
         
         ## construct indexing arrays
-        zarrlen = [z.dims[self.tdimname] for z in self.zarrs]
+        zarrlen = [z.sizes[self.tdimname] for z in self.zarrs]
         whichseg = [list(repeat(s,z)) for s,z in zip(range(len(zarrlen)), zarrlen)]
         segindex = [list(range(z)) for z in zarrlen]
         
