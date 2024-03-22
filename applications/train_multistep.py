@@ -16,7 +16,6 @@ from echo.src.base_objective import BaseObjective
 import torch
 import torch.distributed as dist
 from torch.cuda.amp import GradScaler
-from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from torch.distributed.fsdp.fully_sharded_data_parallel import (
@@ -33,11 +32,10 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
    apply_activation_checkpointing,
 )
 from torchvision import transforms
-from torchsummary import summary
 
 from credit.models import load_model
 from credit.loss import VariableTotalLoss2D
-from credit.data import ERA5Dataset, DistributedSequentialDataset
+from credit.data import DistributedSequentialDataset
 from credit.transforms import ToTensor, NormalizeState
 from credit.scheduler import load_scheduler, annealed_probability
 from credit.trainer_multistep import Trainer
@@ -338,7 +336,7 @@ def main(rank, world_size, conf, trial=False):
     train_criterion = VariableTotalLoss2D(conf)
     valid_criterion = VariableTotalLoss2D(conf, validation=True)
 
-    ## Optional load stopping probability annealer
+    # Optional load stopping probability annealer
 
     # Set up some metrics
 
@@ -377,7 +375,7 @@ class Objective(BaseObjective):
 
         conf['model']['dim_head'] = conf['model']['dim']
         conf['model']['vq_codebook_dim'] = conf['model']['dim']
-        
+
         try:
             return main(0, 1, conf, trial=trial)
 

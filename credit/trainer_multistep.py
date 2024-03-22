@@ -59,9 +59,6 @@ class Trainer:
     ):
 
         batches_per_epoch = conf['trainer']['batches_per_epoch']
-        grad_accum_every = conf['trainer']['grad_accum_every']
-        history_len = conf["data"]["history_len"]
-        forecast_len = conf["data"]["forecast_len"]
         amp = conf['trainer']['amp']
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
         teacher_forcing_ratio = conf['trainer']['teacher_forcing_ratio']
@@ -93,7 +90,7 @@ class Trainer:
         for steps in range(batches_per_epoch):
 
             logs = {}
-            loss = 0 
+            loss = 0
             stop_forecast = False
 
             with autocast(enabled=amp):
@@ -102,6 +99,7 @@ class Trainer:
 
                     batch = next(dl)
 
+                    y_pred = None  # Place holder that gets updated after first roll-out
                     for i, forecast_hour in enumerate(batch["forecast_hour"]):
 
                         if forecast_hour == 0:  # use true x -- initial condition time-step
@@ -132,20 +130,20 @@ class Trainer:
                                 if distributed:
                                     dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
                                 results_dict[f"train_{name}"].append(value[0].item())
-                
+
                             # scale, accumulate, backward
                             if self.update_on_step:
                                 scaler.scale(loss).backward()
                                 accum_log(logs, {'loss': loss.item()})
-                
+
                                 if distributed:
                                     torch.distributed.barrier()
-                
+
                                 scaler.step(optimizer)
                                 scaler.update()
                                 optimizer.zero_grad()
                                 loss = 0
-                            
+
                             if batch['stop_forecast'][i]:
                                 stop_forecast = True
 
@@ -157,10 +155,10 @@ class Trainer:
                 if not self.update_on_step:
                     scaler.scale(loss).backward()
                     accum_log(logs, {'loss': loss.item()})
-    
+
                     if distributed:
                         torch.distributed.barrier()
-    
+
                     scaler.step(optimizer)
                     scaler.update()
                     optimizer.zero_grad()
@@ -239,6 +237,8 @@ class Trainer:
         stop_forecast = False
         with torch.no_grad():
             for k, batch in enumerate(valid_loader):
+
+                y_pred = None  # Place holder that gets updated after first roll-out
                 for i in batch["forecast_hour"]:
 
                     if i == 0:  # use true x -- initial condition time-step
