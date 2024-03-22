@@ -5,6 +5,8 @@ import xarray as xr
 import netCDF4 as nc
 from credit.data import Sample
 from typing import Dict
+import pandas as pd
+from bridgescaler import read_scaler
 
 
 logger = logging.getLogger(__name__)
