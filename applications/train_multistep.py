@@ -1,32 +1,27 @@
 import warnings
-from torch.utils.data.distributed import DistributedSampler
-import torch
-import torch.distributed as dist
-import functools
-from echo.src.base_objective import BaseObjective
-
-from argparse import ArgumentParser
-from pathlib import Path
-
-import torch.fft
-import logging
-import shutil
-
-import wandb
-import glob
 import os
 import sys
+import glob
 import yaml
+import wandb
 import optuna
+import shutil
+import logging
+import functools
 
+from pathlib import Path
+from argparse import ArgumentParser
+from echo.src.base_objective import BaseObjective
+
+import torch
+import torch.distributed as dist
 from torch.cuda.amp import GradScaler
-from torch.distributed.fsdp import StateDictType
+from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
-import torch.distributed.checkpoint as DCP
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from torch.distributed.fsdp.fully_sharded_data_parallel import (
-    CPUOffload,
+    MixedPrecision,
+    CPUOffload
 )
 from torch.distributed.fsdp.wrap import (
     transformer_auto_wrap_policy,
@@ -37,18 +32,24 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
    CheckpointImpl,
    apply_activation_checkpointing,
 )
-
 from torchvision import transforms
+from torchsummary import summary
 
 from credit.models import load_model
 from credit.loss import VariableTotalLoss2D
 from credit.data import ERA5Dataset, DistributedSequentialDataset
 from credit.transforms import ToTensor, NormalizeState
 from credit.scheduler import load_scheduler, annealed_probability
-from credit.trainer_deprecated import Trainer
+from credit.trainer_multistep import Trainer
 from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything
+from credit.models.checkpoint import (
+    TorchFSDPModel,
+    FSDPOptimizerWrapper,
+    TorchFSDPCheckpointIO
+)
+from credit.mixed_precision import parse_dtype
 
 
 warnings.filterwarnings("ignore")
@@ -68,67 +69,49 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
     forecast_len = conf["data"]["forecast_len"]
     valid_history_len = conf["data"]["valid_history_len"]
     valid_forecast_len = conf["data"]["valid_forecast_len"]
-    time_step = conf["data"]["time_step"]
+    rollout_p = conf["trainer"]["rollout_p"]
 
     history_len = history_len if is_train else valid_history_len
     forecast_len = forecast_len if is_train else valid_forecast_len
     shuffle = is_train
     name = "Train" if is_train else "Valid"
-
-    if history_len > 1 and forecast_len > 0:
-        dataset = DistributedSequentialDataset(
-            filenames=files,
-            history_len=history_len,
-            forecast_len=forecast_len,
-            skip_periods=time_step,
-            world_size=world_size,
-            rank=rank,
-            shuffle=shuffle,
-            transform=transforms.Compose([
-                NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"]),
-                ToTensor(history_len=history_len, forecast_len=forecast_len),
-            ]),
-        )
-        sampler = None
-        logging.info(
-            f"{name} (forecast length = {forecast_len}): Loaded a distributed sequential ERA dataset which contains its own distributed sampler"
-        )
-    else:
-        dataset = ERA5Dataset(
-            filenames=files,
-            history_len=history_len,
-            forecast_len=forecast_len,
-            skip_periods=time_step,
-            transform=transforms.Compose([
-                NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"]),
-                ToTensor(history_len=history_len, forecast_len=forecast_len),
-            ]),
-        )
-        sampler = DistributedSampler(
-            dataset,
-            num_replicas=world_size,
-            rank=rank,
-            seed=seed,
-            shuffle=shuffle,
-            drop_last=True
-        )
-        logging.info(f"{name} (forecast length = {forecast_len}): Loaded an ERA dataset, and a distributed sampler")
+    dataset = DistributedSequentialDataset(
+        filenames=files,
+        history_len=history_len,
+        forecast_len=forecast_len,
+        skip_periods=1,
+        world_size=world_size,
+        rank=rank,
+        shuffle=shuffle,
+        rollout_p=rollout_p if is_train else 0.0,
+        transform=transforms.Compose([
+            NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"]),
+            ToTensor(history_len=history_len, forecast_len=forecast_len),
+        ]),
+    )
+    sampler = None
+    logging.info(
+        f"{name} (forecast length = {forecast_len + 1}): Loaded a distributed sequential ERA dataset which contains its own distributed sampler"
+    )
     return dataset, sampler
 
 
-def distributed_model_wrapper(conf, vae, device):
+def distributed_model_wrapper(conf, neural_network, device):
 
     if conf["trainer"]["mode"] == "fsdp":
 
-        if "use_rotary" in conf["model"]:
-            from credit.rvt import Attention, FeedForward
-        else:
-            from credit.vit2d import Attention, FeedForward
+        # Define the sharding policies
 
-        # Define two policies
+        if "crossformer" in conf["model"]["type"]:
+            from credit.models.crossformer_skip import Attention as Attend
+        elif "fuxi" in conf["model"]["type"]:
+            from credit.models.fuxi import UTransformer as Attend
+        else:
+            raise OSError("You asked for FSDP but only crossformer and fuxi are currently supported.")
+
         auto_wrap_policy1 = functools.partial(
             transformer_auto_wrap_policy,
-            transformer_layer_cls={Attention, FeedForward}
+            transformer_layer_cls={Attend}
         )
 
         auto_wrap_policy2 = functools.partial(
@@ -136,51 +119,75 @@ def distributed_model_wrapper(conf, vae, device):
         )
 
         def combined_auto_wrap_policy(module, recurse, nonwrapped_numel):
-            # Define a new policy that combines the two
-            return auto_wrap_policy1(module, recurse, nonwrapped_numel) or auto_wrap_policy2(module, recurse, nonwrapped_numel)
+            # Define a new policy that combines policies
+            p1 = auto_wrap_policy1(module, recurse, nonwrapped_numel)
+            p2 = auto_wrap_policy2(module, recurse, nonwrapped_numel)
+            return p1 or p2
 
-        model = FSDP(
-            vae,
-            use_orig_params=True,  #needed if using torch.compile
+        # Mixed precision
+
+        use_mixed_precision = conf["trainer"]["use_mixed_precision"] if "use_mixed_precision" in conf["trainer"] else False
+
+        logging.info(f"Using mixed_precision: {use_mixed_precision}")
+
+        if use_mixed_precision:
+            for key, val in conf["trainer"]["mixed_precision"].items():
+                conf["trainer"]["mixed_precision"][key] = parse_dtype(val)
+            mixed_precision_policy = MixedPrecision(**conf["trainer"]["mixed_precision"])
+        else:
+            mixed_precision_policy = None
+
+        # CPU offloading
+
+        cpu_offload = conf["trainer"]["cpu_offload"] if "cpu_offload" in conf["trainer"] else False
+
+        logging.info(f"Using CPU offloading: {cpu_offload}")
+
+        # FSDP module
+
+        model = TorchFSDPModel(
+            neural_network,
+            use_orig_params=True,
             auto_wrap_policy=combined_auto_wrap_policy,
-            # mixed_precision=torch.distributed.fsdp.MixedPrecision(
-            #     param_dtype=torch.float16,
-            #     reduce_dtype=torch.float16,
-            #     buffer_dtype=torch.float16,
-            #     #cast_forward_inputs=True
-            # ),
-            #sharding_strategy=ShardingStrategy.FULL_SHARD # Zero3. Zero2 = ShardingStrategy.SHARD_GRAD_OP
-            cpu_offload=CPUOffload(offload_params=True)
+            mixed_precision=mixed_precision_policy,
+            cpu_offload=CPUOffload(offload_params=cpu_offload)
         )
 
         # activation checkpointing on the transformer blocks
-        # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
 
-#         non_reentrant_wrapper = functools.partial(
-#             checkpoint_wrapper,
-#             checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-#         )
+        activation_checkpoint = conf["trainer"]["activation_checkpoint"] if "activation_checkpoint" in conf["trainer"] else False
 
-#         check_fn = lambda submodule: (isinstance(submodule, Attention) or isinstance(submodule, FeedForward))
+        logging.info(f"Activation checkpointing: {activation_checkpoint}")
 
-#         apply_activation_checkpointing(
-#             model,
-#             checkpoint_wrapper_fn=non_reentrant_wrapper,
-#             check_fn=check_fn
-#         )
+        if activation_checkpoint:
+
+            # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
+
+            non_reentrant_wrapper = functools.partial(
+                checkpoint_wrapper,
+                checkpoint_impl=CheckpointImpl.NO_REENTRANT,
+            )
+
+            check_fn = lambda submodule: isinstance(submodule, Attend)
+
+            apply_activation_checkpointing(
+                model,
+                checkpoint_wrapper_fn=non_reentrant_wrapper,
+                check_fn=check_fn
+            )
 
     elif conf["trainer"]["mode"] == "ddp":
-        model = DDP(vae, device_ids=[device])
+        model = DDP(neural_network, device_ids=[device])
     else:
-        model = vae
+        model = neural_network
 
     return model
 
 
-def load_model_and_optimizer(conf, model, device):
+def load_model_states_and_optimizer(conf, model, device):
 
     start_epoch = conf['trainer']['start_epoch']
-    save_loc = conf['save_loc']
+    save_loc = os.path.expandvars(conf['save_loc'])
     learning_rate = float(conf['trainer']['learning_rate'])
     weight_decay = float(conf['trainer']['weight_decay'])
     amp = conf['trainer']['amp']
@@ -189,55 +196,30 @@ def load_model_and_optimizer(conf, model, device):
     #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
     if start_epoch == 0 and not load_weights:  # Loaded after loading model weights when reloading
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
+        if conf["trainer"]["mode"] == "fsdp":
+            optimizer = FSDPOptimizerWrapper(optimizer, model)
         scheduler = load_scheduler(optimizer, conf)
         scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
 
     # load optimizer and grad scaler states
     else:
-        ckpt = f"{save_loc}/checkpoint.pt" #if conf["trainer"]["mode"] != "ddp" else f"{save_loc}/checkpoint_{device}.pt"
+        ckpt = os.path.join(save_loc, "checkpoint.pt")
         checkpoint = torch.load(ckpt, map_location=device)
-
         if conf["trainer"]["mode"] == "fsdp":
             logging.info(f"Loading FSDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-
-            # wait for all workers to get the model loaded
-            torch.distributed.barrier()
-
-            # tell torch how we are loading the data in (e.g. sharded states)
-            FSDP.set_state_dict_type(
-                model,
-                StateDictType.SHARDED_STATE_DICT,
-            )
-            # different from ``torch.load()``, DCP requires model state_dict prior to loading to get
-            # the allocated storage and sharding information.
-            state_dict = {
-                "model_state_dict": model.state_dict(),
-            }
-            DCP.load_state_dict(
-                state_dict=state_dict,
-                storage_reader=DCP.FileSystemReader(os.path.join(save_loc, "checkpoint")),
-            )
-            model.load_state_dict(state_dict["model_state_dict"])
-
-            # Load the optimizer here on all ranks
-            # https://github.com/facebookresearch/fairscale/issues/1083
             optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
-            curr_opt_state_dict = checkpoint["optimizer_state_dict"]
-            optim_shard_dict = model.get_shard_from_optim_state_dict(curr_opt_state_dict)
-            # https://www.facebook.com/pytorch/videos/part-5-loading-and-saving-models-with-fsdp-full-state-dictionary/421104503278422/
-            # says to use scatter_full_optim_state_dict
-            optimizer.load_state_dict(optim_shard_dict)
-
-        elif conf["trainer"]["mode"] == "ddp":
-            logging.info(f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-            model.module.load_state_dict(checkpoint["model_state_dict"])
-            optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
+            optimizer = FSDPOptimizerWrapper(optimizer, model)
+            checkpoint_io = TorchFSDPCheckpointIO()
+            checkpoint_io.load_unsharded_model(model, os.path.join(save_loc, "model_checkpoint.pt"))
             if 'load_optimizer' in conf['trainer'] and conf['trainer']['load_optimizer']:
-                optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-
+                checkpoint_io.load_unsharded_optimizer(optimizer, os.path.join(save_loc, "optimizer_checkpoint.pt"))
         else:
-            logging.info(f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-            model.load_state_dict(checkpoint["model_state_dict"])
+            if conf["trainer"]["mode"] == "ddp":
+                logging.info(f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+                model.module.load_state_dict(checkpoint["model_state_dict"])
+            else:
+                logging.info(f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+                model.load_state_dict(checkpoint["model_state_dict"])
             optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
             if 'load_optimizer' in conf['trainer'] and conf['trainer']['load_optimizer']:
                 optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -247,6 +229,11 @@ def load_model_and_optimizer(conf, model, device):
         if scheduler is not None:
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         scaler.load_state_dict(checkpoint['scaler_state_dict'])
+
+    # Enable updating the lr if not using a policy
+    if (conf["trainer"]["update_learning_rate"] if "update_learning_rate" in conf["trainer"] else False):
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = learning_rate
 
     return model, optimizer, scheduler, scaler
 
@@ -344,7 +331,7 @@ def main(rank, world_size, conf, trial=False):
 
     # Load an optimizer, scheduler, and gradient scaler from disk if epoch > 0
 
-    model, optimizer, scheduler, scaler = load_model_and_optimizer(conf, model, device)
+    model, optimizer, scheduler, scaler = load_model_states_and_optimizer(conf, model, device)
 
     # Train and validation losses
 

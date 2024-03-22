@@ -1,29 +1,27 @@
 import warnings
-from torch.utils.data.distributed import DistributedSampler
-import torch
-import torch.distributed as dist
-import functools
-from echo.src.base_objective import BaseObjective
-
-from argparse import ArgumentParser
-from pathlib import Path
-
-import torch.fft
-import logging
-import shutil
-
-import wandb
-import glob
 import os
 import sys
+import glob
 import yaml
+import wandb
 import optuna
+import shutil
+import logging
+import functools
 
+from pathlib import Path
+from argparse import ArgumentParser
+from echo.src.base_objective import BaseObjective
+
+import torch
+import torch.distributed as dist
 from torch.cuda.amp import GradScaler
+from torch.utils.data.distributed import DistributedSampler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from torch.distributed.fsdp.fully_sharded_data_parallel import (
-    MixedPrecision
+    MixedPrecision,
+    CPUOffload
 )
 from torch.distributed.fsdp.wrap import (
     transformer_auto_wrap_policy,
@@ -34,7 +32,6 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
    CheckpointImpl,
    apply_activation_checkpointing,
 )
-
 from torchvision import transforms
 from torchsummary import summary
 
@@ -47,7 +44,11 @@ from credit.trainer import Trainer
 from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything
-from credit.models.checkpoint import TorchFSDPModel, FSDPOptimizerWrapper, TorchFSDPCheckpointIO
+from credit.models.checkpoint import (
+    TorchFSDPModel,
+    FSDPOptimizerWrapper,
+    TorchFSDPCheckpointIO
+)
 from credit.mixed_precision import parse_dtype
 
 
@@ -56,6 +57,9 @@ warnings.filterwarnings("ignore")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
+
+# https://stackoverflow.com/questions/59129812/how-to-avoid-cuda-out-of-memory-in-pytorch
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 
 def setup(rank, world_size, mode):
@@ -95,7 +99,7 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
         shuffle=shuffle,
         drop_last=True
     )
-    logging.info(f"{name} (forecast length = {forecast_len}): Loaded an ERA dataset, and a distributed sampler")
+    logging.info(f" Loaded a {name} ERA dataset, and a distributed sampler (forecast length = {forecast_len + 1})")
 
     return dataset, sampler
 
@@ -154,7 +158,7 @@ def distributed_model_wrapper(conf, neural_network, device):
             use_orig_params=True,
             auto_wrap_policy=combined_auto_wrap_policy,
             mixed_precision=mixed_precision_policy,
-            cpu_offload=cpu_offload
+            cpu_offload=CPUOffload(offload_params=cpu_offload)
         )
 
         # activation checkpointing on the transformer blocks
@@ -188,7 +192,7 @@ def distributed_model_wrapper(conf, neural_network, device):
     return model
 
 
-def load_model_and_optimizer(conf, model, device):
+def load_model_states_and_optimizer(conf, model, device):
 
     start_epoch = conf['trainer']['start_epoch']
     save_loc = os.path.expandvars(conf['save_loc'])
@@ -217,19 +221,13 @@ def load_model_and_optimizer(conf, model, device):
             checkpoint_io.load_unsharded_model(model, os.path.join(save_loc, "model_checkpoint.pt"))
             if 'load_optimizer' in conf['trainer'] and conf['trainer']['load_optimizer']:
                 checkpoint_io.load_unsharded_optimizer(optimizer, os.path.join(save_loc, "optimizer_checkpoint.pt"))
-            # wait for all workers to get the model loaded
-            torch.distributed.barrier()
-
-        elif conf["trainer"]["mode"] == "ddp":
-            logging.info(f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-            model.module.load_state_dict(checkpoint["model_state_dict"])
-            optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
-            if 'load_optimizer' in conf['trainer'] and conf['trainer']['load_optimizer']:
-                optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-
         else:
-            logging.info(f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-            model.load_state_dict(checkpoint["model_state_dict"])
+            if conf["trainer"]["mode"] == "ddp":
+                logging.info(f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+                model.module.load_state_dict(checkpoint["model_state_dict"])
+            else:
+                logging.info(f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+                model.load_state_dict(checkpoint["model_state_dict"])
             optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
             if 'load_optimizer' in conf['trainer'] and conf['trainer']['load_optimizer']:
                 optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
@@ -240,10 +238,43 @@ def load_model_and_optimizer(conf, model, device):
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
         scaler.load_state_dict(checkpoint['scaler_state_dict'])
 
-    # for param_group in optimizer.param_groups:
-    #     param_group['lr'] = learning_rate
+    # Enable updating the lr if not using a policy
+    if (conf["trainer"]["update_learning_rate"] if "update_learning_rate" in conf["trainer"] else False):
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = learning_rate
 
     return model, optimizer, scheduler, scaler
+
+
+def model_and_memory_summary(conf):
+    # Config settings
+
+    channels = conf["model"]["levels"] * len(conf["data"]["variables"]) + len(conf["data"]["surface_variables"])
+    frames = conf["model"]["frames"]
+    height = conf["model"]["image_height"]
+    width = conf["model"]["image_width"]
+    device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
+
+    # Set seeds
+
+    seed = 1000 if "seed" not in conf else conf["seed"]
+    seed_everything(seed)
+
+    # model
+
+    m = load_model(conf)
+
+    # send the module to the correct device first
+
+    m.to(device)
+
+    try:
+        summary(m, input_size=(channels, frames, height, width))
+    except RuntimeError as e:
+        if "CUDA" in str(e):
+            logging.warning(f"CUDA out of memory error occurred: {e}.")
+        else:
+            logging.warning(f"An error occurred: {e}")
 
 
 def main(rank, world_size, conf, trial=False):
@@ -328,20 +359,13 @@ def main(rank, world_size, conf, trial=False):
     m.to(device)
     # m = torch.compile(m)
 
-    if rank == 0:
-        channels = conf["model"]["levels"] * len(conf["data"]["variables"]) + len(conf["data"]["surface_variables"])
-        frames = conf["model"]["frames"]
-        height = conf["model"]["image_height"]
-        width = conf["model"]["image_width"]
-        summary(m, input_size=(channels, frames, height, width))
-
     # Wrap in DDP or FSDP module, or none
 
     model = distributed_model_wrapper(conf, m, device)
 
-    # Load an optimizer, scheduler, and gradient scaler from disk if epoch > 0
+    # Load model weights (if any), an optimizer, scheduler, and gradient scaler
 
-    model, optimizer, scheduler, scaler = load_model_and_optimizer(conf, model, device)
+    model, optimizer, scheduler, scaler = load_model_states_and_optimizer(conf, model, device)
 
     # Train and validation losses
 
@@ -413,6 +437,7 @@ if __name__ == "__main__":
     parser = ArgumentParser(description=description)
     parser.add_argument(
         "-c",
+        "--config",
         dest="model_config",
         type=str,
         default=False,
@@ -426,16 +451,27 @@ if __name__ == "__main__":
         help="Submit workers to PBS.",
     )
     parser.add_argument(
-        "-w",
-        "--world-size",
+        "-s",
+        "--summary",
+        dest="summary",
         type=int,
-        default=4,
-        help="Number of processes (world size) for multiprocessing"
+        default=0,
+        help="Get a summary of the models size and memory footprint"
+    )
+    parser.add_argument(
+        "-w",
+        "--wandb",
+        dest="wandb",
+        type=int,
+        default=0,
+        help="Use wandb. Default = False"
     )
     args = parser.parse_args()
     args_dict = vars(args)
     config = args_dict.pop("model_config")
     launch = int(args_dict.pop("launch"))
+    print_summary = int(args_dict.pop("summary"))
+    use_wandb = int(args_dict.pop("wandb"))
 
     # Set up logger to print stuff
     root = logging.getLogger()
@@ -458,6 +494,10 @@ if __name__ == "__main__":
     if not os.path.exists(os.path.join(save_loc, "model.yml")):
         shutil.copy(config, os.path.join(save_loc, "model.yml"))
 
+    if print_summary:
+        model_and_memory_summary(conf)
+        sys.exit()
+
     # Launch PBS jobs
     if launch:
         # Where does this script live?
@@ -470,13 +510,14 @@ if __name__ == "__main__":
             launch_script_mpi(config, script_path)
         sys.exit()
 
-#     wandb.init(
-#         # set the wandb project where this run will be logged
-#         project="Derecho parallelism",
-#         name=f"Worker {os.environ["RANK"]} {os.environ["WORLD_SIZE"]}"
-#         # track hyperparameters and run metadata
-#         config=conf
-#     )
+    if use_wandb:  # this needs updated
+        wandb.init(
+            # set the wandb project where this run will be logged
+            project="Derecho parallelism",
+            name=f"Worker {os.environ['RANK']} {os.environ['WORLD_SIZE']}",
+            # track hyperparameters and run metadata
+            config=conf
+        )
 
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)

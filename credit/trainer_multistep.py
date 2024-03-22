@@ -65,7 +65,7 @@ class Trainer:
         amp = conf['trainer']['amp']
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
         teacher_forcing_ratio = conf['trainer']['teacher_forcing_ratio']
-        rollout_p = 1.0 if 'stop_rollout' not in conf['trainer'] else conf['trainer']['stop_rollout']
+        rollout_p = 1.0 if 'rollout_p' not in conf['trainer'] else conf['trainer']['rollout_p']
 
         # update the learning rate if epoch-by-epoch updates that dont depend on a metric
         if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "lambda":
@@ -93,115 +93,77 @@ class Trainer:
         for steps in range(batches_per_epoch):
 
             logs = {}
+            loss = 0 
+            stop_forecast = False
 
-            if history_len == 1 or forecast_len == 0:  # single-step training or multi-step input single-step output
+            with autocast(enabled=amp):
 
-                for _ in range(grad_accum_every):
+                while not stop_forecast:
 
                     batch = next(dl)
 
-                    commit_loss = 0.0
+                    for i, forecast_hour in enumerate(batch["forecast_hour"]):
 
-                    with autocast(enabled=amp):
+                        if forecast_hour == 0:  # use true x -- initial condition time-step
+                            x_atmo = batch["x"]
+                            x_surf = batch["x_surf"]
+                            x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
+                        elif torch.rand(1).item() < teacher_forcing_ratio:  # Teacher forcing - use true x input with probability p
+                            x_atmo = batch["x"]
+                            x_surf = batch["x_surf"]
+                            x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
+                        else:  # use model's predictions
+                            x_detach = x[:, :, 1:].detach()
+                            x = torch.cat([x_detach, y_pred.detach()], dim=2)
 
-                        x_atmo = batch["x"][:, 0] if history_len == 1 else batch["x"]  # deprecated
-                        x_surf = batch["x_surf"][:, 0] if history_len == 1 else batch["x_surf"]  # deprecated
-                        x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
+                        y_pred = self.model(x)
 
-                        y_atmo = batch["y"][:, 0] if history_len == 1 else batch["y"]  # deprecated
-                        y_surf = batch["y_surf"][:, 0] if history_len == 1 else batch["y_surf"]  # deprecated
-                        y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
+                        # probability of stopping a forecast rollout early
+                        if batch['stop_forecast'][i] or self.update_on_step:
+                            y_atmo = batch["y"].unsqueeze(1)
+                            y_surf = batch["y_surf"].unsqueeze(1)
+                            y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
+                            loss += criterion(y.to(y_pred.dtype), y_pred).mean()
 
-                        if getattr(self.model, 'use_codebook', False):
-                            y_pred, cm_loss = self.model(x)
-                            commit_loss += cm_loss
-                        else:
-                            y_pred = self.model(x)
-
-                        loss = criterion(y.to(y_pred.dtype), y_pred)
-
-                        # Metrics
-                        metrics_dict = metrics(y_pred.float(), y.float())
-                        for name, value in metrics_dict.items():
-                            value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
-                            if distributed:
-                                dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
-                            results_dict[f"train_{name}"].append(value[0].item())
-
-                        loss = loss.mean() + commit_loss
-
-                        scaler.scale(loss / grad_accum_every).backward()
-
-                    accum_log(logs, {'loss': loss.item() / grad_accum_every})
-
-                if distributed:
-                    torch.distributed.barrier()
-
-                scaler.step(optimizer)
-                scaler.update()
-                optimizer.zero_grad()
-
-            else:  # multi-step training
-
-                loss, commit_loss = 0.0, 0.0
-                stop_forecast = False
-
-                with autocast(enabled=amp):
-
-                    while not stop_forecast:
-
-                        batch = next(dl)
-
-                        for i, forecast_hour in enumerate(batch["forecast_hour"]):
-
-                            if forecast_hour == 0:  # use true x -- initial condition time-step
-                                x_atmo = batch["x"][0:1]
-                                x_surf = batch["x_surf"][0:1]
-                                x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
-                            elif torch.rand(1).item() < teacher_forcing_ratio:  # Teacher forcing - use true x input with probability p
-                                x_atmo = batch["x"][i % len(batch["forecast_hour"])].unsqueeze(0)
-                                x_surf = batch["x_surf"][i % len(batch["forecast_hour"])].unsqueeze(0)
-                                x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
-                            else:  # use model's predictions
-                                x = y_pred
-
-                            if getattr(self.model, 'use_codebook', False):
-                                y_pred, cm_loss = self.model(x)
-                                commit_loss += cm_loss
-                            else:
-                                y_pred = self.model(x)
-
-                            # probability of stopping a forecast rollout early
+                            # Metrics
+                            metrics_dict = metrics(y_pred.float(), y.float())
+                            for name, value in metrics_dict.items():
+                                value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
+                                if distributed:
+                                    dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
+                                results_dict[f"train_{name}"].append(value[0].item())
+                
+                            # scale, accumulate, backward
+                            if self.update_on_step:
+                                scaler.scale(loss).backward()
+                                accum_log(logs, {'loss': loss.item()})
+                
+                                if distributed:
+                                    torch.distributed.barrier()
+                
+                                scaler.step(optimizer)
+                                scaler.update()
+                                optimizer.zero_grad()
+                                loss = 0
+                            
                             if batch['stop_forecast'][i]:
-                                y_atmo = batch["y"][i % len(batch["forecast_hour"])].unsqueeze(0)
-                                y_surf = batch["y_surf"][i % len(batch["forecast_hour"])].unsqueeze(0)
-                                y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
-                                loss += criterion(y.to(y_pred.dtype), y_pred).mean() + commit_loss
-
-                                # Metrics
-                                metrics_dict = metrics(y_pred.float(), y.float())
-                                for name, value in metrics_dict.items():
-                                    value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
-                                    if distributed:
-                                        dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
-                                    results_dict[f"train_{name}"].append(value[0].item())
                                 stop_forecast = True
-                                break
 
-                            else:
-                                y_pred = y_pred.detach()
+                    if stop_forecast:
+                        break
 
                 # scale, accumulate, backward
 
-                scaler.scale(loss).backward()
-                accum_log(logs, {'loss': loss.item()})
-
-                if distributed:
-                    torch.distributed.barrier()
-
-                scaler.step(optimizer)
-                scaler.update()
-                optimizer.zero_grad()
+                if not self.update_on_step:
+                    scaler.scale(loss).backward()
+                    accum_log(logs, {'loss': loss.item()})
+    
+                    if distributed:
+                        torch.distributed.barrier()
+    
+                    scaler.step(optimizer)
+                    scaler.update()
+                    optimizer.zero_grad()
 
             batch_loss = torch.Tensor([logs["loss"]]).cuda(self.device)
             if distributed:
@@ -277,77 +239,38 @@ class Trainer:
         stop_forecast = False
         with torch.no_grad():
             for k, batch in enumerate(valid_loader):
+                for i in batch["forecast_hour"]:
 
-                if history_len == 1 or forecast_len == 0:  # single-step options (t-N, ..., t) -> t+1
-                    x_atmo = batch["x"][:, 0] if history_len == 1 else batch["x"]  # deprecated
-                    x_surf = batch["x_surf"][:, 0] if history_len == 1 else batch["x_surf"]  # deprecated
-                    x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
+                    if i == 0:  # use true x -- initial condition time-step
+                        x_atmo = batch["x"]
+                        x_surf = batch["x_surf"]
+                        x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
+                    else:  # use model's predictions
+                        x_detach = x[:, :, 1:].detach()
+                        x = torch.cat([x_detach, y_pred.detach()], dim=2)
 
-                    y_atmo = batch["y"][:, 0] if history_len == 1 else batch["y"]  # deprecated
-                    y_surf = batch["y_surf"][:, 0] if history_len == 1 else batch["y_surf"]  # deprecated
-                    y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
+                    y_pred = self.model(x)
 
-                    if getattr(self.model, 'use_codebook', False):
-                        y_pred, cm_loss = self.model(x)
-                    else:
-                        y_pred = self.model(x)
+                    # stop after user-defined number of steps
+                    if i == forecast_len:
+                        y_atmo = batch["y"].unsqueeze(1)
+                        y_surf = batch["y_surf"].unsqueeze(1)
+                        y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
 
-                    loss = criterion(y.to(y_pred.dtype), y_pred)
+                        loss = criterion(y.to(y_pred.dtype), y_pred).mean()
 
-                    # Metrics
-                    metrics_dict = metrics(y_pred.float(), y.float())
-                    for name, value in metrics_dict.items():
-                        value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
-                        if distributed:
-                            dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
-                        results_dict[f"valid_{name}"].append(value[0].item())
+                        # Metrics
+                        metrics_dict = metrics(y_pred.float(), y.float())
+                        for name, value in metrics_dict.items():
+                            value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
+                            if distributed:
+                                dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
+                            results_dict[f"valid_{name}"].append(value[0].item())
+                        stop_forecast = True
+                        break
 
-                    batch_loss = torch.Tensor([loss.item()]).cuda(self.device)
-                    if distributed:
-                        torch.distributed.barrier()
-                    results_dict["valid_loss"].append(batch_loss[0].item())
-
-                else:  # multi-step
-
-                    for i in batch["forecast_hour"]:
-
-                        if i == 0:  # use true x -- initial condition time-step
-                            x_atmo = batch["x"][0:1]
-                            x_surf = batch["x_surf"][0:1]
-                            x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
-                        else:  # use model's predictions
-                            x = y_pred
-
-                        commit_loss = 0
-                        if getattr(self.model, 'use_codebook', False):
-                            y_pred, cm_loss = self.model(x)
-                            commit_loss += cm_loss
-                        else:
-                            y_pred = self.model(x)
-
-                        # stop after user-defined number of steps
-                        if i == (history_len - 1):
-                            y_atmo = batch["y"][i % len(batch["forecast_hour"])].unsqueeze(0)
-                            y_surf = batch["y_surf"][i % len(batch["forecast_hour"])].unsqueeze(0)
-                            y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
-
-                            loss = criterion(y.to(y_pred.dtype), y_pred).mean() + commit_loss
-
-                            # Metrics
-                            metrics_dict = metrics(y_pred.float(), y.float())
-                            for name, value in metrics_dict.items():
-                                value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
-                                if distributed:
-                                    dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
-                                results_dict[f"valid_{name}"].append(value[0].item())
-                            stop_forecast = True
-                            break
-
-                        else:
-                            y_pred = y_pred.detach()
-
-                    if not stop_forecast:
-                        continue
+                if not stop_forecast:
+                    continue
 
                 batch_loss = torch.Tensor([loss.item()]).cuda(self.device)
                 if distributed:
@@ -399,6 +322,7 @@ class Trainer:
         save_loc = conf['save_loc']
         start_epoch = conf['trainer']['start_epoch']
         epochs = conf['trainer']['epochs']
+        self.update_on_step = conf['trainer']['update_on_step'] if 'update_on_step' in conf['trainer'] else False
 
         # Reload the results saved in the training csv if continuing to train
         if start_epoch == 0:
