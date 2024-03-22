@@ -12,7 +12,9 @@ from torchvision import transforms as tforms
 
 logger = logging.getLogger(__name__)
 
+
 def load_transforms(conf):
+
     if conf["data"]["scaler_type"] == 'quantile':
         transform_scaler = NormalizeState_Quantile(scaler_file=conf["data"]["quant_path"])
     elif conf["data"]["scaler_type"] == 'std':
@@ -130,7 +132,7 @@ class NormalizeState_Quantile:
         self.scaler_surf = self.scaler_surfs.sum()
         self.variables = variables 
         self.surface_variables = surface_variables 
-        self.levels = 15
+        self.levels = levels
 
     def __call__(self, sample: Sample, inverse: bool = False) -> Sample:
         if inverse:
@@ -252,7 +254,7 @@ class ToTensor:
         self.for_len = int(conf["data"]["forecast_len"])
         self.variables = conf["data"]["variables"]
         self.surface_variables = conf["data"]["surface_variables"]
-        self.allvars = variables + surface_variables
+        self.allvars = self.variables + self.surface_variables
         self.static_variables = conf["data"]["static_variables"]
 
     def __call__(self, sample: Sample) -> Sample:
@@ -292,7 +294,7 @@ class ToTensor:
                 return_dict['y'] = y
 
         if self.static_variables:
-            DSD = xr.open_dataset(conf["loss"]["latitude_weights"])
+            DSD = xr.open_dataset(self.conf["loss"]["latitude_weights"])
             arrs = []
             for sv in self.static_variables:
 
