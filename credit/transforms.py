@@ -7,10 +7,26 @@ from credit.data import Sample
 from typing import Dict
 import pandas as pd
 from bridgescaler import read_scaler
+from torchvision import transforms as tforms
 
 
 logger = logging.getLogger(__name__)
 
+def load_transforms(conf):
+    if conf["data"]["scaler_type"] == 'quantile':
+        transform_scaler = NormalizeState_Quantile(scaler_file=conf["data"]["quant_path"])
+    elif conf["data"]["scaler_type"] == 'std':
+        transform_scaler = NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"])
+    else:
+        logger.log('scaler type not supported check data: scaler_type in config file')
+        raise
+
+    to_tensor_scaler = ToTensor(conf=conf)
+    
+    return tforms.Compose([
+            transform_scaler,
+            to_tensor_scaler,
+        ])
 
 class NormalizeState:
     def __init__(
@@ -229,21 +245,15 @@ class NormalizeTendency:
 
 
 class ToTensor:
-    def __init__(
-        self,
-        history_len=1,
-        forecast_len=2,
-        variables=['U', 'V', 'T', 'Q'],
-        surface_variables=['SP', 't2m', 'V500', 'U500', 'T500', 'Z500', 'Q500'],
-        static_variables=None
-    ):
-
-        self.hist_len = int(history_len)
-        self.for_len = int(forecast_len)
-        self.variables = variables
-        self.surface_variables = surface_variables
+    def __init__(self, conf):
+        
+        self.conf = conf        
+        self.hist_len = int(conf["data"]["history_len"])
+        self.for_len = int(conf["data"]["forecast_len"])
+        self.variables = conf["data"]["variables"]
+        self.surface_variables = conf["data"]["surface_variables"]
         self.allvars = variables + surface_variables
-        self.static_variables=static_variables
+        self.static_variables = conf["data"]["static_variables"]
 
     def __call__(self, sample: Sample) -> Sample:
 
@@ -280,8 +290,9 @@ class ToTensor:
                 y = torch.as_tensor(np.hstack([np.expand_dims(x, axis=1) for x in concatenated_vars]))
                 return_dict['y_surf'] = y_surf.permute(1, 0, 2, 3)
                 return_dict['y'] = y
-        if self.static_variables is not None:
-            DSD = xr.open_dataset('/glade/u/home/wchapman/MLWPS/DataLoader/LSM_static_variables_ERA5_zhght.nc')
+
+        if self.static_variables:
+            DSD = xr.open_dataset(conf["loss"]["latitude_weights"])
             arrs = []
             for sv in self.static_variables:
 
