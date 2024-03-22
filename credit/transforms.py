@@ -92,6 +92,90 @@ class NormalizeState:
         return transformed_x.to(device)
 
 
+class NormalizeState_Quantile:
+    """Class to use the bridgescaler Quantile functionality.
+    Some hoops have to be jumped thorugh, and the efficiency could be
+    improved if we were to retrain the bridgescaler.
+    """
+    def __init__(
+        self,
+        scaler_file = "/glade/campaign/cisl/aiml/credit_scalers/era5_quantile_scalers_2024-02-13_07:33.parquet",
+        variables=['U', 'V', 'T', 'Q'],
+        surface_variables=['SP', 't2m', 'V500', 'U500', 'T500', 'Z500', 'Q500'],
+        levels=15
+    ):
+        self.scaler_file = scaler_file
+        self.scaler_df = pd.read_parquet(scaler_file)
+        self.scaler_3ds = self.scaler_df["scaler_3d"].apply(read_scaler)
+        self.scaler_surfs = self.scaler_df["scaler_surface"].apply(read_scaler)
+        self.scaler_3d = self.scaler_3ds.sum()
+        self.scaler_surf = self.scaler_surfs.sum()
+        self.variables = variables 
+        self.surface_variables = surface_variables 
+        self.levels = 15
+
+    def __call__(self, sample: Sample, inverse: bool = False) -> Sample:
+        if inverse:
+            return self.inverse_transform(sample)
+        else:
+            return self.transform(sample)
+
+    def inverse_transform(self, x: torch.Tensor) -> torch.Tensor:
+        device = x.device
+        tensor = x[:, :(len(self.variables)*self.levels), :, :]  #B, Var, H, W
+        surface_tensor = x[:, (len(self.variables)*self.levels):, :, :]  #B, Var, H, W
+        #beep
+        # Reverse quantile transform using bridge scaler:
+        transformed_tensor = tensor.clone()
+        transformed_surface_tensor = surface_tensor.clone()
+        #3dvars
+        rscal_3d = np.transpose(torch.Tensor.numpy(x[:,:(len(self.variables)*self.levels),:,:].values),(0, 2, 3, 1))
+        self.scaler_3d.inverse_transform(rscal_3d)
+        tensor[:, :, :, :] = torch.tensor(np.transpose(rscal_3d), (0, 3, 1, 2)).to(device)
+        #surf
+        rscal_surf = np.transpose(torch.Tensor.numpy(x[:,(len(self.variables)*self.levels):,:,:].values),(0, 2, 3, 1))
+        self.scaler_surf.inverse_transform(rscal_surf)
+        tensor[:, :, :, :] = torch.tensor(np.transpose(rscal_surf), (0, 3, 1, 2)).to(device)
+        #cat them
+        transformed_x = torch.cat((transformed_tensor, transformed_surface_tensor), dim=1)
+        #return
+        return transformed_x.to(device)
+
+    def transform(self, sample: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        normalized_sample = {}
+        for key, value in sample.items():
+            if isinstance(value, xr.Dataset):
+                var_levels=[]
+                for var in self.variables:
+                    levels=value.level.values
+                    for level in levels:
+                        var_levels.append(f"{var}_{level:d}")
+                ds_times = (value["time"].values)
+                for time in ds_times:
+                    var_slices = []
+                    for var in self.variables:
+                        for level in levels:
+                            var_slices.append(value[var].sel(time=time, level=level))
+
+                    e3d = xr.concat(var_slices, pd.Index(var_levels, name="variable")
+                                ).transpose("latitude", "longitude", "variable")
+                    TTtrans = self.scaler_3d.transform(e3d)
+                    #this is bad and should be fixed: 
+                    value['U'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,:15].values, (2, 0, 1))
+                    value['V'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,15:30].values, (2, 0, 1))
+                    value['T'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,30:45].values, (2, 0, 1))
+                    value['Q'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,45:60].values, (2, 0, 1))
+                        
+                    e_surf = xr.concat([value[v].sel(time=time) for v in self.surface_variables], pd.Index(self.surface_variables, name="variable")
+                                   ).transpose("latitude", "longitude", "variable")
+                    TTtrans = self.scaler_surf.transform(e_surf)
+    
+                    for ee,varvar in enumerate(self.surface_variables):    
+                        value[varvar].sel(time=time)[:,:]=TTtrans[:,:,ee]
+            normalized_sample[key]=value
+        return normalized_sample
+
+
 class NormalizeTendency:
     def __init__(self, variables, surface_variables, base_path):
         self.variables = variables
@@ -148,7 +232,8 @@ class ToTensor:
         history_len=1,
         forecast_len=2,
         variables=['U', 'V', 'T', 'Q'],
-        surface_variables=['SP', 't2m', 'V500', 'U500', 'T500', 'Z500', 'Q500']
+        surface_variables=['SP', 't2m', 'V500', 'U500', 'T500', 'Z500', 'Q500'],
+        static_variables=None
     ):
 
         self.hist_len = int(history_len)
@@ -156,6 +241,7 @@ class ToTensor:
         self.variables = variables
         self.surface_variables = surface_variables
         self.allvars = variables + surface_variables
+        self.static_variables=static_variables
 
     def __call__(self, sample: Sample) -> Sample:
 
@@ -192,5 +278,18 @@ class ToTensor:
                 y = torch.as_tensor(np.hstack([np.expand_dims(x, axis=1) for x in concatenated_vars]))
                 return_dict['y_surf'] = y_surf.permute(1, 0, 2, 3)
                 return_dict['y'] = y
+        if self.static_variables is not None:
+            DSD = xr.open_dataset('/glade/u/home/wchapman/MLWPS/DataLoader/LSM_static_variables_ERA5_zhght.nc')
+            arrs = []
+            for sv in self.static_variables:
+
+                if sv == 'SP':
+                    arr = 2*torch.tensor(np.array(((DSD['SP']-DSD['SP'].max())/(DSD['SP'].min()-DSD['SP'].max()))))
+                else: 
+                   arr = DSD[sv].squeeze()
+
+                arrs.append(arr)
+            
+            return_dict['static']=np.stack(arrs, axis=0)
 
         return return_dict
