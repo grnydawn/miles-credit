@@ -9,6 +9,7 @@ from torch.utils.data.distributed import DistributedSampler
 import torch.utils.data
 import datetime
 import os
+from functools import reduce
 from glob import glob
 from itertools import repeat
 from timeit import timeit
@@ -346,7 +347,6 @@ class ERA5Dataset(torch.utils.data.Dataset):
 
 
     
-from functools import reduce
                                     
 ## flatten list-of-list
 def flatten(array):
@@ -354,8 +354,15 @@ def flatten(array):
 
 ## lazy-load & merge zarr stores; compat="override" needed for mixing
 ## 2D & 3D vars on different levels
-def lazymerge(zlist):
-    return xr.merge([get_forward_data(z) for z in zlist], compat="override")
+#def lazymerge(zlist):
+#    return xr.merge([get_forward_data(z) for z in zlist], compat="override")
+def lazymerge(zlist, rename=None):
+    zarrs = [get_forward_data(z) for z in zlist]
+    if rename is not None:
+        oldname = flatten([list(z.keys()) for z in zarrs])  ## this will break on multi-var zarr stores
+        zarrs = [z.rename_vars({old:new}) for z, old, new in zip(zarrs, oldname, rename)]
+    return(xr.merge(zarrs))
+
 
 ## dataclass decorator avoids lots of self.x=x and gets us free __repr__
 @dataclass
@@ -387,8 +394,8 @@ class CONUS404Dataset(torch.utils.data.Dataset):
     
     zarrpath:     str = "/glade/campaign/ral/risc/DATA/conus404/zarr"
     varnames:     List[str] = field(default_factory=list)
-    history_len:  int = 1
-    forecast_len: int = 2
+    history_len:  int = 2
+    forecast_len: int = 1
     transform:    Optional[Callable] = None
     seed:         int = 22
     skip_periods: int = None
@@ -411,7 +418,7 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         ## get file paths
         zdict = {}
         for v in self.varnames:
-            zdict[v] = sorted(glob(self.zarrpath+"/"+v+"/"+v+".*.zarr"))
+            zdict[v] = sorted(glob(os.path.join(self.zarrpath,v,v+".*.zarr")))
 
         ## check that lists align
         zlen = [len(z) for z in zdict.values()]
@@ -421,7 +428,7 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         zlol = list(zip(*sorted(zdict.values())))
         
         ## lazy-load & merge zarr stores
-        self.zarrs = [lazymerge(z) for z in zlol]
+        self.zarrs = [lazymerge(z, self.varnames) for z in zlol]
 
         ## Name of time dimension may vary by dataset.  ERA5 is "time"
         ## but C404 is "Time".  If dataset is CF-compliant, we
@@ -460,9 +467,9 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         last = first + self.sample_len
         seg = self.segments[index]
         subset = self.zarrs[seg].isel({time:slice(first, last)}).load()
-        sample=Sample(history=subset.isel({time:self.histmask}),
-                      target=subset.isel({time:self.foremask}),
-                      datetime=subset[time])
+        sample=Sample(x=subset.isel({time:self.histmask}),
+                      y=subset.isel({time:self.foremask}),
+                      datetime_index=subset[time])
         
         if self.transform:
             sample = self.transform(sample)
