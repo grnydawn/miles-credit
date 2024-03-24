@@ -25,7 +25,7 @@ ksha@ucar.edu
 # ---------- #
 # System
 from os.path import join
-
+import logging
 # ---------- #
 # Numerics
 import datetime
@@ -43,6 +43,8 @@ import cartopy.crs as ccrs
 import cartopy.mpl.geoaxes
 import cartopy.feature as cfeature
 
+
+logger = logging.getLogger(__name__)
 
 def cmap_combine(cmap1, cmap2):
     '''
@@ -72,7 +74,7 @@ def get_projection(proj_name):
     elif proj_name == 'EckertIII':
         return ccrs.EckertIII()
     else:
-        print('Porjection name unkown')
+        logger.info('Porjection name unkown')
         raise
 
 def get_colormap(cmap_strings):
@@ -158,7 +160,7 @@ def figure_panel_planner(var_num, proj):
     elif var_num == 5 or var_num == 6:
         return cartopy_panel6(var_num, figsize=(13, 9.75), proj=proj)
     else:
-        print('Built-in visualization tools cannot plot more than 6 variables at once.')
+        logger.info('Built-in visualization tools cannot plot more than 6 variables at once.')
         raise
         
 def cartopy_single_panel(figsize=(13, 6.5), proj=ccrs.EckertIII()):
@@ -285,6 +287,12 @@ def colorbar_opt(fig, ax, cbar, cbar_extend):
     CBar.outline.set_linewidth(2.5)
     return CBar
 
+def shared_mem_draw_wrapper(shm, level, step, visualization_key, conf, save_location):
+    pred = xr.open_dataarray(bytes(shm.buf))
+    if visualization_key == 'sigma_level_visualize':
+        pred = pred.sel(level=level)
+    return draw_variables(pred, step, visualization_key, conf, save_location)
+
 def draw_variables(pred, step, visualization_key, conf=None, save_location=None):
     '''
     This function produces figures for given variables. 
@@ -329,7 +337,7 @@ def draw_variables(pred, step, visualization_key, conf=None, save_location=None)
         ax = AX[i_var]
         
         # get the current variable
-        pred_draw = pred.sel(var=var) * var_factors[i_var]
+        pred_draw = pred.sel(vars=var) * var_factors[i_var]
         
         ## variable range
         var_lim = var_range[i_var]
@@ -369,6 +377,5 @@ def draw_variables(pred, step, visualization_key, conf=None, save_location=None)
     filename = join(save_location, save_name)
     plt.savefig(filename, **save_options)
     plt.close()
-    print(f'wrote {filename}')
+    logger.info(f'wrote {filename}')
     return filename 
-
