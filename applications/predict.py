@@ -218,10 +218,7 @@ def make_video(video_name_prefix, save_location, image_file_names, format="gif")
         input_txt = os.path.join(save_location, f"input_{video_name_prefix}.txt")
         f = open(input_txt, "w")
         for i_file, filename in enumerate(image_file_names):
-            if i_file == 0:
-                print("file {}\nduration 3".format(os.path.basename(filename)), file=f)
-            else:
-                print("file {}\nduration 2".format(os.path.basename(filename)), file=f)
+            print("file {}\nduration 1".format(os.path.basename(filename)), file=f)
         f.close()
 
         # cd to the save_location and run ffmpeg
