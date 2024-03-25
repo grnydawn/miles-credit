@@ -7,7 +7,7 @@ Functions:
     - get_colormap(cmap_strings)
     - get_colormap_extend(var_range)
     - get_variable_range_with_rounding(data)
-    - get_variable_range(data)
+    - get_variable_range(var_name, level=level, method='mean_std')
     - figure_panel_planner(var_num, proj)
     - cartopy_single_panel(figsize=(13, 6.5), proj=ccrs.EckertIII())
     - cartopy_panel2(figsize=(13, 8), proj=ccrs.EckertIII())
