@@ -12,15 +12,13 @@ from torchvision import transforms as tforms
 
 logger = logging.getLogger(__name__)
 
-
 def load_transforms(conf):
-
     if conf["data"]["scaler_type"] == 'quantile':
-        transform_scaler = NormalizeState_Quantile(scaler_file=conf["data"]["quant_path"])
+        transform_scaler = NormalizeState_Quantile(conf)
     elif conf["data"]["scaler_type"] == 'std':
-        transform_scaler = NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"])
+        transform_scaler = NormalizeState(conf)
     else:
-        logger.info('scaler type not supported check data: scaler_type in config file')
+        logger.log('scaler type not supported check data: scaler_type in config file')
         raise
 
     to_tensor_scaler = ToTensor(conf=conf)
@@ -33,18 +31,13 @@ def load_transforms(conf):
 class NormalizeState:
     def __init__(
         self,
-        mean_file,
-        std_file,
-        variables=['U', 'V', 'T', 'Q'],
-        surface_variables=['SP', 't2m', 'V500', 'U500', 'T500', 'Z500', 'Q500'],
-        levels=15
+        conf
     ):
-
-        self.mean_ds = xr.open_dataset(mean_file)
-        self.std_ds = xr.open_dataset(std_file)
-        self.variables = variables
-        self.surface_variables = surface_variables
-        self.levels = levels
+        self.mean_ds = xr.open_dataset(conf['data']['mean_path'])
+        self.std_ds = xr.open_dataset(conf['data']['std_path'])
+        self.variables = conf['data']['variables']
+        self.surface_variables = conf['data']['surface_variables']
+        self.levels = conf['model']['levels']
 
         logger.info("Loading preprocessing object for transform/inverse transform states into z-scores")
 
@@ -119,20 +112,17 @@ class NormalizeState_Quantile:
     """
     def __init__(
         self,
-        scaler_file = "/glade/campaign/cisl/aiml/credit_scalers/era5_quantile_scalers_2024-02-13_07:33.parquet",
-        variables=['U', 'V', 'T', 'Q'],
-        surface_variables=['SP', 't2m', 'V500', 'U500', 'T500', 'Z500', 'Q500'],
-        levels=15
+        conf
     ):
-        self.scaler_file = scaler_file
+        self.scaler_file = conf['data']['quant_path']
+        self.variables = conf['data']['variables']
+        self.variables = conf['data']['surface_variables']
+        self.levels = int(conf['model']['levels'])
         self.scaler_df = pd.read_parquet(scaler_file)
         self.scaler_3ds = self.scaler_df["scaler_3d"].apply(read_scaler)
         self.scaler_surfs = self.scaler_df["scaler_surface"].apply(read_scaler)
         self.scaler_3d = self.scaler_3ds.sum()
         self.scaler_surf = self.scaler_surfs.sum()
-        self.variables = variables 
-        self.surface_variables = surface_variables 
-        self.levels = levels
 
     def __call__(self, sample: Sample, inverse: bool = False) -> Sample:
         if inverse:
@@ -178,14 +168,13 @@ class NormalizeState_Quantile:
                             var_slices.append(value[var].sel(time=time, level=level))
 
                     e3d = xr.concat(var_slices, pd.Index(var_levels, name="variable")
-                                ).transpose("latitude", "longitude", "variable")
+                                   ).transpose("latitude", "longitude", "variable")
                     TTtrans = self.scaler_3d.transform(e3d)
                     #this is bad and should be fixed: 
-                    value['U'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,:15].values, (2, 0, 1))
-                    value['V'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,15:30].values, (2, 0, 1))
-                    value['T'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,30:45].values, (2, 0, 1))
-                    value['Q'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,45:60].values, (2, 0, 1))
-                        
+                    value['U'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,:self.levels].values, (2, 0, 1))
+                    value['V'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,self.levels:(self.levels*2)].values, (2, 0, 1))
+                    value['T'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,(self.levels*2):(self.levels*3)].values, (2, 0, 1))
+                    value['Q'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,(self.levels*3):(self.levels*4)].values, (2, 0, 1))
                     e_surf = xr.concat([value[v].sel(time=time) for v in self.surface_variables], pd.Index(self.surface_variables, name="variable")
                                    ).transpose("latitude", "longitude", "variable")
                     TTtrans = self.scaler_surf.transform(e_surf)
@@ -254,7 +243,7 @@ class ToTensor:
         self.for_len = int(conf["data"]["forecast_len"])
         self.variables = conf["data"]["variables"]
         self.surface_variables = conf["data"]["surface_variables"]
-        self.allvars = self.variables + self.surface_variables
+        self.allvars = variables + surface_variables
         self.static_variables = conf["data"]["static_variables"]
 
     def __call__(self, sample: Sample) -> Sample:
@@ -294,7 +283,7 @@ class ToTensor:
                 return_dict['y'] = y
 
         if self.static_variables:
-            DSD = xr.open_dataset(self.conf["loss"]["latitude_weights"])
+            DSD = xr.open_dataset(conf["loss"]["latitude_weights"])
             arrs = []
             for sv in self.static_variables:
 
