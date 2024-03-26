@@ -20,7 +20,7 @@ def load_transforms(conf):
     elif conf["data"]["scaler_type"] == 'std':
         transform_scaler = NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"])
     else:
-        logger.log('scaler type not supported check data: scaler_type in config file')
+        logger.info('scaler type not supported check data: scaler_type in config file')
         raise
 
     to_tensor_scaler = ToTensor(conf=conf)
