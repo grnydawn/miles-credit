@@ -243,7 +243,7 @@ class ToTensor:
         self.for_len = int(conf["data"]["forecast_len"])
         self.variables = conf["data"]["variables"]
         self.surface_variables = conf["data"]["surface_variables"]
-        self.allvars = variables + surface_variables
+        self.allvars = self.variables + self.surface_variables
         self.static_variables = conf["data"]["static_variables"]
 
     def __call__(self, sample: Sample) -> Sample:
