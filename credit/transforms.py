@@ -118,7 +118,7 @@ class NormalizeState_Quantile:
         self.variables = conf['data']['variables']
         self.variables = conf['data']['surface_variables']
         self.levels = int(conf['model']['levels'])
-        self.scaler_df = pd.read_parquet(scaler_file)
+        self.scaler_df = pd.read_parquet(self.scaler_file)
         self.scaler_3ds = self.scaler_df["scaler_3d"].apply(read_scaler)
         self.scaler_surfs = self.scaler_df["scaler_surface"].apply(read_scaler)
         self.scaler_3d = self.scaler_3ds.sum()
