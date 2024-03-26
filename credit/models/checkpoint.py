@@ -134,7 +134,10 @@ class TorchFSDPCheckpointIO:
     def load_unsharded_optimizer(self, optimizer, checkpoint):
         checkpoint = load_state_dict(checkpoint)
         fsdp_model = optimizer.unwrap_model()
-        sharded_osd = FSDP.scatter_full_optim_state_dict(checkpoint, fsdp_model)
+        # I believe using scatter causes extra memory usage by torch, which has caused OOM problems. shard should not do this -- John
+        # see https://pytorch.org/docs/stable/fsdp.html#torch.distributed.fsdp.FullyShardedDataParallel.shard_full_optim_state_dict
+        sharded_osd = FSDP.shard_full_optim_state_dict(checkpoint, fsdp_model)
+        #sharded_osd = FSDP.scatter_full_optim_state_dict(checkpoint, fsdp_model)
         optimizer.load_state_dict(sharded_osd)
 
     def save_unsharded_model(self, model, checkpoint, gather_dtensor, use_safetensors, rank):

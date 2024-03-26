@@ -1,89 +1,59 @@
-save_loc: "/glade/work/$USER/repos/global/miles-credit/results/test_configs"
+save_loc: "/glade/work/$USER/repos/global/miles-credit/results/fuxiPSDbatch/"
 seed: 1000
 
 data:
     variables: ['U','V','T','Q']
     surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
-    #save_loc: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
-    #train_test_split: [ 0.5, 0.25, 0.25 ]
-    #train_years: None
-    #valid_years: None
-    #test_years: None
     save_loc: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/ONE*.zarr'
     mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
     std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
-    history_len: 1
+    history_len: 2 
     forecast_len: 0
-    valid_history_len: 1
+    valid_history_len: 2
     valid_forecast_len: 0
     time_step: 1
     
 trainer:
     mode: none # none, ddp, fsdp
-    train_batch_size: 10
-    valid_batch_size: 10
+    train_batch_size: 1
+    valid_batch_size: 1
     batches_per_epoch: 0 # Set to 0 to use len(dataloader)
     valid_batches_per_epoch: 100
     learning_rate: 5.0e-04
     weight_decay: 1.0e-05
     start_epoch: 0
-    epochs: 100
+    epochs: 1
     amp: False
     grad_accum_every: 1
     grad_max_norm: 1.0
     thread_workers: 0
     valid_thread_workers: 0
-    stopping_patience: 100
-    teacher_forcing_ratio: 0.0
+    stopping_patience: 50
+    teacher_forcing_ratio: 0.5 #0.9886539666794065
     stop_rollout: 0.9
     load_weights: False
     load_optimizer: False
-    use_scheduler: True
-    # scheduler:
-    #     scheduler_type: cosine-annealing
-    #     first_cycle_steps: 500
-    #     cycle_mult: 6.0
-    #     max_lr: 5.0e-04
-    #     min_lr: 5.0e-07
-    #     warmup_steps: 499
-    #     gamma: 0.7
-    scheduler:
-        scheduler_type: lambda
+    use_scheduler: False
+    #scheduler: {'scheduler_type': 'cosine-annealing', first_cycle_steps: 500, cycle_mult: 6.0, max_lr: 5.0e-04, min_lr: 5.0e-07, warmup_steps: 499, gamma: 0.7}
+    # scheduler: {scheduler_type: plateau, mode: min, factor: 0.1, patience: 5, cooldown: 2, min_lr: 1e-6, epsilon: 1e-8, verbose: true, threshold: 1e-4}
+    scheduler: {'scheduler_type': 'lambda'}
   
 model:
-    type: "rvt"
-    channels: 4
-    depth: 4
-    static_variables: {
-        "cos_lat": "/glade/u/home/wchapman/MLWPS/DataLoader/static_variables_ERA5_zhght_onedeg.nc" #"/glade/u/home/wchapman/MLWPS/DataLoader/static_variables_ERA5_zhght.nc"
-    }
-    dim: 1024
-    dim_head: 1024
-    dropout: 0.0
-    frame_patch_size: 3
-    frames: 15
-    heads: 8
-    image_height: 192
-    image_width: 288
-    mlp_dim: 1024
-    patch_height: 16
-    patch_width: 16
-    rk4_integration: false
-    surface_channels: 7
-    token_dropout: 0.0
-    use_rotary: True
-    use_ds_conv: True
-    use_glu: True
-    use_decoder_conv_layers: false
-    use_cls_tokens: true
-    use_codebook: false
-    vq_codebook_dim: 768
-    vq_codebook_size: 512
-    vq_commitment_weight: 0.8265613175117377
-    vq_decay: 0.059685615129391856
-    vq_kmeans_init: true
-    vq_use_cosine_sim: true
-    transformer_type: "lucidrains"  # choose between pytorch or lucidrains
+    type: "fuxi"
+    image_height: 192    # Image height (default: 640)
+    patch_height: 16     # Patch height (default: 16)
+    image_width: 288    # Image width (default: 1280)
+    patch_width: 16      # Patch width (default: 16)
+    levels: 15           # Number of levels (default: 15)
+    frames: 2            # Number of frames (default: 2)
+    frame_patch_size: 2  # Frame patch size (default: 2)
+    dim: 512            # Dimension (default: 1536)
+    num_groups: 32       # Number of groups (default: 32)
+    channels: 4          # Channels (default: 4)
+    surface_channels: 7  # Surface channels (default: 7)
+    num_heads: 8         # Number of heads (default: 8)
+    window_size: 7       # Window size (default: 7)
+    depth: 4             # Depth of the swin transformer (default: 48)
     
 loss: 
     training_loss: "mse"
@@ -91,9 +61,9 @@ loss:
     use_power_loss: True # use either power or spectral loss
     use_spectral_loss: False
     spectral_wavenum_init: 20
-    spectral_lambda_reg: 0.1 # power loss is order of 1e1 (usually between 1-10)
+    spectral_lambda_reg: 0.1
     use_latitude_weights: True
-    latitude_weights: "/glade/u/home/wchapman/MLWPS/DataLoader/static_variables_ERA5_zhght_onedeg.nc" #"/glade/u/home/wchapman/MLWPS/DataLoader/static_variables_ERA5_zhght.nc"
+    latitude_weights: "/glade/u/home/wchapman/MLWPS/DataLoader/static_variables_ERA5_zhght_onedeg.nc"
     use_variable_weights: False
     variable_weights:
         U: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
@@ -159,27 +129,26 @@ visualization:
     video_format: 'mp4' # gif, mp4, none
 
 
-pbs: #derecho
-    conda: "holodec"
-    project: "NAML0001"
-    job_name: "rvt-multi"
-    walltime: "12:00:00"
-    nodes: 8
-    ncpus: 64
-    ngpus: 4
-    mem: '480GB'
-    queue: 'main'
-    #queue: 'preempt'
+
+#pbs: #derecho
+#    conda: "holodec"
+#    project: "NAML0001"
+#    job_name: "fuxi-1deg"
+#    walltime: "24:00:00"
+#    nodes: 8
+#    ncpus: 64
+#    ngpus: 4
+#    mem: '480GB'
+#    queue: 'preempt'
     
-# pbs: # casper
-#     conda: "/glade/work/schreck/miniconda3/envs/evidential"
-#     job_name: 'latlon'
-#     nodes: 1
-#     ncpus: 8
-#     ngpus: 1
-#     mem: '128GB'
-#     walltime: '12:00:00'
-#     gpu_type: 'a100'
-#     cpu_type: 'milan'
-#     project: 'NAML0001'
-#     queue: 'casper'
+pbs: # casper
+    conda: "/glade/work/dkimpara/conda-envs/credit-cuda"
+    job_name: 'fuxiPSD'
+    nodes: 1
+    ncpus: 8
+    ngpus: 1
+    mem: '64GB'
+    walltime: '15:00:00'
+    gpu_type: 'v100'
+    project: 'NAML0001'
+    queue: 'casper'
