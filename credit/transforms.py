@@ -283,7 +283,7 @@ class ToTensor:
                 return_dict['y'] = y
 
         if self.static_variables:
-            DSD = xr.open_dataset(conf["loss"]["latitude_weights"])
+            DSD = xr.open_dataset(self.conf["loss"]["latitude_weights"])
             arrs = []
             for sv in self.static_variables:
 
