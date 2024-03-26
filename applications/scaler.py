@@ -39,6 +39,7 @@ def main():
         all_era5_files = None
         all_era5_filenames = None
     era5_subset = comm.scatter(all_era5_files, root=0)
+    print(f"Rank {rank:d}", era5_subset)
     scalers = []
     for era5_file in era5_subset:
         scalers.append(fit_era5_scaler_year(era5_file, n_jobs=args.procs))
