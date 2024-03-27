@@ -10,4 +10,4 @@
 module load conda craype/2.7.23 cray-mpich/8.1.27
 conda activate hcredit
 cd ..
-mpiexec -n 37 --ppn 2 python -u applications/scaler.py -c config/crossformer.yml -p 64 -t 20 -o /glade/derecho/scratch/dgagne/credit_scalers/
+mpiexec -n 37 --ppn 2 python -u applications/scaler.py -c config/crossformer.yml -p 64 -t 2000 -o /glade/derecho/scratch/dgagne/credit_scalers/
