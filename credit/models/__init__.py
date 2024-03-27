@@ -3,7 +3,6 @@ import logging
 from importlib.metadata import version
 
 # Import model classes
-from credit.models.crossformer_skip import CrossFormer as CrossFormerSkip
 from credit.models.crossformer import CrossFormer
 from credit.models.simple_vit import SimpleViT
 from credit.models.cube_vit import CubeViT
@@ -20,8 +19,7 @@ model_types = {
     "rvt": (RViT, "Loading a custom rotary transformer architecture with conv attention ..."),
     "simple-vit": (SimpleViT, "Loading a simplified vit rotary transformer architecture ..."),
     "cube-vit": (CubeViT, "Loading a simplified vit rotary transformer architecture with a 3D conv tokenizer ..."),
-    "crossformer-skip": (CrossFormerSkip, "Loading the CrossFormer model with a conv decoder head and skip connections ..."),
-    "crossformer": (CrossFormer, "Loading the CrossFormer model ...")
+    "crossformer": (CrossFormer, "Loading the CrossFormer model with a conv decoder head and skip connections ..."),
 }
 
 
