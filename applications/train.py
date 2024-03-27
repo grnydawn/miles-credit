@@ -32,7 +32,6 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
    CheckpointImpl,
    apply_activation_checkpointing,
 )
-from torchvision import transforms
 from torchsummary import summary
 
 from credit.models import load_model
@@ -81,7 +80,7 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
     name = "Train" if is_train else "Valid"
 
     transforms = load_transforms(conf)
-    
+
     dataset = ERA5Dataset(
         filenames=files,
         history_len=history_len,

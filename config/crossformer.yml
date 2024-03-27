@@ -14,7 +14,7 @@ data:
     forecast_len: 0
     valid_history_len: 2
     valid_forecast_len: 0
-    time_step: 1
+    one_shot: True
     
 trainer:
     mode: none # none, ddp, fsdp
@@ -44,12 +44,12 @@ trainer:
 model:
     type: "crossformer"
     image_height: 640    # Image height (default: 640)
-    patch_height: 2      # Patch height (default: 2)
+    patch_height: 1      # Patch height (default: 1)
     image_width: 1280    # Image width (default: 1280)
-    patch_width: 2       # Patch width (default: 2)
+    patch_width: 1       # Patch width (default: 1)
     levels: 15           # Number of levels (default: 15)
     frames: 2            # Number of frames (default: 2)
-    frame_patch_size: 2  # Frame patch size (default: 2)
+    frame_patch_size: 1  # Frame patch size (default: 1)
     channels: 4          # Channels (default: 4)
     surface_channels: 7  # Surface channels (default: 7)
     dim: [64, 128, 256, 512]              # Dimensionality of each layer (default: [64, 128, 256, 512])
@@ -64,6 +64,9 @@ model:
     cross_embed_strides: [4, 2, 2, 2]     # Strides for cross-embedding (default: [4, 2, 2, 2])
     attn_dropout: 0.                      # Dropout probability for attention layers (default: 0.0)
     ff_dropout: 0.                        # Dropout probability for feed-forward layers (default: 0.0)
+    pad_lon: 80                           # Padding on (lon) sides
+    pad_lat: 80                           # Padding on (lat) sides
+    use_spectral_norm: True               # Apply spectral norm to all conv and linear layers
 
     
 loss: 

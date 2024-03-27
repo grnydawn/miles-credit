@@ -275,13 +275,11 @@ def predict(rank, world_size, conf, pool, smm):
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
 
     # Preprocessing transformations
-    state_transformer = NormalizeState(
-        conf["data"]["mean_path"], conf["data"]["std_path"]
-    )
+    state_transformer = NormalizeState(conf)
     transform = transforms.Compose(
         [
             state_transformer,
-            ToTensor(history_len=history_len, forecast_len=forecast_len),
+            ToTensor(conf),
         ]
     )
 
