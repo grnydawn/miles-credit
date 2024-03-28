@@ -6,7 +6,7 @@ import os
 import torch.distributed.checkpoint as DCP
 from torch.distributed.fsdp import StateDictType
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-
+import torch.nn.functional as F
 from credit.models.base_model import BaseModel
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -48,14 +48,16 @@ class SegmentationModel(BaseModel):
 
         super(SegmentationModel, self).__init__()
 
-        self.num_atmos_vars = conf["model"]["channels"]
-        self.num_levels = conf["model"]["frames"]
-        self.num_single_layer = conf["model"]["surface_channels"]
+        self.variables = len(conf["data"]["variables"])
+        self.levels = conf["model"]["levels"]
+        self.frames = conf["model"]["frames"]
+        self.surface_variables = len(conf["data"]["surface_variables"])
+        self.static_variables = len(conf["data"]["static_variables"])
         self.use_codebook = False
         self.rk4_integration = conf["model"]["rk4_integration"]
         self.channels = 1
 
-        in_out_channels = int(self.num_atmos_vars*self.num_levels + self.num_single_layer)
+        in_out_channels = int(self.variables*self.levels + self.surface_variables + self.static_variables)
 
         if conf['model']['architecture']['name'] == 'unet':
             conf['model']['architecture']['decoder_attention_type'] = 'scse'
@@ -65,8 +67,10 @@ class SegmentationModel(BaseModel):
         self.model = load_premade_encoder_model(conf['model']['architecture'])
 
     def forward(self, x):
+        x = F.avg_pool3d(x, kernel_size=(2, 1, 1)) if x.shape[2] > 1 else x
         x = x.squeeze(2) # squeeze time dim
-        return self.rk4(x) if self.rk4_integration else self.model(x)
+        x = self.rk4(x) if self.rk4_integration else self.model(x)
+        return x.unsqueeze(2)
 
     def rk4(self, x):
 
@@ -79,3 +83,6 @@ class SegmentationModel(BaseModel):
         k4 = integrate_step(x, k3, 1.0)
 
         return (k1 + 2 * k2 + 2 * k3 + k4) / 6
+
+
+
