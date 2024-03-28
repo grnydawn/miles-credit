@@ -7,9 +7,11 @@ import os
 import pandas as pd
 
 
+
 def main():
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
+    size = comm.Get_size()
     parser = argparse.ArgumentParser(description='Calculate global solar radiation')
     parser.add_argument('-s', '--start', type=str, default="2000-01-01", help="Start date (inclusive)")
     parser.add_argument('-e', '--end', type=str, default="2000-12-31 23:00", help="End date (inclusive")
@@ -22,23 +24,29 @@ def main():
                         help="Geopotential height variable.")
     parser.add_argument("-o", "--output", type=str, required=True, help="Output directory")
     args = parser.parse_args()
-    grid_points = None
+    grid_points_sub = None
     if rank == 0:
         with xr.open_dataset(args.input) as static_ds:
             lons = static_ds["longitude"].values
             lats = static_ds["latitude"].values
             lon_grid, lat_grid = np.meshgrid(lons, lats)
             heights = static_ds[args.geo].values / 9.81
-            grid_points = np.vstack([lon_grid.ravel(), lat_grid.ravel(), heights.ravel()]).T.tolist()
-            grid_points_t = [tuple(gp) for gp in grid_points]
-    comm.Barrier()
-    rank_points = comm.scatter(grid_points_t, root=0)
+            grid_points = np.vstack([lon_grid.ravel(), lat_grid.ravel(), heights.ravel()]).T
+            print(grid_points.shape)
+            split_indices = np.round(np.linspace(0, grid_points.shape[0], size + 1)).astype(int) 
+            print(split_indices)
+            grid_points_sub = [grid_points[s:s+1] for s in split_indices[:-1]]
+            print(grid_points_sub[0].shape)
+    rank_points = comm.scatter(grid_points_sub, root=0)
+    print(rank_points.shape)
     solar_data = []
     for r, rank_point in enumerate(rank_points):
-        print(rank, rank_point, r, len(rank_points))
+        print(rank, rank_point, r, rank_points.shape[0])
         solar_data.append(get_solar_radiation_loc(rank_point[0], rank_point[1], rank_point[2],
                                 args.start, args.end, step_freq=args.step, sub_freq=args.sub))
     all_data = comm.gather(solar_data, root=0)
+    print(all_data[0])
+    print(len(all_data))
     if rank == 0:
         combined = xr.combine_by_coords(all_data)
         if not os.path.exists(args.output):
