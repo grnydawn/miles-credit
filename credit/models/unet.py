@@ -65,6 +65,7 @@ class SegmentationModel(BaseModel):
         self.model = load_premade_encoder_model(conf['model']['architecture'])
 
     def forward(self, x):
+        x = x.squeeze(2) # squeeze time dim
         return self.rk4(x) if self.rk4_integration else self.model(x)
 
     def rk4(self, x):
