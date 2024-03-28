@@ -49,11 +49,11 @@ def main():
         solar_point = get_solar_radiation_loc(rank_point[0], rank_point[1], rank_point[2],
                                 args.start, args.end, step_freq=args.step, sub_freq=args.sub)
         if rank > 0:
-            comm.send(solar_point, dest=0, tag=rank + 10)
+            comm.send(solar_point, dest=0)
         else:
             all_data.append(solar_point)
             for sr in range(1, size):
-                all_data.append(comm.recv(source=sr, tag=sr + 10))
+                all_data.append(comm.recv(source=sr))
     if rank == 0:
         print(all_data[0])
         print(len(all_data))
