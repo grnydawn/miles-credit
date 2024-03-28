@@ -15,7 +15,7 @@ from einops.layers.torch import Rearrange
 from rotary_embedding_torch import RotaryEmbedding
 from credit.pe import SurfacePosEmb2D
 from vector_quantize_pytorch import VectorQuantize
-
+from credit.models.base_model import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +112,7 @@ class Transformer(nn.Module):
         return x
 
 
-class SimpleViT(nn.Module):
+class SimpleViT(BaseModel):
     def __init__(
             self,
             image_height,
@@ -243,67 +243,6 @@ class SimpleViT(nn.Module):
             x = self.conv(x)
 
         return x
-
-    def concat_and_reshape(self, x1, x2):
-        x1 = x1.view(x1.shape[0], -1, x1.shape[3], x1.shape[4])
-        x_concat = torch.cat((x1, x2), dim=1)
-        return x_concat
-
-    def split_and_reshape(self, tensor):
-        tensor1 = tensor[:, :int(self.channels * self.frames), :, :]
-        tensor2 = tensor[:, -int(self.surface_channels):, :, :]
-        tensor1 = tensor1.view(tensor1.shape[0], self.channels, self.frames, tensor1.shape[2], tensor1.shape[3])
-        return tensor1, tensor2
-
-    @classmethod
-    def load_model(cls, conf):
-        save_loc = conf['save_loc']
-        ckpt = os.path.join(f"{save_loc}", "checkpoint.pt")
-
-        if conf["trainer"]["mode"] == "ddp":
-            if not os.path.isfile(ckpt):
-                ckpt = os.path.join(f"{save_loc}", "checkpoint_cuda:0.pt")
-
-        if not os.path.isfile(ckpt):
-            raise ValueError(
-                "No saved checkpoint exists. You must train a model first. Exiting."
-            )
-
-        logging.info(
-            f"Loading a model with pre-trained weights from path {ckpt}"
-        )
-
-        checkpoint = torch.load(ckpt)
-
-        if "type" in conf["model"]:
-            del conf["model"]["type"]
-
-        model_class = cls(**conf["model"])
-
-        if conf["trainer"]["mode"] == "fsdp":
-            FSDP.set_state_dict_type(
-                model_class,
-                StateDictType.SHARDED_STATE_DICT,
-            )
-            state_dict = {
-                "model_state_dict": model_class.state_dict(),
-            }
-            DCP.load_state_dict(
-                state_dict=state_dict,
-                storage_reader=DCP.FileSystemReader(os.path.join(save_loc, "checkpoint")),
-            )
-            model_class.load_state_dict(state_dict["model_state_dict"])
-        else:
-            model_class.load_state_dict(checkpoint["model_state_dict"])
-
-        return model_class
-
-    def save_model(self, conf):
-        save_loc = conf['save_loc']
-        state_dict = {
-            "model_state_dict": self.state_dict(),
-        }
-        torch.save(state_dict, f"{save_loc}/checkpoint.pt")
 
 
 if __name__ == "__main__":

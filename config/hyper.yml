@@ -1,5 +1,5 @@
 log: True
-save_path: "/glade/work/schreck/repos/global/miles-credit/results/ONEdegTest/echo/"
+save_path: "/glade/work/$USER/repos/global/miles-credit/results/ONEdegTest/echo/"
 
 pbs:
   jobs: 30

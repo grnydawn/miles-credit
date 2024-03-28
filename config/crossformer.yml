@@ -4,14 +4,17 @@ seed: 1000
 data:
     variables: ['U','V','T','Q']
     surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
+    static_variables: ['SP','LSM'] # []
     save_loc: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
     mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
     std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
+    quant_path: '/glade/campaign/cisl/aiml/credit_scalers/era5_quantile_scalers_2024-02-13_07:33.parquet'
+    scaler_type: 'std' # 'std'
     history_len: 2 
     forecast_len: 0
     valid_history_len: 2
     valid_forecast_len: 0
-    time_step: 1
+    one_shot: True
     
 trainer:
     mode: none # none, ddp, fsdp
@@ -41,19 +44,19 @@ trainer:
 model:
     type: "crossformer"
     image_height: 640    # Image height (default: 640)
-    patch_height: 2      # Patch height (default: 2)
+    patch_height: 1      # Patch height (default: 1)
     image_width: 1280    # Image width (default: 1280)
-    patch_width: 2       # Patch width (default: 2)
+    patch_width: 1       # Patch width (default: 1)
     levels: 15           # Number of levels (default: 15)
     frames: 2            # Number of frames (default: 2)
-    frame_patch_size: 2  # Frame patch size (default: 2)
+    frame_patch_size: 1  # Frame patch size (default: 1)
     channels: 4          # Channels (default: 4)
     surface_channels: 7  # Surface channels (default: 7)
-    dim: [64, 128, 256, 512]              # Dimensionality of each layer (default: [64, 128, 256, 512])
+    dim: [64, 128, 256, 512]               # Dimensionality of each layer (default: [64, 128, 256, 512])
     depth: [2, 2, 8, 2]                    # Depth of each layer (default: [2, 2, 8, 2])
     global_window_size: [10, 5, 2, 1]      # Global window size for each layer (default: [10, 5, 2, 1])
     local_window_size: 10                  # Local window size (default: 10)
-    cross_embed_kernel_sizes:             # Kernel sizes for cross-embedding (default: [[4, 8, 16, 32], [2, 4], [2, 4], [2, 4]])
+    cross_embed_kernel_sizes:              # Kernel sizes for cross-embedding (default: [[4, 8, 16, 32], [2, 4], [2, 4], [2, 4]])
     - [4, 8, 16, 32]
     - [2, 4]
     - [2, 4]
@@ -61,17 +64,20 @@ model:
     cross_embed_strides: [4, 2, 2, 2]     # Strides for cross-embedding (default: [4, 2, 2, 2])
     attn_dropout: 0.                      # Dropout probability for attention layers (default: 0.0)
     ff_dropout: 0.                        # Dropout probability for feed-forward layers (default: 0.0)
+    pad_lon: 80                           # Padding on (lon) sides
+    pad_lat: 80                           # Padding on (lat) sides
+    use_spectral_norm: True               # Apply spectral norm to all conv and linear layers
 
     
 loss: 
     training_loss: "mse"
     use_vgg: False
-    use_power_loss: True # use either power or spectral loss
+    use_power_loss: False # use either power or spectral loss
     use_spectral_loss: False
     spectral_wavenum_init: 20
     spectral_lambda_reg: 0.1 # power loss is order of 1e1 (usually between 1-10)
     use_latitude_weights: True
-    latitude_weights: "/glade/u/home/wchapman/MLWPS/DataLoader/static_variables_ERA5_zhght.nc"
+    latitude_weights: "/glade/u/home/wchapman/MLWPS/DataLoader/LSM_static_variables_ERA5_zhght.nc"
     use_variable_weights: False
     variable_weights:
         U: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
@@ -140,7 +146,7 @@ visualization:
 pbs: #derecho
     conda: "holodec"
     project: "NAML0001"
-    job_name: "fuxi"
+    job_name: "xformer"
     walltime: "24:00:00"
     nodes: 8
     ncpus: 64
