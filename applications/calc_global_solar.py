@@ -30,7 +30,9 @@ def main():
             lon_grid, lat_grid = np.meshgrid(lons, lats)
             heights = static_ds[args.geo].values / 9.81
             grid_points = np.vstack([lon_grid.ravel(), lat_grid.ravel(), heights.ravel()]).T.tolist()
-    rank_points = comm.scatter(grid_points, root=0)
+            grid_points_t = [tuple(gp) for gp in grid_points]
+    comm.Barrier()
+    rank_points = comm.scatter(grid_points_t, root=0)
     solar_data = []
     for r, rank_point in enumerate(rank_points):
         print(rank, rank_point, r, len(rank_points))

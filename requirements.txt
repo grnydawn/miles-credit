@@ -23,6 +23,5 @@ bridgescaler
 rotary-embedding-torch
 segmentation-models-pytorch
 vector-quantize-pytorch
-torch_geometric
 haversine
 pvlib

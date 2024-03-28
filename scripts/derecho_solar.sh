@@ -1,5 +1,5 @@
 #!/bin/bash -l
-#PBS -N gwm_scaler
+#PBS -N nwp_solar
 #PBS -l select=1:ncpus=128:mpiprocs=128:ngpus=0:mem=200GB
 #PBS -l walltime=06:00:00
 #PBS -A NAML0001
