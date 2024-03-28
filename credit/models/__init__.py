@@ -38,6 +38,13 @@ def load_model(conf, load_weights=False):
 
     model_type = model_conf.pop("type")
 
+    if model_type == 'unet':
+        model, message = model_types[model_type]
+        logger.info(message)
+        if load_weights:
+            return model.load_model(conf)
+        return model(conf)
+
     if model_type in model_types:
         model, message = model_types[model_type]
         logger.info(message)
