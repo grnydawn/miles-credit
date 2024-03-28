@@ -26,10 +26,22 @@ def main():
     args = parser.parse_args()
     grid_points_sub = None
     if rank == 0:
+        start_date_ts = pd.Timestamp(args.start)
+        end_date_ts = pd.Timestamp(args.end)
+        step_sec = pd.Timedelta(args.step).total_seconds()
+        sub_sec = pd.Timedelta(args.sub).total_seconds()
+        step_len = int(step_sec // sub_sec)
+        dates = pd.date_range(start=start_date_ts - pd.Timedelta(args.step) + pd.Timedelta(args.sub),
+                              end=end_date_ts, freq=args.sub)
         with xr.open_dataset(args.input) as static_ds:
             lons = static_ds["longitude"].values
             lats = static_ds["latitude"].values
             lon_grid, lat_grid = np.meshgrid(lons, lats)
+            solar_grid = xr.DataArray(data=np.zeros((dates.size, lats.size, lons.size), dtype=np.float32),
+                                      coords={"time":dates, "longitude": lons, "latitude": lats},
+                                      dims=("time", "latitude", "longitude"), name="tsi",
+                                      attrs={"long_name": "total solar irradiance", "units": "J m-2"}
+                                      )
             heights = static_ds[args.geo].values / 9.81
             grid_points = np.vstack([lon_grid.ravel(), lat_grid.ravel(), heights.ravel()]).T
             print(grid_points.shape)
@@ -39,10 +51,6 @@ def main():
             print(grid_points_sub[0].shape)
     rank_points = comm.scatter(grid_points_sub, root=0)
     print(rank_points.shape)
-    if rank == 0:
-        all_data = []
-    else:
-        all_data = None
     for r, rank_point in enumerate(rank_points):
         if r % 10 == 0:
             print(rank, rank_point, r, rank_points.shape[0])
@@ -51,20 +59,20 @@ def main():
         if rank > 0:
             comm.send(solar_point, dest=0)
         else:
-            all_data.append(solar_point)
+            solar_grid.loc[solar_point["time"], solar_point["latitude"], solar_point["longitude"]] = solar_point
             for sr in range(1, size):
-                all_data.append(comm.recv(source=sr))
+                other_point = comm.recv(source=sr)
+                solar_grid.loc[solar_point["time"], solar_point["latitude"], solar_point["longitude"]] = other_point
+
     if rank == 0:
-        print(all_data[0])
-        print(len(all_data))
-        combined = xr.combine_by_coords(all_data)
-        print(combined)
+        print(solar_grid)
+        print(solar_grid.max())
         if not os.path.exists(args.output):
             os.makedirs(args.output)
         out_time = pd.Timestamp.utcnow().strftime("%Y-%m-%d_%H%M")
         filename = f"solar_radiation_{out_time}.nc"
         print("Saving")
-        combined.to_netcdf(os.path.join(args.output, filename), encoding={"tsi": {"zlib": True, "complevel": 4}})
+        solar_grid.to_netcdf(os.path.join(args.output, filename), encoding={"tsi": {"zlib": True, "complevel": 4}})
     return
 
 
