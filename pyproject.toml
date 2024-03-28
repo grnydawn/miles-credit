@@ -35,8 +35,9 @@ dependencies = [
     "rotary-embedding-torch",
     "segmentation-models-pytorch",
     "vector-quantize-pytorch",
-    "torch-geometric",
-    "haversine"
+    "pytorch_geometric",
+    "haversine",
+    "pvlib"
    ]
 
 [tool.setuptools]
