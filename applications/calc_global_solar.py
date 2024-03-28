@@ -35,24 +35,35 @@ def main():
             print(grid_points.shape)
             split_indices = np.round(np.linspace(0, grid_points.shape[0], size + 1)).astype(int) 
             print(split_indices)
-            grid_points_sub = [grid_points[s:s+1] for s in split_indices[:-1]]
+            grid_points_sub = [grid_points[split_indices[s]:split_indices[s+1]] for s in range(split_indices.size - 1)]
             print(grid_points_sub[0].shape)
     rank_points = comm.scatter(grid_points_sub, root=0)
     print(rank_points.shape)
-    solar_data = []
-    for r, rank_point in enumerate(rank_points):
-        print(rank, rank_point, r, rank_points.shape[0])
-        solar_data.append(get_solar_radiation_loc(rank_point[0], rank_point[1], rank_point[2],
-                                args.start, args.end, step_freq=args.step, sub_freq=args.sub))
-    all_data = comm.gather(solar_data, root=0)
-    print(all_data[0])
-    print(len(all_data))
     if rank == 0:
+        all_data = []
+    else:
+        all_data = None
+    for r, rank_point in enumerate(rank_points):
+        if r % 10 == 0:
+            print(rank, rank_point, r, rank_points.shape[0])
+        solar_point = get_solar_radiation_loc(rank_point[0], rank_point[1], rank_point[2],
+                                args.start, args.end, step_freq=args.step, sub_freq=args.sub)
+        if rank > 0:
+            comm.send(solar_point, dest=0, tag=rank + 10)
+        else:
+            all_data.append(solar_point)
+            for sr in range(1, size):
+                all_data.append(comm.recv(source=sr, tag=sr + 10))
+    if rank == 0:
+        print(all_data[0])
+        print(len(all_data))
         combined = xr.combine_by_coords(all_data)
+        print(combined)
         if not os.path.exists(args.output):
             os.makedirs(args.output)
         out_time = pd.Timestamp.utcnow().strftime("%Y-%m-%d_%H%M")
         filename = f"solar_radiation_{out_time}.nc"
+        print("Saving")
         combined.to_netcdf(os.path.join(args.output, filename), encoding={"tsi": {"zlib": True, "complevel": 4}})
     return
 
