@@ -28,11 +28,8 @@ def main():
     if rank == 0:
         start_date_ts = pd.Timestamp(args.start)
         end_date_ts = pd.Timestamp(args.end)
-        step_sec = pd.Timedelta(args.step).total_seconds()
-        sub_sec = pd.Timedelta(args.sub).total_seconds()
-        step_len = int(step_sec // sub_sec)
-        dates = pd.date_range(start=start_date_ts - pd.Timedelta(args.step) + pd.Timedelta(args.sub),
-                              end=end_date_ts, freq=args.sub)
+        dates = pd.date_range(start=start_date_ts,
+                              end=end_date_ts, freq=args.step)
         with xr.open_dataset(args.input) as static_ds:
             lons = static_ds["longitude"].values
             lats = static_ds["latitude"].values
@@ -48,7 +45,6 @@ def main():
             split_indices = np.round(np.linspace(0, grid_points.shape[0], size + 1)).astype(int) 
             print(split_indices)
             grid_points_sub = [grid_points[split_indices[s]:split_indices[s+1]] for s in range(split_indices.size - 1)]
-            print(grid_points_sub[0].shape)
     rank_points = comm.scatter(grid_points_sub, root=0)
     print(rank_points.shape)
     for r, rank_point in enumerate(rank_points):
@@ -57,12 +53,12 @@ def main():
         solar_point = get_solar_radiation_loc(rank_point[0], rank_point[1], rank_point[2],
                                 args.start, args.end, step_freq=args.step, sub_freq=args.sub)
         if rank > 0:
-            comm.send(solar_point, dest=0)
+            comm.send(solar_point, dest=0, tag=rank)
         else:
             solar_grid.loc[solar_point["time"], solar_point["latitude"], solar_point["longitude"]] = solar_point
             for sr in range(1, size):
-                other_point = comm.recv(source=sr)
-                solar_grid.loc[solar_point["time"], solar_point["latitude"], solar_point["longitude"]] = other_point
+                other_point = comm.recv(source=sr, tag=sr)
+                solar_grid.loc[other_point["time"], other_point["latitude"], other_point["longitude"]] = other_point
 
     if rank == 0:
         print(solar_grid)
