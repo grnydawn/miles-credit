@@ -49,8 +49,9 @@ def launch_script(config_file, script_path, launch=True):
         ).communicate()[0]
         jobid = jobid.decode("utf-8").strip("\n")
         print(jobid)
-        if not os.path.exists(os.path.join(config["save_loc"], "launch.sh")):
-            shutil.copy('launch.sh', os.path.expandvars(os.path.join(config["save_loc"], "launch.sh")))
+        save_loc = os.path.expandvars(config["save_loc"])
+        if not os.path.exists(os.path.join(save_loc, "launch.sh")):
+            shutil.copy('launch.sh', os.path.join(save_loc, "launch.sh"))
         os.remove("launch.sh")
 
 
@@ -69,8 +70,9 @@ def launch_script_mpi(config_file, script_path, launch=True):
 
     # Create the CUDA_VISIBLE_DEVICES string
     cuda_devices = ",".join(str(i) for i in range(total_gpus))
+    save_loc = os.path.expandvars(config["save_loc"])
 
-    config_save_path = os.path.expandvars(os.path.join(config["save_loc"], "model.yml"))
+    config_save_path = os.path.join(save_loc, "model.yml")
 
     # Generate the PBS script
     script = f'''#!/bin/bash
@@ -124,8 +126,8 @@ def launch_script_mpi(config_file, script_path, launch=True):
         ).communicate()[0]
         jobid = jobid.decode("utf-8").strip("\n")
         print(jobid)
-        if not os.path.exists(os.path.join(config["save_loc"], "launch.sh")):
-            shutil.copy("launch.sh", os.path.join(config["save_loc"], "launch.sh"))
+        if not os.path.exists(os.path.join(save_loc, "launch.sh")):
+            shutil.copy("launch.sh", os.path.join(save_loc, "launch.sh"))
         os.remove("launch.sh")
 
 

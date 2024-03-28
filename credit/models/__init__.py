@@ -9,6 +9,8 @@ from credit.models.cube_vit import CubeViT
 from credit.models.vit2d import ViT2D
 from credit.models.vit3d import ViT3D
 from credit.models.rvt import RViT
+from credit.models.unet import SegmentationModel
+from credit.models.fuxi import Fuxi
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +22,9 @@ model_types = {
     "simple-vit": (SimpleViT, "Loading a simplified vit rotary transformer architecture ..."),
     "cube-vit": (CubeViT, "Loading a simplified vit rotary transformer architecture with a 3D conv tokenizer ..."),
     "crossformer": (CrossFormer, "Loading the CrossFormer model with a conv decoder head and skip connections ..."),
-}
+    "unet": (SegmentationModel, "Loading a unet model"),
+    "fuxi": (Fuxi, "Loading Fuxi Model")
+} 
 
 
 def load_model(conf, load_weights=False):
@@ -34,24 +38,14 @@ def load_model(conf, load_weights=False):
 
     model_type = model_conf.pop("type")
 
-    if model_type == "unet":
-        logger.info("Loading a segmentation model ...")
-        check_timm_version(model_type)
-        from credit.models.unet import SegmentationModel
+    if model_type == 'unet':
+        model, message = model_types[model_type]
+        logger.info(message)
         if load_weights:
-            return SegmentationModel.load_model(conf)
-        return SegmentationModel(conf)
+            return model.load_model(conf)
+        return model(conf)
 
-    elif model_type == "fuxi":
-        logger.info("Loading FuXi ...")
-        check_timm_version(model_type)
-
-        from credit.models.fuxi import Fuxi
-        if load_weights:
-            return Fuxi.load_model(conf)
-        return Fuxi(**model_conf)
-
-    elif model_type in model_types:
+    if model_type in model_types:
         model, message = model_types[model_type]
         logger.info(message)
         if load_weights:
@@ -64,16 +58,17 @@ def load_model(conf, load_weights=False):
         raise ValueError(msg)
 
 
-def check_timm_version(model_type):
-    if model_type == "unet":
-        try:
-            assert (version('timm') == '0.6.12')
-        except AssertionError as e:
-            msg = """timm version 0.6 is required for using pytorch-segmentation-models. Please use environment-unet.yml env or pip install timm==0.6.12."""
-            raise Exception(msg) from e
-    elif model_type == "fuxi":
-        try:
-            assert (version('timm') >= '0.9.12')
-        except AssertionError as e:
-            msg = """timm version 0.9.12 or greater is required for FuXi model. Please use environment.yml env or pip install timm==0.9.12."""
-            raise Exception(msg) from e
+# dont need an old timm version anymore https://github.com/qubvel/segmentation_models.pytorch/releases/tag/v0.3.3
+# def check_timm_version(model_type):
+#     if model_type == "unet":
+#         try:
+#             assert (version('timm') == '0.6.12')
+#         except AssertionError as e:
+#             msg = """timm version 0.6 is required for using pytorch-segmentation-models. Please use environment-unet.yml env or pip install timm==0.6.12."""
+#             raise Exception(msg) from e
+#     elif model_type == "fuxi":
+#         try:
+#             assert (version('timm') >= '0.9.12')
+#         except AssertionError as e:
+#             msg = """timm version 0.9.12 or greater is required for FuXi model. Please use environment.yml env or pip install timm==0.9.12."""
+#             raise Exception(msg) from e

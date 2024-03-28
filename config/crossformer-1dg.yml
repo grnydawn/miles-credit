@@ -1,4 +1,4 @@
-save_loc: "/glade/work/schreck/repos/global/miles-credit/results/crossformer/one"
+save_loc: "/glade/work/$USER/repos/global/miles-credit/results/crossformer/one"
 seed: 1000
 
 data:
@@ -97,26 +97,26 @@ predict:
         ["2018-06-01 00:00:00", "2018-06-02 00:00:00"]
     ]
 
-pbs: #derecho
-    conda: "holodec"
-    project: "NAML0001"
-    job_name: "xformer-1dg"
-    walltime: "24:00:00"
-    nodes: 8
-    ncpus: 64
-    ngpus: 4
-    mem: '480GB'
-    queue: 'preempt'
+# pbs: #derecho
+#     conda: "holodec"
+#     project: "NAML0001"
+#     job_name: "xformer-1dg"
+#     walltime: "24:00:00"
+#     nodes: 8
+#     ncpus: 64
+#     ngpus: 4
+#     mem: '480GB'
+#     queue: 'preempt'
     
-# pbs: # casper
-#     conda: "/glade/work/schreck/miniconda3/envs/evidential"
-#     job_name: 'latlon'
-#     nodes: 1
-#     ncpus: 8
-#     ngpus: 1
-#     mem: '128GB'
-#     walltime: '12:00:00'
-#     gpu_type: 'a100'
-#     cpu_type: 'milan'
-#     project: 'NAML0001'
-#     queue: 'casper'
+pbs: # casper
+    conda: "$HOME/credit310"
+    job_name: 'x1dg'
+    nodes: 1
+    ncpus: 2
+    ngpus: 1
+    mem: '10GB'
+    walltime: '00:10:00'
+    gpu_type: 'a100'
+    cpu_type: 'milan'
+    project: 'NAML0001'
+    queue: 'casper'
