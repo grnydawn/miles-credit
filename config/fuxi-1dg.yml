@@ -142,13 +142,13 @@ visualization:
 #    queue: 'preempt'
     
 pbs: # casper
-    conda: "/glade/work/dkimpara/conda-envs/credit-cuda"
-    job_name: 'fuxiPSD'
+    conda: "$HOME/credit310"
+    job_name: 'fuxi'
     nodes: 1
-    ncpus: 8
+    ncpus: 2
     ngpus: 1
     mem: '64GB'
-    walltime: '15:00:00'
+    walltime: '00:10:00'
     gpu_type: 'v100'
     project: 'NAML0001'
     queue: 'casper'
