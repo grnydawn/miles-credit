@@ -1,12 +1,15 @@
-save_loc: "./results/unet-testing"
+save_loc: "/glade/work/$USER/repos/global/miles-credit/results/unet/"
 seed: 1000
 
 data:
     variables: ['U','V','T','Q']
     surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
-    save_loc: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/TOTAL_*'
+    static_variables: [] #['SP','LSM']
+    save_loc: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/ONE*zarr'
     mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
     std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
+    quant_path: '/glade/campaign/cisl/aiml/credit_scalers/era5_quantile_scalers_2024-02-13_07:33.parquet'
+    scaler_type: 'std' # 'std'
     history_len: 1
     forecast_len: 0
     valid_history_len: 1
@@ -41,6 +44,7 @@ model:
     type: "unet"
     image_height: 640
     image_width: 1280
+    levels: 15
     frames: 15
     channels: 4
     surface_channels: 7
@@ -124,25 +128,25 @@ visualization:
     video_format: 'mp4' # gif, mp4, none
 
 
-pbs: #derecho
-    conda: "holodec"
-    project: "NAML0001"
-    job_name: "holodec"
-    walltime: "01:00:00"
-    nodes: 1
-    ncpus: 64
-    ngpus: 4
-    mem: '480GB'
-    queue: 'preempt'
-    
-# pbs: # casper
-#     conda: "/glade/work/schreck/miniconda3/envs/evidential"
-#     job_name: 'unet'
+# pbs: #derecho
+#     conda: "holodec"
+#     project: "NAML0001"
+#     job_name: "holodec"
+#     walltime: "01:00:00"
 #     nodes: 1
-#     ncpus: 8
-#     ngpus: 1
-#     mem: '128GB'
-#     walltime: '12:00:00'
-#     gpu_type: 'a100'
-#     project: 'NAML0001'
-#     queue: 'casper'
+#     ncpus: 64
+#     ngpus: 4
+#     mem: '480GB'
+#     queue: 'preempt'
+    
+pbs: # casper
+    conda: "$HOME/credit310"
+    job_name: 'unet'
+    nodes: 1
+    ncpus: 2
+    ngpus: 1
+    mem: '32GB'
+    walltime: '00:15:00'
+    gpu_type: 'a100'
+    project: 'NAML0001'
+    queue: 'casper'
