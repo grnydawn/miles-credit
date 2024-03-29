@@ -62,7 +62,7 @@ def main():
                            "scaler_3d": all_scalers[:, 0], "scaler_surface": all_scalers[:, 1]}
         all_scalers_df = pd.DataFrame(all_scalers_dict,
                                       columns=["start_date", "end_date", "scaler_3d", "scaler_surface"],
-                                      index=all_era5_filenames)
+                                      )
         if not exists(args.out):
             os.makedirs(args.out)
         now = pd.Timestamp.utcnow().strftime("%Y-%m-%d_%H:%M")
