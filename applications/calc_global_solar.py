@@ -55,7 +55,7 @@ def main():
         if rank > 0:
             comm.Send(np.concatenate([solar_point["latitude"].values, 
                                       solar_point["longitude"].values, 
-                                      solar_point.values]), dest=0, tag=rank)
+                                      solar_point.values.ravel()]), dest=0, tag=rank)
         else:
             solar_grid.loc[:, solar_point["latitude"], solar_point["longitude"]] = solar_point
             for sr in range(1, size):
