@@ -6,6 +6,7 @@ import yaml
 import argparse
 from glob import glob
 from bridgescaler.distributed import DQuantileScaler
+from bridgescaler import print_scaler
 from os.path import exists, join
 from mpi4py import MPI
 from time import time
@@ -59,7 +60,7 @@ def main():
     all_scalers = np.array(comm.gather(scalers, root=0))
     if rank == 0:
         all_scalers_dict = {"start_date": scaler_start_dates, "end_date": scaler_end_dates,
-                           "scaler_3d": all_scalers[:, 0], "scaler_surface": all_scalers[:, 1]}
+                           "scaler_3d": [print_scaler(s) for s in all_scalers[:, 0]], "scaler_surface": [print_scaler(s) for s in all_scalers[:, 1]]}
         all_scalers_df = pd.DataFrame(all_scalers_dict,
                                       columns=["start_date", "end_date", "scaler_3d", "scaler_surface"],
                                       )
@@ -86,7 +87,7 @@ def fit_era5_scaler_times(times, rank, era5_file_dir=None, vars_3d=None, vars_su
     n_times = times.size
     times_index = pd.DatetimeIndex(times)
     for t, ctime in enumerate(times_index):
-        print(f"Rank {rank:d}: {ctime} {t:d}/{n_times:d}")
+        print(f"Rank {rank:d}: {ctime} {t+1:d}/{n_times:d}")
         if not curr_f_start >= ctime <= curr_f_end:
             eds.close()
             curr_f_start = pd.Timestamp(pd.Timestamp(ctime).strftime("%Y") + "-01-01 00:00")
