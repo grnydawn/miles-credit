@@ -32,13 +32,12 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
    CheckpointImpl,
    apply_activation_checkpointing,
 )
-from torchvision import transforms
 from torchsummary import summary
 
 from credit.models import load_model
 from credit.loss import VariableTotalLoss2D
 from credit.data import ERA5Dataset
-from credit.transforms import ToTensor, NormalizeState
+from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
 from credit.trainer import Trainer
 from credit.metrics import LatWeightedMetrics
@@ -80,16 +79,15 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
     shuffle = is_train
     name = "Train" if is_train else "Valid"
 
+    transforms = load_transforms(conf)
+
     dataset = ERA5Dataset(
         filenames=files,
         history_len=history_len,
         forecast_len=forecast_len,
         skip_periods=time_step,
         one_shot=one_shot,
-        transform=transforms.Compose([
-            NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"]),
-            ToTensor(history_len=history_len, forecast_len=forecast_len),
-        ]),
+        transform=transforms
     )
     sampler = DistributedSampler(
         dataset,

@@ -1,102 +1,31 @@
+import os
+import copy
 import torch
+import logging
+import torch.nn.functional as F
+
 from torch import nn, einsum
 from einops import rearrange
 from einops.layers.torch import Rearrange
-import torch.nn.functional as F
-import os
-import torch.distributed.checkpoint as DCP
-from torch.distributed.fsdp import StateDictType
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-import logging
 
+from credit.models.base_model import BaseModel
+
+logger = logging.getLogger(__name__)
 
 # helpers
-
 
 def cast_tuple(val, length=1):
     return val if isinstance(val, tuple) else ((val,) * length)
 
 
-class UpsampleModel(nn.Module):
-    def __init__(self, input_channels, output_channels):
-        super(UpsampleModel, self).__init__()
-
-        # Define transposed convolutional layers for upsampling
-        self.transconv1 = nn.ConvTranspose2d(input_channels, 128, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.transconv2 = nn.ConvTranspose2d(128, 64, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.transconv3 = nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.transconv4 = nn.ConvTranspose2d(32, output_channels, kernel_size=3, stride=2, padding=1, output_padding=1)
-
-    def forward(self, x):
-        x = torch.relu(self.transconv1(x))
-        x = torch.relu(self.transconv2(x))
-        x = torch.relu(self.transconv3(x))
-        x = torch.relu(self.transconv4(x))
-
-        return x
+def circular_pad1d(x, pad):
+    return torch.cat((x[..., -pad:], x, x[..., :pad]), dim=-1)
 
 
-class SADecoder(nn.Module):
-    def __init__(self, filters, output_channels, group_size=32):    
-        super(SADecoder, self).__init__()
-        self.filters = filters
-        self.output_channels = output_channels
-        self.group_size = group_size
-
-        # Define transposed convolutional layers for upsampling
-        self.blocks = nn.ModuleList()
-        #self.attention = nn.ModuleList()
-        for i in range(len(filters) - 1):
-            conv_transpose = nn.ConvTranspose2d(filters[i], filters[i+1], kernel_size=2, stride=2)
-            group_norm = nn.GroupNorm(group_size, filters[i+1])
-            silu = nn.SiLU()
-            #self.attention.append(Self_Attn(filters[i+1]))
-            self.blocks.append(nn.Sequential(conv_transpose, group_norm, silu))
-        
-        self.conv1 = nn.ConvTranspose2d(filters[-1], output_channels, kernel_size=2, stride=2)
-        #self.conv2 = nn.ConvTranspose2d(output_channels, output_channels, kernel_size=2, stride=2)
-
-    def forward(self, x):
-        for i, block in enumerate(self.blocks):
-            x = block(x)
-            #x, _ = self.attention[i](x)
-        x = self.conv1(x)
-        #x = self.conv2(x)
-        return x
-
-
-class Self_Attn(nn.Module):
-    """ Self attention Layer"""
-    def __init__(self,in_dim):
-        super(Self_Attn, self).__init__()
-        self.chanel_in = in_dim
-        
-        self.query_conv = nn.Conv2d(in_channels = in_dim , out_channels = in_dim//8 , kernel_size= 1)
-        self.key_conv = nn.Conv2d(in_channels = in_dim , out_channels = in_dim//8 , kernel_size= 1)
-        self.value_conv = nn.Conv2d(in_channels = in_dim , out_channels = in_dim , kernel_size= 1)
-        self.gamma = nn.Parameter(torch.zeros(1))
-        self.softmax  = nn.Softmax(dim=-1) #
-        
-    def forward(self,x):
-        """
-            inputs :
-                x : input feature maps( B X C X W X H)
-            returns :
-                out : self attention value + input feature 
-                attention: B X N X N (N is Width*Height)
-        """
-        m_batchsize,C,width ,height = x.size()
-        proj_query  = self.query_conv(x).view(m_batchsize,-1,width*height).permute(0,2,1) # B X CX(N)
-        proj_key =  self.key_conv(x).view(m_batchsize,-1,width*height) # B X C x (*W*H)
-        energy =  torch.bmm(proj_query,proj_key) # transpose check
-        attention = self.softmax(energy) # BX (N) X (N) 
-        proj_value = self.value_conv(x).view(m_batchsize,-1,width*height) # B X C X N
-
-        out = torch.bmm(proj_value,attention.permute(0,2,1) )
-        out = out.view(m_batchsize,C,width,height)
-        
-        out = self.gamma*out + x
-        return out,attention
+def apply_spectral_norm(model):
+    for module in model.modules():
+        if isinstance(module, (nn.Conv2d, nn.Linear, nn.ConvTranspose2d)):
+            nn.utils.spectral_norm(module)
 
 
 # cube embedding
@@ -354,13 +283,13 @@ class Transformer(nn.Module):
 
 # classes
 
-class CrossFormer(nn.Module):
+class CrossFormer(BaseModel):
     def __init__(
         self,
         image_height=640,
-        patch_height=2,
+        patch_height=1,
         image_width=1280,
-        patch_width=2,
+        patch_width=1,
         frames=2,
         frame_patch_size=2,
         channels=4,
@@ -368,12 +297,16 @@ class CrossFormer(nn.Module):
         levels=15,
         dim=(64, 128, 256, 512),
         depth=(2, 2, 8, 2),
+        dim_head=32,
         global_window_size=(5, 5, 2, 1),
         local_window_size=10,
         cross_embed_kernel_sizes=((4, 8, 16, 32), (2, 4), (2, 4), (2, 4)),
         cross_embed_strides=(4, 2, 2, 2),
         attn_dropout=0.,
         ff_dropout=0.,
+        pad_lon=0,
+        pad_lat=0,
+        use_spectral_norm=True
     ):
         super().__init__()
 
@@ -390,6 +323,9 @@ class CrossFormer(nn.Module):
         self.channels = channels
         self.surface_channels = surface_channels
         self.levels = levels
+        self.pad_lon = pad_lon
+        self.pad_lat = pad_lat
+        self.use_spectral_norm = use_spectral_norm
         input_channels = channels * levels + surface_channels
 
         dim = cast_tuple(dim, 4)
@@ -420,7 +356,7 @@ class CrossFormer(nn.Module):
         for (dim_in, dim_out), layers, global_wsz, local_wsz, cel_kernel_sizes, cel_stride in zip(dim_in_and_out, depth, global_window_size, local_window_size, cross_embed_kernel_sizes, cross_embed_strides):
             self.layers.append(nn.ModuleList([
                 CrossEmbedLayer(dim_in, dim_out, cel_kernel_sizes, stride=cel_stride),
-                Transformer(dim_out, local_window_size=local_wsz, global_window_size=global_wsz, depth=layers, attn_dropout=attn_dropout, ff_dropout=ff_dropout)
+                Transformer(dim_out, local_window_size=local_wsz, global_window_size=global_wsz, depth=layers, dim_head=dim_head, attn_dropout=attn_dropout, ff_dropout=ff_dropout)
             ]))
 
         self.cube_embedding = CubeEmbedding(
@@ -430,107 +366,124 @@ class CrossFormer(nn.Module):
             dim[0]
         )
 
-        self.up_block1 = UpBlock(last_dim, last_dim // 2, dim[0])
-        self.up_block2 = UpBlock(last_dim // 2, last_dim // 4, dim[0])
-        self.up_block3 = UpBlock(last_dim // 4, last_dim // 8, dim[0])
-        self.up_block4 = nn.ConvTranspose2d(last_dim // 8, input_channels, kernel_size=2, stride=2)
-        
-        # self.fc = nn.Linear(last_dim // 2, input_channels)
-        
-        # self.up_transpose = SADecoder(
-        #     filters = list(dim[::-1][1:]) + [dim[0] // 2],
-        #     output_channels = input_channels,
-        #     group_size = 32
-        # )
+        self.up_block1 = UpBlock(1 * last_dim, last_dim // 2, dim[0])
+        self.up_block2 = UpBlock(2 * (last_dim // 2), last_dim // 4, dim[0])
+        self.up_block3 = UpBlock(2 * (last_dim // 4), last_dim // 8, dim[0])
+        self.up_block4 = nn.ConvTranspose2d(2 * (last_dim // 8), input_channels, kernel_size=4, stride=2, padding=1)
 
-        # self.up_transpose = UpsampleModel(input_channels, input_channels)
+        if self.use_spectral_norm:
+            logger.info("Adding spectral norm to all conv and linear layers")
+            apply_spectral_norm(self)
 
-        
+        if self.pad_lon > 0:
+            logger.info(f"Padding each longitudinal boundary with {self.pad_lon} pixels from the other side")
+        if self.pad_lat > 0:
+            logger.info(f"Padding each pole using a reflection with {self.pad_lat} pixels")
 
     def forward(self, x):
+
+        if self.pad_lon > 0:
+            x = circular_pad1d(x, pad=self.pad_lon)
+
+        if self.pad_lat > 0:
+            x_shape = x.shape
+
+            # Reshape the tensor to (B, C*2, lat, lon) using the values from x_shape
+            x = torch.reshape(x, (x_shape[0], x_shape[1] * x_shape[2], x_shape[3], x_shape[4]))
+
+            # Pad the tensor with reflect mode
+            x = F.pad(x, (0, 0, self.pad_lat, self.pad_lat), mode='reflect')
+
+            # Reshape the tensor back to (B, C, 2, new lat, lon) using the values from x_shape
+            x = torch.reshape(x, (x_shape[0], x_shape[1], x_shape[2], x_shape[3] + 2 * self.pad_lat, x_shape[4]))
 
         if self.patch_width > 1 and self.patch_height > 1:
             x = self.cube_embedding(x)
         else:
             x = F.avg_pool3d(x, kernel_size=(2, 1, 1)).squeeze(2)
 
+        encodings = []
         for cel, transformer in self.layers:
             x = cel(x)
             x = transformer(x)
-            
+            encodings.append(x)
+
         x = self.up_block1(x)
+        x = torch.cat([x, encodings[2]], dim=1)
         x = self.up_block2(x)
+        x = torch.cat([x, encodings[1]], dim=1)
         x = self.up_block3(x)
+        x = torch.cat([x, encodings[0]], dim=1)
         x = self.up_block4(x)
+
+        if self.pad_lon > 0:
+            # Slice to original size
+            x = x[..., self.pad_lon:-self.pad_lon]
+
+        if self.pad_lat > 0:
+            # Slice to original size
+            x = x[..., self.pad_lat:-self.pad_lat, :]
+
         x = F.interpolate(x, size=(self.image_height, self.image_width), mode="bilinear")
 
         return x.unsqueeze(2)
 
-    def concat_and_reshape(self, x1, x2):
-        x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
-        x_concat = torch.cat((x1, x2), dim=2)
-        return x_concat.permute(0, 2, 1, 3, 4)
+    def rk4(self, x):
 
-    def split_and_reshape(self, tensor):
-        tensor1 = tensor[:, :int(self.channels * self.levels), :, :, :]
-        tensor2 = tensor[:, -int(self.surface_channels):, :, :, :]
-        tensor1 = tensor1.view(tensor1.shape[0], channels, self.levels, tensor1.shape[2], tensor1.shape[3], tensor1.shape[4])
-        return tensor1, tensor2
+        def integrate_step(x, k, factor):
+            return self.forward(x + k * factor)
 
-    @classmethod
-    def load_model(cls, conf):
-        save_loc = conf['save_loc']
-        ckpt = os.path.join(f"{save_loc}", "checkpoint.pt")
+        k1 = self.forward(x)  # State at i
+        k1 = torch.cat([x[:, :, -2:-1], k1], dim=2)
+        k2 = integrate_step(x, k1, 0.5)  # State at i + 0.5
+        k2 = torch.cat([x[:, :, -2:-1], k2], dim=2)
+        k3 = integrate_step(x, k2, 0.5)  # State at i + 0.5
+        k3 = torch.cat([x[:, :, -2:-1], k3], dim=2)
+        k4 = integrate_step(x, k3, 1.0)  # State at i + 1
 
-        if conf["trainer"]["mode"] == "ddp":
-            if not os.path.isfile(ckpt):
-                ckpt = os.path.join(f"{save_loc}", "checkpoint_cuda:0.pt")
+        return (k1 + 2 * k2 + 2 * k3 + k4) / 6
 
-        if not os.path.isfile(ckpt):
-            raise ValueError(
-                "No saved checkpoint exists. You must train a model first. Exiting."
-            )
-
-        logging.info(
-            f"Loading a model with pre-trained weights from path {ckpt}"
-        )
-
-        checkpoint = torch.load(ckpt)
-
-        if "type" in conf["model"]:
-            del conf["model"]["type"]
-
-        model_class = cls(**conf["model"])
-
-        if conf["trainer"]["mode"] == "fsdp":
-            FSDP.set_state_dict_type(
-                model_class,
-                StateDictType.SHARDED_STATE_DICT,
-            )
-            state_dict = {
-                "model_state_dict": model_class.state_dict(),
-            }
-            DCP.load_state_dict(
-                state_dict=state_dict,
-                storage_reader=DCP.FileSystemReader(os.path.join(save_loc, "checkpoint")),
-            )
-            model_class.load_state_dict(state_dict["model_state_dict"])
-        else:
-            model_class.load_state_dict(checkpoint["model_state_dict"])
-
-        return model_class
-
-    def save_model(self, conf):
-        save_loc = conf['save_loc']
-        state_dict = {
-            "model_state_dict": self.state_dict(),
-        }
-        torch.save(state_dict, f"{save_loc}/checkpoint.pt")
 
 
 if __name__ == "__main__":
-    image_height = 640  # 640
-    image_width = 1280  # 1280
+    # image_height = 192  # 640, 192
+    # image_width = 288  # 1280, 288
+    # levels = 15
+    # frames = 2
+    # channels = 4
+    # surface_channels = 7
+    # patch_height = 1
+    # patch_width = 1
+    # frame_patch_size = 2
+    # pad_lon=48
+    # pad_lat=48
+
+    # input_tensor = torch.randn(1, channels * levels + surface_channels, frames, image_height, image_width).to("cuda")
+
+    # model = CrossFormer(
+    #     image_height=image_height,
+    #     patch_height=patch_height,
+    #     image_width=image_width,
+    #     patch_width=patch_width,
+    #     frames=frames,
+    #     frame_patch_size=frame_patch_size,
+    #     channels=channels,
+    #     surface_channels=surface_channels,
+    #     levels=levels,
+    #     dim=(64, 128, 256, 512),
+    #     depth=(2, 2, 8, 2),
+    #     global_window_size=(4, 4, 2, 1),
+    #     local_window_size=3,
+    #     cross_embed_kernel_sizes=((4, 8, 16, 32), (2, 4), (2, 4), (2, 4)),
+    #     cross_embed_strides=(2, 2, 2, 2),
+    #     attn_dropout=0.,
+    #     ff_dropout=0.,
+    #     pad_lon=pad_lon,
+    #     pad_lat=pad_lat
+    # ).to("cuda")
+
+    image_height = 640  # 640, 192
+    image_width = 1280  # 1280, 288
     levels = 15
     frames = 2
     channels = 4
@@ -538,8 +491,10 @@ if __name__ == "__main__":
     patch_height = 1
     patch_width = 1
     frame_patch_size = 2
+    pad_lon = 80
+    pad_lat = 80
 
-    input_tensor = torch.randn(2, channels * levels + surface_channels, frames, image_height, image_width).to("cuda")
+    input_tensor = torch.randn(1, channels * levels + surface_channels, frames, image_height, image_width).to("cuda")
 
     model = CrossFormer(
         image_height=image_height,
@@ -556,14 +511,17 @@ if __name__ == "__main__":
         global_window_size=(5, 5, 2, 1),
         local_window_size=10,
         cross_embed_kernel_sizes=((4, 8, 16, 32), (2, 4), (2, 4), (2, 4)),
-        cross_embed_strides=(4, 2, 2, 2),
+        cross_embed_strides=(2, 2, 2, 2),
         attn_dropout=0.,
         ff_dropout=0.,
+        pad_lon=pad_lon,
+        pad_lat=pad_lat
     ).to("cuda")
-
-    y_pred = model(input_tensor.to("cuda"))
-
-    print("Predicted shape:", y_pred.shape)
 
     num_params = sum(p.numel() for p in model.parameters())
     print(f"Number of parameters in the model: {num_params}")
+
+    y_pred = model(input_tensor.to("cuda"))
+    print("Predicted shape:", y_pred.shape)
+
+    # print(model.rk4(input_tensor.to("cpu")).shape)
