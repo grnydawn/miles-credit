@@ -25,10 +25,10 @@ import xarray as xr
 # ---------- #
 # AI libs
 import torch
-
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision import transforms
+# import wandb
 
 # ---------- #
 # credit
@@ -41,12 +41,9 @@ from credit.seed import seed_everything
 from credit.pbs import launch_script, launch_script_mpi
 from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
 
-###
 # ---------- #
-# visualization_tools is part of the credit now, but it requires a pip update
 from credit.visualization_tools import shared_mem_draw_wrapper
-
-# import wandb
+#from visualization_tools import shared_mem_draw_wrapper
 
 logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")

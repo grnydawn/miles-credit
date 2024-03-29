@@ -7,7 +7,7 @@ Functions:
     - get_colormap(cmap_strings)
     - get_colormap_extend(var_range)
     - get_variable_range_with_rounding(data)
-    - get_variable_range(var_name, level=level, method='mean_std')
+    - get_variable_range(var_name, conf, level=level, method='mean_std')
     - figure_panel_planner(var_num, proj)
     - cartopy_single_panel(figsize=(13, 6.5), proj=ccrs.EckertIII())
     - cartopy_panel2(figsize=(13, 8), proj=ccrs.EckertIII())
@@ -32,6 +32,7 @@ import logging
 import datetime
 import numpy as np
 import xarray as xr
+import netCDF4 as nc
 # ---------- #
 # matplotlib
 import matplotlib.pyplot as plt
@@ -147,7 +148,7 @@ def get_variable_range_with_rounding(data):
     
     return [data_min, data_max]
 
-def get_variable_range(var_name, level=-1, method='mean_std'):
+def get_variable_range(var_name, conf, level=-1, method='mean_std'):
     
     # detect value range based on mean and standard deviation
     if method == 'mean_std':
@@ -376,7 +377,7 @@ def draw_variables(pred, level, step, visualization_key, conf=None, save_locatio
         var_lim = var_range[i_var]
         
         if var_lim == 'auto':
-            var_lim = get_variable_range(var_name, level=level, method='mean_std')
+            var_lim = get_variable_range(var, conf, level=level, method='mean_std')
         
         if var_lim == 'auto':
             var_lim = get_variable_range_with_rounding(pred_draw.values)
