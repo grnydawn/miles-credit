@@ -41,7 +41,13 @@ def main():
         split_indices = np.linspace(0, all_era5_dates.size, size + 1)
         split_era5_dates = [all_era5_dates.values[split_indices[s]:split_indices[s + 1]]
                             for s in range(split_indices.size - 1)]
+        scaler_start_dates = pd.DatetimeIndex([split[0] for split in split_era5_dates]).strftime("%Y-%m-%d %H:%M")
+        scaler_end_dates = pd.DatetimeIndex([split[-1] for split in split_era5_dates]).strftime("%Y-%m-%d %H:%M")
+        print(scaler_start_dates)
+        print(scaler_end_dates)
     else:
+        scaler_start_dates = None
+        scaler_end_dates = None
         all_era5_filenames = None
         split_era5_dates = None
     era5_subset_times = comm.scatter(split_era5_dates, root=0)
@@ -50,9 +56,12 @@ def main():
     e5_file_dir = "/".join(conf["data"]["save_loc"].split("/")[:-1])
     scalers = fit_era5_scaler_times(era5_subset_times, rank, era5_file_dir=e5_file_dir,
                                     vars_3d=vars_3d, vars_surf=vars_surf)
-    all_scalers = comm.gather(scalers, root=0)
+    all_scalers = np.array(comm.gather(scalers, root=0))
     if rank == 0:
-        all_scalers_df = pd.DataFrame(all_scalers, columns=["scaler_3d", "scaler_surface"],
+        all_scalers_dict = {"start_date": scaler_start_dates, "end_date": scaler_end_dates,
+                           "scaler_3d": all_scalers[:, 0], "scaler_surface": all_scalers[:, 1]}
+        all_scalers_df = pd.DataFrame(all_scalers_dict,
+                                      columns=["start_date", "end_date", "scaler_3d", "scaler_surface"],
                                       index=all_era5_filenames)
         if not exists(args.out):
             os.makedirs(args.out)
