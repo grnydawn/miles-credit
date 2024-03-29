@@ -53,12 +53,15 @@ def main():
         solar_point = get_solar_radiation_loc(rank_point[0], rank_point[1], rank_point[2],
                                 args.start, args.end, step_freq=args.step, sub_freq=args.sub)
         if rank > 0:
-            comm.send(solar_point, dest=0, tag=rank)
+            comm.Send(np.concatenate([solar_point["latitude"].values, 
+                                      solar_point["longitude"].values, 
+                                      solar_point.values]), dest=0, tag=rank)
         else:
-            solar_grid.loc[solar_point["time"], solar_point["latitude"], solar_point["longitude"]] = solar_point
+            solar_grid.loc[:, solar_point["latitude"], solar_point["longitude"]] = solar_point
             for sr in range(1, size):
-                other_point = comm.recv(source=sr, tag=sr)
-                solar_grid.loc[other_point["time"], other_point["latitude"], other_point["longitude"]] = other_point
+                other_point = np.empty(2 + solar_grid.shape[0], dtype=solar_point.dtype)
+                comm.Recv(other_point, source=sr, tag=sr)
+                solar_grid.loc[:, other_point[0], other_point[1]] = other_point[2:]
 
     if rank == 0:
         print(solar_grid)
