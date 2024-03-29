@@ -33,12 +33,12 @@ def main():
         all_era5_filenames = np.array([f.split("/")[-1] for f in all_era5_files])
         era5_dates = []
         for fname in all_era5_filenames:
-            start_date_str, end_date_str = fname.split("_")[1:2]
-            start_date_str += "_00:00"
-            end_date_str += "_23:00"
-            era5_dates.append(pd.date_range(start=start_date_str, end=end_date_str, freq=args_dict["time"]))
-        all_era5_dates = pd.concat(era5_dates)
-        split_indices = np.linspace(0, all_era5_dates.size, size + 1)
+            start_date_str, end_date_str = fname.split("_")[1:3]
+            start_date_str += " 00:00:00"
+            end_date_str += " 23:00:00"
+            era5_dates.append(pd.date_range(start=start_date_str, end=end_date_str, freq=args_dict["time"]).to_series())
+        all_era5_dates = pd.concat(era5_dates, ignore_index=True)
+        split_indices = np.round(np.linspace(0, all_era5_dates.size, size + 1)).astype(int)
         split_era5_dates = [all_era5_dates.values[split_indices[s]:split_indices[s + 1]]
                             for s in range(split_indices.size - 1)]
         scaler_start_dates = pd.DatetimeIndex([split[0] for split in split_era5_dates]).strftime("%Y-%m-%d %H:%M")
@@ -73,8 +73,8 @@ def main():
 def fit_era5_scaler_times(times, rank, era5_file_dir=None, vars_3d=None, vars_surf=None):
     dqs_3d = DQuantileScaler(distribution="normal", channels_last=False)
     dqs_surf = DQuantileScaler(distribution="normal", channels_last=False)
-    curr_f_start = pd.Timestamp(times[0].strftime("%Y") + "-01-01_00:00")
-    curr_f_end = pd.Timestamp(times[0].strftime("%Y") + "-12-31_23:00")
+    curr_f_start = pd.Timestamp(pd.Timestamp(times[0]).strftime("%Y") + "-01-01 00:00")
+    curr_f_end = pd.Timestamp(pd.Timestamp(times[0]).strftime("%Y") + "-12-31 23:00")
     curr_f_start_str = curr_f_start.strftime("%Y-%m-%d")
     curr_f_end_str = curr_f_end.strftime("%Y-%m-%d")
     eds = xr.open_zarr(join(era5_file_dir, f"TOTAL_{curr_f_start_str}_{curr_f_end_str}_staged.zarr"))
@@ -84,23 +84,24 @@ def fit_era5_scaler_times(times, rank, era5_file_dir=None, vars_3d=None, vars_su
         for level in levels:
             var_levels.append(f"{var}_{level:d}")
     n_times = times.size
-    for t, ctime in enumerate(times):
+    times_index = pd.DatetimeIndex(times)
+    for t, ctime in enumerate(times_index):
         print(f"Rank {rank:d}: {ctime} {t:d}/{n_times:d}")
         if not curr_f_start >= ctime <= curr_f_end:
             eds.close()
-            curr_f_start = pd.Timestamp(times[0].strftime("%Y") + "-01-01_00:00")
-            curr_f_end = pd.Timestamp(times[0].strftime("%Y") + "-12-31_23:00")
+            curr_f_start = pd.Timestamp(pd.Timestamp(ctime).strftime("%Y") + "-01-01 00:00")
+            curr_f_end = pd.Timestamp(pd.Timestamp(ctime).strftime("%Y") + "-12-31 23:00")
             curr_f_start_str = curr_f_start.strftime("%Y-%m-%d")
             curr_f_end_str = curr_f_end.strftime("%Y-%m-%d")
             eds = xr.open_zarr(join(era5_file_dir, f"TOTAL_{curr_f_start_str}_{curr_f_end_str}_staged.zarr"))
         var_slices = []
         for var in vars_3d:
             for level in levels:
-                var_slices.append(eds[var].loc[time, level])
+                var_slices.append(eds[var].loc[ctime, level])
         e3d = xr.concat(var_slices, pd.Index(var_levels, name="variable")).load()
         e3d = e3d.expand_dims(dim="time", axis=0)
         dqs_3d.fit(e3d)
-        e_surf = xr.concat([eds[v].loc[time] for v in vars_surf], pd.Index(vars_surf, name="variable")
+        e_surf = xr.concat([eds[v].loc[ctime] for v in vars_surf], pd.Index(vars_surf, name="variable")
                            ).load()
         e_surf = e_surf.expand_dims(dim="time", axis=0)
         dqs_surf.fit(e_surf)
