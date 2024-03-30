@@ -116,13 +116,16 @@ class NormalizeState_Quantile:
     ):
         self.scaler_file = conf['data']['quant_path']
         self.variables = conf['data']['variables']
-        self.variables = conf['data']['surface_variables']
+        self.surface_variables = conf['data']['surface_variables']
         self.levels = int(conf['model']['levels'])
         self.scaler_df = pd.read_parquet(self.scaler_file)
         self.scaler_3ds = self.scaler_df["scaler_3d"].apply(read_scaler)
         self.scaler_surfs = self.scaler_df["scaler_surface"].apply(read_scaler)
         self.scaler_3d = self.scaler_3ds.sum()
         self.scaler_surf = self.scaler_surfs.sum()
+
+        self.scaler_surf.channels_last=False
+        self.scaler_3d.channels_last=False
 
     def __call__(self, sample: Sample, inverse: bool = False) -> Sample:
         if inverse:
@@ -139,13 +142,11 @@ class NormalizeState_Quantile:
         transformed_tensor = tensor.clone()
         transformed_surface_tensor = surface_tensor.clone()
         #3dvars
-        rscal_3d = np.transpose(torch.Tensor.numpy(x[:,:(len(self.variables)*self.levels),:,:].values),(0, 2, 3, 1))
-        self.scaler_3d.inverse_transform(rscal_3d)
-        tensor[:, :, :, :] = torch.tensor(np.transpose(rscal_3d), (0, 3, 1, 2)).to(device)
+        rscal_3d = (np.array(x[:, :(len(self.variables)*self.levels), :, :]))
+        transformed_tensor[:, :, :, :] = torch.tensor((self.scaler_3d.inverse_transform(rscal_3d))).to(device)
         #surf
-        rscal_surf = np.transpose(torch.Tensor.numpy(x[:,(len(self.variables)*self.levels):,:,:].values),(0, 2, 3, 1))
-        self.scaler_surf.inverse_transform(rscal_surf)
-        tensor[:, :, :, :] = torch.tensor(np.transpose(rscal_surf), (0, 3, 1, 2)).to(device)
+        rscal_surf = np.array(x[:, (len(self.variables)*self.levels):, :, :])
+        transformed_surface_tensor[:, :, :, :] = torch.tensor((self.scaler_surf.inverse_transform(rscal_surf))).to(device)
         #cat them
         transformed_x = torch.cat((transformed_tensor, transformed_surface_tensor), dim=1)
         #return
@@ -167,20 +168,20 @@ class NormalizeState_Quantile:
                         for level in levels:
                             var_slices.append(value[var].sel(time=time, level=level))
 
-                    e3d = xr.concat(var_slices, pd.Index(var_levels, name="variable")
-                                   ).transpose("latitude", "longitude", "variable")
-                    TTtrans = self.scaler_3d.transform(e3d)
-                    #this is bad and should be fixed: 
-                    value['U'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,:self.levels].values, (2, 0, 1))
-                    value['V'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,self.levels:(self.levels*2)].values, (2, 0, 1))
-                    value['T'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,(self.levels*2):(self.levels*3)].values, (2, 0, 1))
-                    value['Q'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,(self.levels*3):(self.levels*4)].values, (2, 0, 1))
-                    e_surf = xr.concat([value[v].sel(time=time) for v in self.surface_variables], pd.Index(self.surface_variables, name="variable")
-                                   ).transpose("latitude", "longitude", "variable")
+                    e3d = xr.concat(var_slices, pd.Index(var_levels, name="variable"))
+                    e3d = e3d.expand_dims(dim="time", axis=0)
+                    TTtrans = self.scaler_3d.transform(np.array(e3d))
+                    #this is bad and should be fixed:         
+                    value['U'].sel(time=time)[:,:,:]=(TTtrans[:,:self.levels,:,:].squeeze())
+                    value['V'].sel(time=time)[:,:,:]=(TTtrans[:,self.levels:(self.levels*2),:,:].squeeze())
+                    value['T'].sel(time=time)[:,:,:]=(TTtrans[:,(self.levels*2):(self.levels*3),:,:].squeeze())
+                    value['Q'].sel(time=time)[:,:,:]=(TTtrans[:,(self.levels*3):(self.levels*4),:,:].squeeze())
+                    e_surf = xr.concat([value[v].sel(time=time) for v in self.surface_variables], pd.Index(self.surface_variables, name="variable"))
+                    e_surf = e_surf.expand_dims(dim="time", axis=0)
                     TTtrans = self.scaler_surf.transform(e_surf)
     
                     for ee,varvar in enumerate(self.surface_variables):    
-                        value[varvar].sel(time=time)[:,:]=TTtrans[:,:,ee]
+                        value[varvar].sel(time=time)[:,:]=TTtrans[0,ee,:,:].squeeze()
             normalized_sample[key]=value
         return normalized_sample
 
@@ -234,11 +235,9 @@ class NormalizeTendency:
 
         return transformed_tensor, transformed_surface_tensor
 
-
 class ToTensor:
     def __init__(self, conf):
-        
-        self.conf = conf        
+        self.conf = conf
         self.hist_len = int(conf["data"]["history_len"])
         self.for_len = int(conf["data"]["forecast_len"])
         self.variables = conf["data"]["variables"]
@@ -251,6 +250,9 @@ class ToTensor:
         return_dict = {}
 
         for key, value in sample.items():
+            if key == 'historical_ERA5_images':
+                self.doy = value['time.dayofyear']
+                self.hod = value['time.hour']
 
             if isinstance(value, xr.DataArray):
                 value_var = value.values
@@ -286,12 +288,19 @@ class ToTensor:
             DSD = xr.open_dataset(self.conf["loss"]["latitude_weights"])
             arrs = []
             for sv in self.static_variables:
-
+                if sv == 'tsi':
+                    TOA = xr.open_dataset(self.conf["data"]["TOA_forcing_path"])
+                    times_b = pd.to_datetime(TOA.time.values)
+                    mask_toa = [(time.dayofyear in self.doy) and (time.hour  in self.hod) for time in times_b]
+                    return_dict['TOA'] = (TOA[sv].sel(time=mask_toa))/(2540585.74)
+                    #return_dict['TOA'] = torch.tensor(((TOA[sv].sel(time=mask_toa))/(2540585.74)).to_numpy())                    
                 if sv == 'SP':
                     arr = 2*torch.tensor(np.array(((DSD['SP']-DSD['SP'].max())/(DSD['SP'].min()-DSD['SP'].max()))))
-                else: 
-                   arr = DSD[sv].squeeze()
-
+                else:
+                    try:
+                        arr = DSD[sv].squeeze()
+                    except:
+                        continue
                 arrs.append(arr)
             
             return_dict['static']=np.stack(arrs, axis=0)
