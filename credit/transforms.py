@@ -294,8 +294,8 @@ class ToTensor:
                     mask_toa = [(time.dayofyear in self.doy) and (time.hour  in self.hod) for time in times_b]
                     return_dict['TOA'] = (TOA[sv].sel(time=mask_toa))/(2540585.74)
                     #return_dict['TOA'] = torch.tensor(((TOA[sv].sel(time=mask_toa))/(2540585.74)).to_numpy())                    
-                if sv == 'SP':
-                    arr = 2*torch.tensor(np.array(((DSD['SP']-DSD['SP'].max())/(DSD['SP'].min()-DSD['SP'].max()))))
+                if sv == 'Z_GDS4_SFC':
+                    arr = 2*torch.tensor(np.array(((DSD[sv]-DSD[sv].min())/(DSD[sv].max()-DSD[sv].min()))))
                 else:
                     try:
                         arr = DSD[sv].squeeze()
