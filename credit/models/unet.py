@@ -6,7 +6,8 @@ import os
 import torch.distributed.checkpoint as DCP
 from torch.distributed.fsdp import StateDictType
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-
+import torch.nn.functional as F
+from credit.models.base_model import BaseModel
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -30,7 +31,7 @@ supported_encoders = ['resnet18', 'resnet34', 'resnet50', 'resnet101', 'resnet15
                       'timm-resnest14d', 'timm-resnest26d', 'timm-resnest50d', 'timm-resnest101e', 'timm-resnest200e', 'timm-resnest269e', 'timm-resnest50d_4s2x40d', 'timm-resnest50d_1s4x24d', 'timm-res2net50_26w_4s', 'timm-res2net101_26w_4s', 'timm-res2net50_26w_6s', 'timm-res2net50_26w_8s', 'timm-res2net50_48w_2s', 'timm-res2net50_14w_8s', 'timm-res2next50', 'timm-regnetx_002', 'timm-regnetx_004', 'timm-regnetx_006', 'timm-regnetx_008', 'timm-regnetx_016', 'timm-regnetx_032', 'timm-regnetx_040', 'timm-regnetx_064', 'timm-regnetx_080', 'timm-regnetx_120', 'timm-regnetx_160', 'timm-regnetx_320', 'timm-regnety_002', 'timm-regnety_004', 'timm-regnety_006', 'timm-regnety_008', 'timm-regnety_016', 'timm-regnety_032', 'timm-regnety_040', 'timm-regnety_064', 'timm-regnety_080', 'timm-regnety_120', 'timm-regnety_160', 'timm-regnety_320', 'timm-skresnet18', 'timm-skresnet34', 'timm-skresnext50_32x4d', 'timm-mobilenetv3_large_075', 'timm-mobilenetv3_large_100', 'timm-mobilenetv3_large_minimal_100', 'timm-mobilenetv3_small_075', 'timm-mobilenetv3_small_100', 'timm-mobilenetv3_small_minimal_100', 'timm-gernet_s', 'timm-gernet_m', 'timm-gernet_l']
 
 
-def load_model(model_conf):
+def load_premade_encoder_model(model_conf):
     model_conf = copy.deepcopy(model_conf)
     name = model_conf.pop("name")
     if name in supported_models:
@@ -41,87 +42,35 @@ def load_model(model_conf):
             f"Model name {name} not recognized. Please choose from {supported_models.keys()}")
 
 
-class SegmentationModel(torch.nn.Module):
+class SegmentationModel(BaseModel):
 
     def __init__(self, conf):
 
         super(SegmentationModel, self).__init__()
 
-        self.num_atmos_vars = conf["model"]["channels"]
-        self.num_levels = conf["model"]["frames"]
-        self.num_single_layer = conf["model"]["surface_channels"]
+        self.variables = len(conf["data"]["variables"])
+        self.levels = conf["model"]["levels"]
+        self.frames = conf["model"]["frames"]
+        self.surface_variables = len(conf["data"]["surface_variables"])
+        self.static_variables = len(conf["data"]["static_variables"])
         self.use_codebook = False
         self.rk4_integration = conf["model"]["rk4_integration"]
         self.channels = 1
 
-        in_out_channels = int(self.num_atmos_vars*self.num_levels + self.num_single_layer)
+        in_out_channels = int(self.variables*self.levels + self.surface_variables + self.static_variables)
 
         if conf['model']['architecture']['name'] == 'unet':
             conf['model']['architecture']['decoder_attention_type'] = 'scse'
         conf['model']['architecture']['in_channels'] = in_out_channels
         conf['model']['architecture']['classes'] = in_out_channels
 
-        self.model = load_model(conf['model']['architecture'])
+        self.model = load_premade_encoder_model(conf['model']['architecture'])
 
     def forward(self, x):
-        return self.rk4(x) if self.rk4_integration else self.model(x)
-
-    def concat_and_reshape(self, x1, x2):
-        x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
-        x_concat = torch.cat((x1, x2), dim=2)
-        return x_concat.permute(0, 2, 1, 3, 4).squeeze(2)
-
-    def split_and_reshape(self, tensor):
-        tensor1 = tensor[:, :int(self.channels * self.levels), :, :, :]
-        tensor2 = tensor[:, -int(self.surface_channels):, :, :, :]
-        tensor1 = tensor1.view(tensor1.shape[0], self.channels, self.levels, tensor1.shape[2], tensor1.shape[3], tensor1.shape[4])
-        return tensor1, tensor2
-
-    @classmethod
-    def load_model(cls, conf):
-        save_loc = conf['save_loc']
-        ckpt = f"{save_loc}/checkpoint.pt"
-
-        if not os.path.isfile(ckpt):
-            raise ValueError(
-                "No saved checkpoint exists. You must train a model first. Exiting."
-            )
-
-        logging.info(
-            f"Loading a model with pre-trained weights from path {ckpt}"
-        )
-
-        checkpoint = torch.load(ckpt)
-
-        if "type" in conf["model"]:
-            del conf["model"]["type"]
-
-        model_class = cls(**conf["model"])
-
-        if conf["trainer"]["mode"] == "fsdp":
-            FSDP.set_state_dict_type(
-                model_class,
-                StateDictType.SHARDED_STATE_DICT,
-            )
-            state_dict = {
-                "model_state_dict": model_class.state_dict(),
-            }
-            DCP.load_state_dict(
-                state_dict=state_dict,
-                storage_reader=DCP.FileSystemReader(os.path.join(save_loc, "checkpoint")),
-            )
-            model_class.load_state_dict(state_dict["model_state_dict"])
-        else:
-            model_class.load_state_dict(checkpoint["model_state_dict"])
-
-        return model_class
-
-    def save_model(self, conf):
-        save_loc = conf['save_loc']
-        state_dict = {
-            "model_state_dict": self.state_dict(),
-        }
-        torch.save(state_dict, os.path.join(save_loc, "checkpoint.pt"))
+        x = F.avg_pool3d(x, kernel_size=(2, 1, 1)) if x.shape[2] > 1 else x
+        x = x.squeeze(2) # squeeze time dim
+        x = self.rk4(x) if self.rk4_integration else self.model(x)
+        return x.unsqueeze(2)
 
     def rk4(self, x):
 
@@ -134,3 +83,6 @@ class SegmentationModel(torch.nn.Module):
         k4 = integrate_step(x, k3, 1.0)
 
         return (k1 + 2 * k2 + 2 * k3 + k4) / 6
+
+
+

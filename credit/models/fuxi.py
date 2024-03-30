@@ -10,12 +10,16 @@ from torch.distributed.fsdp import StateDictType
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 import logging
 
+from credit.models.base_model import BaseModel
+
 
 logger = logging.getLogger(__name__)
 
 
 def get_pad3d(input_resolution, window_size):
     """
+    Estimate the size of padding based on the given window size and the original input size.
+    
     Args:
         input_resolution (tuple[int]): (Pl, Lat, Lon)
         window_size (tuple[int]): (Pl, Lat, Lon)
@@ -60,8 +64,7 @@ def get_pad2d(input_resolution, window_size):
     window_size = [2] + list(window_size)
     padding = get_pad3d(input_resolution, window_size)
     return padding[: 4]
-
-
+    
 class CubeEmbedding(nn.Module):
     """
     Args:
@@ -70,69 +73,114 @@ class CubeEmbedding(nn.Module):
     """
     def __init__(self, img_size, patch_size, in_chans, embed_dim, norm_layer=nn.LayerNorm):
         super().__init__()
-        patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1], img_size[2] // patch_size[2]]
-
+        
+        # input size
         self.img_size = img_size
+        
+        # number of patches after embedding (T_num, Lat_num, Lon_num)
+        patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1], img_size[2] // patch_size[2]]
         self.patches_resolution = patches_resolution
+
+        # number of embedded dimension after patching
         self.embed_dim = embed_dim
+
+        # Conv3d-based patching
         self.proj = nn.Conv3d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
+
+        # layer norm
         if norm_layer is not None:
             self.norm = norm_layer(embed_dim)
         else:
-            self.norm = None
-
+            self.norm = None   
+        
     def forward(self, x: torch.Tensor):
+        
+        # example size: [Batch, 67, 2, 640, 1280]
         B, T, C, Lat, Lon = x.shape
-        x = self.proj(x).reshape(B, self.embed_dim, -1).transpose(1, 2)  # B T*Lat*Lon C
+
+        # Conv3d-based patching and embedding
+        # output size: [B, 1024, 1, 40, 80]
+        x = self.proj(x)
+
+        # combine T, Lat, Lon dimensions
+        # output size: [B, 1024, 3200]
+        x = x.reshape(B, self.embed_dim, -1)
+
+        # switch to channel-last for normalization
+        # output size: [B, 3200, 1024]
+        x = x.transpose(1, 2)  # B T*Lat*Lon C 
+
+        # Layer norm (channel last)
         if self.norm is not None:
             x = self.norm(x)
-        x = x.transpose(1, 2).reshape(B, self.embed_dim, *self.patches_resolution)
+            
+        # switch back to channel first
+        # output size: [B, 1024, 3200]
+        x = x.transpose(1, 2)
+
+        # recover T, Lat, Lon dimensions
+        # output size: [B, 1024, 1, 40, 80]
+        x = x.reshape(B, self.embed_dim, *self.patches_resolution)
+        
         return x
 
 
 class DownBlock(nn.Module):
     def __init__(self, in_chans: int, out_chans: int, num_groups: int, num_residuals: int = 2):
         super().__init__()
+
+        # down-sampling with Conv2d
         self.conv = nn.Conv2d(in_chans, out_chans, kernel_size=(3, 3), stride=2, padding=1)
 
+        # blocks of residual path
         blk = []
         for i in range(num_residuals):
             blk.append(nn.Conv2d(out_chans, out_chans, kernel_size=3, stride=1, padding=1))
             blk.append(nn.GroupNorm(num_groups, out_chans))
             blk.append(nn.SiLU())
-
         self.b = nn.Sequential(*blk)
 
     def forward(self, x):
+
+        # down-sampling
         x = self.conv(x)
 
+        # skip-connection
         shortcut = x
-
+        
+        # residual path
         x = self.b(x)
-
+        
+        # additive residual connection
         return x + shortcut
 
 
 class UpBlock(nn.Module):
     def __init__(self, in_chans, out_chans, num_groups, num_residuals=2):
         super().__init__()
-        self.conv = nn.ConvTranspose2d(in_chans, out_chans, kernel_size=2, stride=2)
 
+        # down-sampling with Transpose Conv
+        self.conv = nn.ConvTranspose2d(in_chans, out_chans, kernel_size=2, stride=2)
+        
+        # blocks of residual path
         blk = []
         for i in range(num_residuals):
             blk.append(nn.Conv2d(out_chans, out_chans, kernel_size=3, stride=1, padding=1))
             blk.append(nn.GroupNorm(num_groups, out_chans))
             blk.append(nn.SiLU())
-
         self.b = nn.Sequential(*blk)
 
     def forward(self, x):
+        # up-sampling
         x = self.conv(x)
 
+        # skip-connection
         shortcut = x
 
+        # residual path
         x = self.b(x)
 
+        # additive residual connection
         return x + shortcut
 
 
@@ -149,16 +197,30 @@ class UTransformer(nn.Module):
     def __init__(self, embed_dim, num_groups, input_resolution, num_heads, window_size, depth):
         super().__init__()
         num_groups = to_2tuple(num_groups)
-        window_size = to_2tuple(window_size)
-        padding = get_pad2d(input_resolution, window_size)
+        window_size = to_2tuple(window_size) # convert window_size[int] to tuple
+
+        # padding input tensors so they are divided by the window size 
+        padding = get_pad2d(input_resolution, window_size) # <--- Accepts tuple only
         padding_left, padding_right, padding_top, padding_bottom = padding
         self.padding = padding
         self.pad = nn.ZeroPad2d(padding)
+        
+        # input resolution after padding
         input_resolution = list(input_resolution)
         input_resolution[0] = input_resolution[0] + padding_top + padding_bottom
         input_resolution[1] = input_resolution[1] + padding_left + padding_right
+
+        # down-sampling block 
         self.down = DownBlock(embed_dim, embed_dim, num_groups[0])
-        self.layer = SwinTransformerV2Stage(embed_dim, embed_dim, input_resolution, depth, num_heads, window_size)
+
+        # SwinT block
+        self.layer = SwinTransformerV2Stage(embed_dim, 
+                                            embed_dim, 
+                                            input_resolution, 
+                                            depth, num_heads, 
+                                            window_size[0]) #<--- window_size[0] get window_size[int] from tuple
+
+        # up-sampling block
         self.up = UpBlock(embed_dim * 2, embed_dim, num_groups[1])
 
     def forward(self, x):
@@ -184,7 +246,7 @@ class UTransformer(nn.Module):
         return x
 
 
-class Fuxi(nn.Module):
+class Fuxi(BaseModel):
     """
     Args:
         img_size (Sequence[int], optional): T, Lat, Lon.
@@ -246,17 +308,6 @@ class Fuxi(nn.Module):
         self.surface_channels = surface_channels
         self.levels = levels
 
-    def concat_and_reshape(self, x1, x2):
-        x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
-        x_concat = torch.cat((x1, x2), dim=2)
-        return x_concat.permute(0, 2, 1, 3, 4)
-
-    def split_and_reshape(self, tensor):
-        tensor1 = tensor[:, :int(self.channels * self.levels), :, :, :]
-        tensor2 = tensor[:, -int(self.surface_channels):, :, :, :]
-        tensor1 = tensor1.view(tensor1.shape[0], channels, self.levels, tensor1.shape[2], tensor1.shape[3], tensor1.shape[4])
-        return tensor1, tensor2
-
     def forward(self, x: torch.Tensor):
         # Tensor dims: Batch, Variables, Time, Lat grids, Lon grids
         B, _, _, _, _ = x.shape
@@ -269,7 +320,7 @@ class Fuxi(nn.Module):
 
         # Cube Embedding and squeese the time dimension
         # (the model produce single forecast lead time only)
-
+        
         # x: input size = (Batch, Variables, Time, Lat grids, Lon grids)
         x = self.cube_embedding(x).squeeze(2)  # B C Lat Lon
         # x: output size = (Batch, Embedded dimension, time, number of patches, number of patches)
@@ -292,53 +343,6 @@ class Fuxi(nn.Module):
 
         # unfold the time dimension
         return x.unsqueeze(2)
-
-    @classmethod
-    def load_model(cls, conf):
-        save_loc = conf['save_loc']
-        ckpt = os.path.expandvars(os.path.join(save_loc, "checkpoint.pt"))
-
-        if not os.path.isfile(ckpt):
-            raise ValueError(
-                "No saved checkpoint exists. You must train a model first. Exiting."
-            )
-
-        logging.info(
-            f"Loading a model with pre-trained weights from path {ckpt}"
-        )
-
-        checkpoint = torch.load(ckpt,
-                                map_location=torch.device('cpu') if not torch.cuda.is_available() else None)
-
-        if "type" in conf["model"]:
-            del conf["model"]["type"]
-
-        model_class = cls(**conf["model"])
-
-        if conf["trainer"]["mode"] == "fsdp":
-            FSDP.set_state_dict_type(
-                model_class,
-                StateDictType.SHARDED_STATE_DICT,
-            )
-            state_dict = {
-                "model_state_dict": model_class.state_dict(),
-            }
-            DCP.load_state_dict(
-                state_dict=state_dict,
-                storage_reader=DCP.FileSystemReader(os.path.join(save_loc, "checkpoint")),
-            )
-            model_class.load_state_dict(state_dict["model_state_dict"])
-        else:
-            model_class.load_state_dict(checkpoint["model_state_dict"])
-
-        return model_class
-
-    def save_model(self, conf):
-        save_loc = conf['save_loc']
-        state_dict = {
-            "model_state_dict": self.state_dict(),
-        }
-        torch.save(state_dict, os.path.join(save_loc, "checkpoint.pt"))
 
 
 if __name__ == "__main__":

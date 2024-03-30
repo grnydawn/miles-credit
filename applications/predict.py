@@ -25,10 +25,10 @@ import xarray as xr
 # ---------- #
 # AI libs
 import torch
-
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision import transforms
+# import wandb
 
 # ---------- #
 # credit
@@ -41,12 +41,9 @@ from credit.seed import seed_everything
 from credit.pbs import launch_script, launch_script_mpi
 from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
 
-###
 # ---------- #
-# visualization_tools is part of the credit now, but it requires a pip update
 from credit.visualization_tools import shared_mem_draw_wrapper
-
-# import wandb
+#from visualization_tools import shared_mem_draw_wrapper
 
 logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")
@@ -218,10 +215,7 @@ def make_video(video_name_prefix, save_location, image_file_names, format="gif")
         input_txt = os.path.join(save_location, f"input_{video_name_prefix}.txt")
         f = open(input_txt, "w")
         for i_file, filename in enumerate(image_file_names):
-            if i_file == 0:
-                print("file {}\nduration 3".format(os.path.basename(filename)), file=f)
-            else:
-                print("file {}\nduration 2".format(os.path.basename(filename)), file=f)
+            print("file {}\nduration 1".format(os.path.basename(filename)), file=f)
         f.close()
 
         # cd to the save_location and run ffmpeg
@@ -273,13 +267,11 @@ def predict(rank, world_size, conf, pool, smm):
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
 
     # Preprocessing transformations
-    state_transformer = NormalizeState(
-        conf["data"]["mean_path"], conf["data"]["std_path"]
-    )
+    state_transformer = NormalizeState(conf)
     transform = transforms.Compose(
         [
             state_transformer,
-            ToTensor(history_len=history_len, forecast_len=forecast_len),
+            ToTensor(conf),
         ]
     )
 
