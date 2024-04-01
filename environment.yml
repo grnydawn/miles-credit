@@ -29,6 +29,7 @@ dependencies:
   - zarr
   - jupyter
   - pyg
+  - mpi4py
   - pip:
     - einops
     - echo-opt
