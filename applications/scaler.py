@@ -141,8 +141,8 @@ def transform_era5_times(times, rank, scaler_file=None, era5_file_dir=None, vars
             var_levels.append(f"{var}_{level:d}")
     n_times = times.size
     times_index = pd.DatetimeIndex(times)
-    f_time_start = times_index[0].strftime("%Y-%m-%d")
-    f_time_end = times_index[-1].strftime("%Y-%m-%d")
+    f_time_start = times_index[0].strftime("%Y-%m-%dT%H:%M:%S")
+    f_time_end = times_index[-1].strftime("%Y-%m-%dT%H:%M:%S")
 
     for t, ctime in enumerate(times_index):
         print(f"Rank {rank:d}: {ctime} {t+1:d}/{n_times:d}")
@@ -165,21 +165,26 @@ def transform_era5_times(times, rank, scaler_file=None, era5_file_dir=None, vars
         out_ds.attrs = eds.attrs
         n_levels = len(levels)
         for v, var in enumerate(vars_3d):
-            out_ds.assign({var: (("time", "level", "latitude", "longitude"),
-                                 e3d_transformed[:, v * n_levels: (v + 1) * n_levels])})
+            out_ds[var] = (("time", "level", "latitude", "longitude"),
+                           e3d_transformed[:, v * n_levels: (v + 1) * n_levels].data)
             out_ds[var].attrs = eds[var].attrs
         e_surf = xr.concat([eds[v].loc[ctime] for v in vars_surf], pd.Index(vars_surf, name="variable")
                            ).load()
         e_surf = e_surf.expand_dims(dim="time", axis=0)
         e_surf_transformed = dqs_surf.transform(e_surf)
         for v, var in enumerate(vars_surf):
-            out_ds[var].assign({var: (("time", "latitude", "longitude"), e_surf_transformed[:, v])})
+            out_ds[var] = (("time", "latitude", "longitude"), e_surf_transformed[:, v].data)
             out_ds[var].attrs = eds[var].attrs
         if t == 0:
             out_ds.to_zarr(join(out_dir, f"TOTAL_{f_time_start}_{f_time_end}_staged.zarr"))
         else:
             out_ds.to_zarr(join(out_dir, f"TOTAL_{f_time_start}_{f_time_end}_staged.zarr"), mode="a-",
                            append_dim="time")
+        del out_ds
+        del e3d
+        del e3d_transformed
+        del e_surf
+        del e_surf_transformed
     return
 
 
