@@ -47,10 +47,9 @@ def main():
         split_indices = np.round(np.linspace(0, all_era5_dates.size, size + 1)).astype(int)
         split_era5_dates = [all_era5_dates.values[split_indices[s]:split_indices[s + 1]]
                             for s in range(split_indices.size - 1)]
+        print(split_era5_dates)
         scaler_start_dates = pd.DatetimeIndex([split[0] for split in split_era5_dates]).strftime("%Y-%m-%d %H:%M")
         scaler_end_dates = pd.DatetimeIndex([split[-1] for split in split_era5_dates]).strftime("%Y-%m-%d %H:%M")
-        print(scaler_start_dates)
-        print(scaler_end_dates)
     else:
         scaler_start_dates = None
         scaler_end_dates = None
@@ -78,8 +77,7 @@ def main():
         if rank == 0:
             if not exists(args.dataout):
                 os.makedirs(args.dataout, exist_ok=True)
-        else:
-            time.sleep(1)
+        print(f"Rank {rank:d}: ", era5_subset_times[0], era5_subset_times[-1])
         transform_era5_times(era5_subset_times, rank, scaler_file=args.scalerfile, era5_file_dir=e5_file_dir,
                              vars_3d=vars_3d, vars_surf=vars_surf, out_dir=args.dataout)
     return
