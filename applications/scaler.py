@@ -50,6 +50,8 @@ def main():
         print(split_era5_dates)
         scaler_start_dates = pd.DatetimeIndex([split[0] for split in split_era5_dates]).strftime("%Y-%m-%d %H:%M")
         scaler_end_dates = pd.DatetimeIndex([split[-1] for split in split_era5_dates]).strftime("%Y-%m-%d %H:%M")
+        print(scaler_start_dates)
+        print(scaler_end_dates)
     else:
         scaler_start_dates = None
         scaler_end_dates = None
@@ -139,9 +141,6 @@ def transform_era5_times(times, rank, scaler_file=None, era5_file_dir=None, vars
             var_levels.append(f"{var}_{level:d}")
     n_times = times.size
     times_index = pd.DatetimeIndex(times)
-    f_time_start = times_index[0].strftime("%Y-%m-%d")
-    f_time_end = times_index[-1].strftime("%Y-%m-%d")
-
     for t, ctime in enumerate(times_index):
         print(f"Rank {rank:d}: {ctime} {t+1:d}/{n_times:d}")
         if not curr_f_start >= ctime <= curr_f_end:
@@ -158,26 +157,36 @@ def transform_era5_times(times, rank, scaler_file=None, era5_file_dir=None, vars
         e3d = xr.concat(var_slices, pd.Index(var_levels, name="variable")).load()
         e3d = e3d.expand_dims(dim="time", axis=0)
         e3d_transformed = dqs_3d.transform(e3d)
-        out_ds = xr.Dataset(coords={"latitude": eds["latitude"], "longitude": eds["longitude"], "time": [ctime]},
-                            )
-        out_ds.attrs = eds.attrs
+
+        out_ds = xr.Dataset(coords={"latitude": eds["latitude"], "longitude": eds["longitude"], "time": [ctime]})
+        #out_ds = xr.Dataset()
         n_levels = len(levels)
+        encodings = {}
         for v, var in enumerate(vars_3d):
-            out_ds.assign({var: (("time", "level", "latitude", "longitude"),
-                                 e3d_transformed[:, v * n_levels: (v + 1) * n_levels])})
-            out_ds[var].attrs = eds[var].attrs
+            out_ds[var] = (("time", "level", "latitude", "longitude"),
+                           e3d_transformed[:, v * n_levels: (v + 1) * n_levels].data)
+            encodings[var] = {"zlib": True, "complevel": 4}
         e_surf = xr.concat([eds[v].loc[ctime] for v in vars_surf], pd.Index(vars_surf, name="variable")
                            ).load()
         e_surf = e_surf.expand_dims(dim="time", axis=0)
         e_surf_transformed = dqs_surf.transform(e_surf)
         for v, var in enumerate(vars_surf):
-            out_ds[var].assign({var: (("time", "latitude", "longitude"), e_surf_transformed[:, v])})
-            out_ds[var].attrs = eds[var].attrs
-        if t == 0:
-            out_ds.to_zarr(join(out_dir, f"TOTAL_{f_time_start}_{f_time_end}_staged.zarr"))
-        else:
-            out_ds.to_zarr(join(out_dir, f"TOTAL_{f_time_start}_{f_time_end}_staged.zarr"), mode="a-",
-                           append_dim="time")
+            out_ds[var] = (("time", "latitude", "longitude"), e_surf_transformed[:, v].data)
+            encodings[var] = {"zlib": True, "complevel": 4}
+
+        f_time_now = ctime.strftime("%Y-%m-%dT%H:%M:%S")
+        full_out_dir = join(out_dir, ctime.strftime("%Y/%m/%d/"))
+        if not exists(full_out_dir):
+            os.makedirs(full_out_dir, exist_ok=True)
+        full_out_filename = join(full_out_dir, f"TOTAL_{f_time_now}_transformed.nc")
+        out_ds.to_netcdf(full_out_filename, encoding=encodings)
+        #out_ds.to_zarr(join(out_dir, f"TOTAL_{f_time_start}_{f_time_end}_staged.zarr"), region={"time": slice(t, t + 1)})
+        out_ds.close()
+        del out_ds
+        del e3d
+        del e3d_transformed
+        del e_surf
+        del e_surf_transformed
     return
 
 

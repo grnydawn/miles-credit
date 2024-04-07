@@ -1,5 +1,5 @@
 #!/bin/bash -l
-#PBS -N gwm_scaler
+#PBS -N scaler_t
 #PBS -l select=4:ncpus=128:mpiprocs=128:ngpus=0:mem=200GB
 #PBS -l walltime=03:00:00
 #PBS -A NAML0001
