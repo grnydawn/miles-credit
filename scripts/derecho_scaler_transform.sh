@@ -1,16 +1,16 @@
 #!/bin/bash -l
 #PBS -N scaler_t
-#PBS -l select=4:ncpus=128:mpiprocs=128:ngpus=0:mem=200GB
-#PBS -l walltime=03:00:00
+#PBS -l select=16:ncpus=128:mpiprocs=64:ngpus=0:mem=200GB
+#PBS -l walltime=12:00:00
 #PBS -A NAML0001
 #PBS -q main
 #PBS -l job_priority=regular
 #PBS -j oe
 #PBS -k eod
-module load conda craype/2.7.23 cray-mpich/8.1.27
+module load conda 
 conda activate hcredit
 cd ..
-mpiexec -n 512 python -u -m mpi4py applications/scaler.py \
+mpiexec -n 1024 -ppn 64 python -u -m mpi4py applications/scaler.py \
   -c config/crossformer.yml \
   -t 1h \
   -o /glade/derecho/scratch/dgagne/credit_scalers/ \
