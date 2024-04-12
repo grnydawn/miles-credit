@@ -1,6 +1,6 @@
 #!/bin/bash -l
 #PBS -N scaler_t
-#PBS -l select=32:ncpus=128:mpiprocs=32:ngpus=0:mem=200GB
+#PBS -l select=4:ncpus=128:mpiprocs=128:ngpus=0:mem=200GB
 #PBS -l walltime=12:00:00
 #PBS -A NAML0001
 #PBS -q main
@@ -10,7 +10,7 @@
 module load conda 
 conda activate hcredit
 cd ..
-mpiexec -n 1024 -ppn 32 python -u -m mpi4py applications/scaler.py \
+mpiexec -n 512 python -u -m mpi4py applications/scaler.py \
   -c config/crossformer.yml \
   -t 1h \
   -o /glade/derecho/scratch/dgagne/credit_scalers/ \
