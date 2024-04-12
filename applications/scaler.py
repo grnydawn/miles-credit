@@ -9,7 +9,6 @@ from bridgescaler.distributed import DQuantileScaler
 from bridgescaler import print_scaler, read_scaler
 from os.path import exists, join
 from mpi4py import MPI
-import gc
 
 
 def main():
@@ -134,31 +133,31 @@ def transform_era5_times(times, rank, scaler_file=None, era5_file_dir=None, vars
     eds = xr.open_zarr(join(era5_file_dir, f"TOTAL_{curr_f_start_str}_{curr_f_end_str}_staged.zarr"), chunks=None)
     levels = eds.level.values
     var_levels = []
-    encodings = {}
     for var in vars_3d:
         for level in levels:
             var_levels.append(f"{var}_{level:d}")
-            encodings[var_levels[-1]] = {"zlib": True, "complevel": 4}
-    for v, var in enumerate(vars_surf):
-        encodings[var] = {"zlib": True, "complevel": 4}
     n_times = times.size
     times_index = pd.DatetimeIndex(times)
-    in_3d_ds = xr.Dataset(data_vars={var: (("time", "latitude", "longitude"),
-                                         np.zeros((1, eds["latitude"].size, eds["longitude"].size),
-                                                  dtype=np.float32))
-                                   for var in var_levels},
-                        coords={"latitude": eds["latitude"],
-                                "longitude": eds["longitude"],
-                                "time": [times_index[0]]},
-                        attrs=eds.attrs)
-    out_ds = xr.Dataset(data_vars={var: (("time", "latitude", "longitude"),
-                                         np.zeros((1, eds["latitude"].size, eds["longitude"].size),
-                                                  dtype=np.float32))
-                                   for var in var_levels + vars_surf},
-                        coords={"latitude": eds["latitude"],
-                                "longitude": eds["longitude"],
-                                "time": [times_index[0]]},
-                        attrs=eds.attrs)
+    n_3d_vars = len(var_levels)
+    n_vars = n_3d_vars + len(vars_surf)
+
+    var_index = pd.Index(np.concatenate((var_levels, vars_surf)), name="variable")
+    in_ds = xr.DataArray(data=(("time", "variable", "latitude", "longitude"),
+                               np.zeros((1, n_vars, eds["latitude"].size, eds["longitude"].size),
+                                        dtype=np.float32)),
+                         coords={"latitude": eds["latitude"],
+                                 "longitude": eds["longitude"],
+                                 "variable": var_index,
+                                 "time": [times_index[0]]},
+                         attrs=eds.attrs)
+    out_ds = xr.DataArray(data=(("time", "variable", "latitude", "longitude"),
+                                np.zeros((1, n_vars, eds["latitude"].size, eds["longitude"].size),
+                                         dtype=np.float32)),
+                          coords={"latitude": eds["latitude"],
+                                  "longitude": eds["longitude"],
+                                  "time": [times_index[0]],
+                                  "variable": var_index},
+                          attrs=eds.attrs)
 
     for t, ctime in enumerate(times_index):
         print(f"Rank {rank:d}: {ctime} {t + 1:d}/{n_times:d}")
@@ -169,23 +168,25 @@ def transform_era5_times(times, rank, scaler_file=None, era5_file_dir=None, vars
             curr_f_start_str = curr_f_start.strftime("%Y-%m-%d")
             curr_f_end_str = curr_f_end.strftime("%Y-%m-%d")
             eds = xr.open_zarr(join(era5_file_dir, f"TOTAL_{curr_f_start_str}_{curr_f_end_str}_staged.zarr"))
+        v = 0
         for var in vars_3d:
             for level in levels:
-                vl = f"{var}_{level:d}"
-                in_3d_ds[vl][:] = eds[var].loc[ctime, level]
-        in_3d_ds.assign_coords({"time": [ctime],})
-        out_ds[var_levels][:] = dqs_3d.transform(in_3d_ds)
-        out_ds[vars_surf][:] = dqs_surf.transform(eds[vars_surf].loc[ctime])
+                in_ds[0, v] = eds[var].loc[ctime, level]
+                v += 1
+        for var in vars_surf:
+            in_ds[0, v] = eds[var].loc[ctime]
+            v += 1
+        in_ds.assign_coords({"time": [ctime], })
+        out_ds[:, :n_3d_vars] = dqs_3d.transform(in_ds[:, :n_3d_vars])
+        out_ds[:, n_3d_vars:] = dqs_surf.transform(in_ds[:, n_3d_vars:])
         f_time_now = ctime.strftime("%Y-%m-%dT%H:%M:%S")
         full_out_dir = join(out_dir, ctime.strftime("%Y/%m/%d/"))
         if not exists(full_out_dir):
             os.makedirs(full_out_dir, exist_ok=True)
         full_out_filename = join(full_out_dir, f"TOTAL_{f_time_now}_quantile.nc")
-        out_ds.to_netcdf(full_out_filename, encoding=encodings)
+        out_ds.to_netcdf(full_out_filename, encoding={"zlib": True, "complevel": 4})
     eds.close()
     return
-
-
 
 
 if __name__ == '__main__':
