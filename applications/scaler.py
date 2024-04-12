@@ -173,7 +173,7 @@ def transform_era5_times(times, rank, scaler_file=None, era5_file_dir=None, vars
             for level in levels:
                 vl = f"{var}_{level:d}"
                 in_3d_ds[vl][:] = eds[var].loc[ctime, level]
-        in_3d_ds["time"][:] = [ctime]
+        in_3d_ds.assign_coords({"time": [ctime],})
         out_ds[var_levels][:] = dqs_3d.transform(in_3d_ds)
         out_ds[vars_surf][:] = dqs_surf.transform(eds[vars_surf].loc[ctime])
         f_time_now = ctime.strftime("%Y-%m-%dT%H:%M:%S")
