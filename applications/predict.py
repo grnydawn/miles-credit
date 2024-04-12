@@ -59,7 +59,6 @@ from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
 from credit.forecast import load_forecasts
 from credit.models.checkpoint import (
     TorchFSDPModel,
-    FSDPOptimizerWrapper,
     TorchFSDPCheckpointIO
 )
 from credit.mixed_precision import parse_dtype
@@ -193,7 +192,7 @@ def save_netcdf(list_darray_upper_air, list_darray_single_level, conf):
         path=nc_filename_all,
         format="NETCDF4",
         engine="netcdf4",
-        encoding={variable:{"zlib": True, "complevel": 1} for variable in ds.data_vars}
+        encoding={variable: {"zlib": True, "complevel": 1} for variable in ds.data_vars}
     )
     logger.info(
         f"wrote .nc file for prediction: \n{nc_filename_all}"
@@ -683,7 +682,7 @@ def predict(rank, world_size, conf, pool, smm):
                 # y_pred allocation
                 y_pred = None
                 #break
-    
+
     # save metrics csv
     save_location = os.path.join(os.path.expandvars(conf["save_loc"]), "forecasts")
     os.makedirs(save_location, exist_ok=True)  # should already be made above
