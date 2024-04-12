@@ -9,7 +9,7 @@ from bridgescaler.distributed import DQuantileScaler
 from bridgescaler import print_scaler, read_scaler
 from os.path import exists, join
 from mpi4py import MPI
-
+import gc
 
 def main():
     parser = argparse.ArgumentParser()
@@ -132,8 +132,11 @@ def transform_era5_times(times, rank, scaler_file=None, era5_file_dir=None, vars
     curr_f_end = pd.Timestamp(pd.Timestamp(times[0]).strftime("%Y") + "-12-31 23:00")
     curr_f_start_str = curr_f_start.strftime("%Y-%m-%d")
     curr_f_end_str = curr_f_end.strftime("%Y-%m-%d")
-    eds = xr.open_zarr(join(era5_file_dir, f"TOTAL_{curr_f_start_str}_{curr_f_end_str}_staged.zarr"))
+    eds = xr.open_zarr(join(era5_file_dir, f"TOTAL_{curr_f_start_str}_{curr_f_end_str}_staged.zarr"), chunks=None)
     levels = eds.level.values
+    eds.close()
+    del eds
+    gc.collect()
     var_levels = []
     for var in vars_3d:
         for level in levels:
@@ -142,22 +145,20 @@ def transform_era5_times(times, rank, scaler_file=None, era5_file_dir=None, vars
     times_index = pd.DatetimeIndex(times)
     for t, ctime in enumerate(times_index):
         print(f"Rank {rank:d}: {ctime} {t + 1:d}/{n_times:d}")
-        if not curr_f_start >= ctime <= curr_f_end:
-            eds.close()
-            curr_f_start = pd.Timestamp(pd.Timestamp(ctime).strftime("%Y") + "-01-01 00:00")
-            curr_f_end = pd.Timestamp(pd.Timestamp(ctime).strftime("%Y") + "-12-31 23:00")
-            curr_f_start_str = curr_f_start.strftime("%Y-%m-%d")
-            curr_f_end_str = curr_f_end.strftime("%Y-%m-%d")
-            eds = xr.open_zarr(join(era5_file_dir, f"TOTAL_{curr_f_start_str}_{curr_f_end_str}_staged.zarr"))
-        transform_era5_time(ctime, vars_3d, levels, var_levels, vars_surf, out_dir, eds, dqs_3d, dqs_surf)
+        transform_era5_time(ctime, vars_3d, levels, var_levels, vars_surf, out_dir, dqs_3d, dqs_surf, era5_file_dir)
     return
 
 
-def transform_era5_time(ctime, vars_3d, levels, var_levels, vars_surf, out_dir, eds, dqs_3d, dqs_surf):
+def transform_era5_time(ctime, vars_3d, levels, var_levels, vars_surf, out_dir, dqs_3d, dqs_surf, era5_file_dir):
+    curr_f_start = pd.Timestamp(pd.Timestamp(ctime).strftime("%Y") + "-01-01 00:00")
+    curr_f_end = pd.Timestamp(pd.Timestamp(ctime).strftime("%Y") + "-12-31 23:00")
+    curr_f_start_str = curr_f_start.strftime("%Y-%m-%d")
+    curr_f_end_str = curr_f_end.strftime("%Y-%m-%d")
+    eds = xr.open_zarr(join(era5_file_dir, f"TOTAL_{curr_f_start_str}_{curr_f_end_str}_staged.zarr"), chunks=None)
     var_slices = []
     for var in vars_3d:
         for level in levels:
-            var_slices.append(eds[var].loc[ctime, level])
+            var_slices.append(eds[var].loc[ctime, level].load())
     e3d = xr.concat(var_slices, pd.Index(var_levels, name="variable")).load()
     e3d = e3d.expand_dims(dim="time", axis=0)
     e3d_transformed = dqs_3d.transform(e3d)
@@ -170,7 +171,7 @@ def transform_era5_time(ctime, vars_3d, levels, var_levels, vars_surf, out_dir, 
                        e3d_transformed[:, v * n_levels: (v + 1) * n_levels].data)
         encodings[var] = {"zlib": True, "complevel": 4}
     e_surf = xr.concat([eds[v].loc[ctime] for v in vars_surf], pd.Index(vars_surf, name="variable")
-                       ).load()
+                       )
     e_surf = e_surf.expand_dims(dim="time", axis=0)
     e_surf_transformed = dqs_surf.transform(e_surf)
     for v, var in enumerate(vars_surf):
@@ -183,16 +184,12 @@ def transform_era5_time(ctime, vars_3d, levels, var_levels, vars_surf, out_dir, 
         os.makedirs(full_out_dir, exist_ok=True)
     full_out_filename = join(full_out_dir, f"TOTAL_{f_time_now}_transformed.nc")
     out_ds.to_netcdf(full_out_filename, encoding=encodings)
-    # out_ds.to_zarr(join(out_dir, f"TOTAL_{f_time_start}_{f_time_end}_staged.zarr"), region={"time": slice(t, t + 1)})
-    out_ds.close()
-
-    del out_ds
-    del e3d
+    eds.close()
     del e3d_transformed
+    del e3d
     del e_surf
     del e_surf_transformed
-    del var_slices[:]
-
+    gc.collect()
 
 if __name__ == '__main__':
     main()
