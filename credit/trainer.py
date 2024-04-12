@@ -323,13 +323,14 @@ class Trainer:
         save_loc = conf['save_loc']
         start_epoch = conf['trainer']['start_epoch']
         epochs = conf['trainer']['epochs']
+        skip_validation = conf['trainer']['skip_validation'] if 'skip_validation' in conf['trainer'] else False
 
         # Reload the results saved in the training csv if continuing to train
         if start_epoch == 0:
             results_dict = defaultdict(list)
         else:
             results_dict = defaultdict(list)
-            saved_results = pd.read_csv(f"{save_loc}/training_log.csv")
+            saved_results = pd.read_csv(os.path.join(save_loc, "training_log.csv"))
             for key in saved_results.columns:
                 if key == "index":
                     continue
@@ -370,13 +371,19 @@ class Trainer:
             #
             ############
 
-            valid_results = self.validate(
-                epoch,
-                conf,
-                valid_loader,
-                valid_criterion,
-                metrics
-            )
+            if skip_validation:
+
+                valid_results = train_results
+
+            else:
+
+                valid_results = self.validate(
+                    epoch,
+                    conf,
+                    valid_loader,
+                    valid_criterion,
+                    metrics
+                )            
 
             #################
             #
