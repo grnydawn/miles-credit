@@ -168,7 +168,7 @@ def save_netcdf(list_darray_upper_air, list_darray_single_level, conf):
     )
 
     # create save directory for xarrays
-    save_location = os.path.join(os.path.expandvars(conf["save_loc"]), "forecasts")
+    save_location = os.path.join(os.path.expandvars(conf["save_loc"]), "forecasts", "netcdf")
     os.makedirs(save_location, exist_ok=True)
 
     # create file name to save upper air variables
@@ -436,8 +436,10 @@ def predict(rank, world_size, conf, pool, smm):
 
     # load model
     model = load_model(conf, load_weights=True).to(device)
+
     # Warning -- see next line
-    if conf["trainer"]["mode"] in ["ddp", "fsdp"]:  # A new field needs to be added to predict
+    distributed = conf["trainer"]["mode"] in ["ddp", "fsdp"]
+    if distributed:  # A new field needs to be added to predict
         model = distributed_model_wrapper(conf, model, device)
         if conf["trainer"]["mode"] == "fsdp":
             # Load model weights (if any), an optimizer, scheduler, and gradient scaler
@@ -665,9 +667,23 @@ def predict(rank, world_size, conf, pool, smm):
             gc.collect()
 
             if batch["stop_forecast"][0]:
+                # save metrics csv
+                save_location = os.path.join(os.path.expandvars(conf["save_loc"]), "forecasts", "metrics")
+                os.makedirs(save_location, exist_ok=True)  # should already be made above
+                df = pd.DataFrame(metrics_results)
+                df.to_csv(os.path.join(save_location, f"metrics{init_time}.csv"))
+
+                # save forecast results to file
+                if "save_format" in conf["predict"] and conf["predict"]["save_format"] == "nc":
+                    logger.info("Save forecasts as netCDF format")
+                    filename_netcdf = save_netcdf(
+                        list_darray_upper_air, list_darray_single_level, conf
+                    )
+                else:
+                    logger.info("Warning: forecast results will not be saved")
 
                 # forecast count = a constant for each run
-                forecast_count = 0
+                forecast_count += 1
 
                 # lists to collect x-arrays
                 list_darray_upper_air = []
@@ -681,19 +697,25 @@ def predict(rank, world_size, conf, pool, smm):
 
                 # y_pred allocation
                 y_pred = None
-                #break
 
-    # save metrics csv
-    save_location = os.path.join(os.path.expandvars(conf["save_loc"]), "forecasts")
-    os.makedirs(save_location, exist_ok=True)  # should already be made above
-    df = pd.DataFrame(metrics_results)
-    df.to_csv(os.path.join(save_location, f"metrics{init_time}.csv"))
+                # Set up metrics and containers
+                metrics = LatWeightedMetrics(conf)
+                metrics_results = defaultdict(list)
+
+                gc.collect()
+
+                if distributed:
+                    torch.distributed.barrier()
+
 
     # collect all image file names for making videos
     filename_bundle = {}
     filename_bundle["sigma_level_visualize"] = filenames_upper_air
     filename_bundle["diagnostic_variable_visualize"] = filenames_diagnostics
     filename_bundle["surface_visualize"] = filenames_surface
+
+    if distributed:
+        torch.distributed.barrier()
 
     return (
         list_darray_upper_air,
@@ -823,14 +845,14 @@ if __name__ == "__main__":
                 filename_bundle,
             ) = predict(0, 1, conf, pool, smm)
 
-        # save forecast results to file
-        if "save_format" in conf["predict"] and conf["predict"]["save_format"] == "nc" and not no_data:
-            logger.info("Save forecasts as netCDF format")
-            filename_netcdf = save_netcdf(
-                list_darray_upper_air, list_darray_single_level, conf
-            )
-        else:
-            logger.info("Warning: forecast results will not be saved")
+        # # save forecast results to file
+        # if "save_format" in conf["predict"] and conf["predict"]["save_format"] == "nc" and not no_data:
+        #     logger.info("Save forecasts as netCDF format")
+        #     filename_netcdf = save_netcdf(
+        #         list_darray_upper_air, list_darray_single_level, conf
+        #     )
+        # else:
+        #     logger.info("Warning: forecast results will not be saved")
         pool.close()
         pool.join()
     # exit the context before making videos

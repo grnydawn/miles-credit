@@ -3,15 +3,19 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
 # Function to load forecasts based on configuration
 def load_forecasts(conf):
     if "type" in conf["predict"]["forecasts"]:
         forecast_type = conf["predict"]["forecasts"]["type"]
+        start_date = datetime(
+            conf["predict"]["forecasts"]["start_year"],
+            conf["predict"]["forecasts"]["start_month"],
+            conf["predict"]["forecasts"]["start_day"]
+        )
         if forecast_type == "10day_year":
-            start_date = conf["predict"]["forecasts"]["start_date"]
             return generate_forecasts(start_date, days=10, duration=365)
         elif forecast_type == "custom":
-            start_date = conf["predict"]["forecasts"]["start_date"]
             days = conf["predict"]["forecasts"].get("days", 10)
             duration = conf["predict"]["forecasts"].get("duration", 365)
             return generate_forecasts(start_date, days=days, duration=duration)
@@ -25,7 +29,7 @@ def load_forecasts(conf):
 # Function to generate forecasts for specified duration
 def generate_forecasts(start_date, days=10, duration=365):
     forecasts = []
-    current_date = datetime.strptime(start_date, "%Y-%m-%d %H:%M:%S")
+    current_date = start_date  # Use the provided start_date directly
 
     # Generate forecast for each day
     for _ in range(duration):
@@ -39,9 +43,17 @@ def generate_forecasts(start_date, days=10, duration=365):
 
 if __name__ == "__main__":
     # Generate forecasts for each day of the year
-    start_date = datetime(2020, 1, 1)
-    forecasts = generate_forecasts(start_date)
-    
+    # start_date = datetime(2020, 1, 1)
+    # forecasts = generate_forecasts(start_date)
+
+    config_file = "/glade/u/home/schreck/schreck/repos/global/miles-credit/results/crossformer/quarter/multi_step/model.yml"
+
+    import yaml
+    with open(config_file) as cf:
+        conf = yaml.load(cf, Loader=yaml.FullLoader)
+
+    print(conf["predict"])
+    forecasts = load_forecasts(conf)
     # Print example forecasts
     for forecast in forecasts:
         print(forecast)
