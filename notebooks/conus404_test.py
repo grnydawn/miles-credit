@@ -2,10 +2,11 @@ import yaml
 import torch
 from torchvision.transforms import *
 
-import sys
-sys.path.append("../credit")
-from data import CONUS404Dataset
-from transforms import ToTensor
+#import sys
+#sys.path.append("../credit")
+from credit.data import CONUS404Dataset
+#from data import CONUS404Dataset
+from credit.transforms import ToTensor
 
 config = "../config/conus404.yml"
 
@@ -31,12 +32,12 @@ dataset = CONUS404Dataset(
     zarrpath="/glade/campaign/ral/risc/DATA/conus404/zarr",
     varnames = varlist,
     history_len=conf['data']['history_len'],
-    forecast_len=conf['data']['forecast_len']#,
-#    transform = transform
+    forecast_len=conf['data']['forecast_len'],
+    transform = transform
 )
 
 print(dataset)
-print(dataset.__getitem__(0))
+#print(dataset.__getitem__(0))
 
 
 
@@ -51,13 +52,12 @@ train_loader = torch.utils.data.DataLoader(
         #sampler=train_sampler,
         pin_memory=True,
         #persistent_workers=True if thread_workers > 0 else False,
-        #num_workers=8,
-        num_workers=1,
+        num_workers=8,
         drop_last=True
     )
 
 print(train_loader)
 
-for batch in train_loader:
-    print(batch)
-    raise
+#for batch in train_loader:
+#    print(batch)
+#    raise
