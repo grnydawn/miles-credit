@@ -22,7 +22,7 @@ def load_transforms(conf):
         raise
 
     to_tensor_scaler = ToTensor(conf=conf)
-    
+
     return tforms.Compose([
             transform_scaler,
             to_tensor_scaler,
@@ -46,7 +46,7 @@ class NormalizeState:
             return self.inverse_transform(sample)
         else:
             return self.transform(sample)
-        
+
     def transform_array(self, x: torch.Tensor) -> torch.Tensor:
         device = x.device
         tensor = x[:, :(len(self.variables)*self.levels), :, :]
@@ -170,7 +170,7 @@ class NormalizeState_Quantile:
                     e3d = xr.concat(var_slices, pd.Index(var_levels, name="variable")
                                    ).transpose("latitude", "longitude", "variable")
                     TTtrans = self.scaler_3d.transform(e3d)
-                    #this is bad and should be fixed: 
+                    #this is bad and should be fixed:
                     value['U'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,:self.levels].values, (2, 0, 1))
                     value['V'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,self.levels:(self.levels*2)].values, (2, 0, 1))
                     value['T'].sel(time=time)[:,:,:]=np.transpose(TTtrans[:,:,(self.levels*2):(self.levels*3)].values, (2, 0, 1))
@@ -178,8 +178,8 @@ class NormalizeState_Quantile:
                     e_surf = xr.concat([value[v].sel(time=time) for v in self.surface_variables], pd.Index(self.surface_variables, name="variable")
                                    ).transpose("latitude", "longitude", "variable")
                     TTtrans = self.scaler_surf.transform(e_surf)
-    
-                    for ee,varvar in enumerate(self.surface_variables):    
+
+                    for ee,varvar in enumerate(self.surface_variables):
                         value[varvar].sel(time=time)[:,:]=TTtrans[:,:,ee]
             normalized_sample[key]=value
         return normalized_sample
@@ -237,8 +237,8 @@ class NormalizeTendency:
 
 class ToTensor:
     def __init__(self, conf):
-        
-        self.conf = conf        
+
+        self.conf = conf
         self.hist_len = int(conf["data"]["history_len"])
         self.for_len = int(conf["data"]["forecast_len"])
         self.variables = conf["data"]["variables"]
@@ -289,11 +289,11 @@ class ToTensor:
 
                 if sv == 'SP':
                     arr = 2*torch.tensor(np.array(((DSD['SP']-DSD['SP'].max())/(DSD['SP'].min()-DSD['SP'].max()))))
-                else: 
-                   arr = DSD[sv].squeeze()
+                else:
+                    arr = DSD[sv].squeeze()
 
                 arrs.append(arr)
-            
-            return_dict['static']=np.stack(arrs, axis=0)
+
+            return_dict['static'] = np.stack(arrs, axis=0)
 
         return return_dict
