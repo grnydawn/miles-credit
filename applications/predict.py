@@ -27,10 +27,10 @@ import xarray as xr
 # ---------- #
 # AI libs
 import torch
-
 import torch.distributed as dist
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision import transforms
+# import wandb
 
 from torch.distributed.fsdp.fully_sharded_data_parallel import (
     MixedPrecision,
@@ -63,12 +63,9 @@ from credit.models.checkpoint import (
 )
 from credit.mixed_precision import parse_dtype
 
-###
 # ---------- #
-# visualization_tools is part of the credit now, but it requires a pip update
 from credit.visualization_tools import shared_mem_draw_wrapper
-
-# import wandb
+#from visualization_tools import shared_mem_draw_wrapper
 
 logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")
@@ -237,20 +234,15 @@ def make_video(video_name_prefix, save_location, image_file_names, format="gif")
         ).communicate()
     elif format == "mp4":
         # write "input.txt" to summarize input images and frame settings
-        input_txt = os.path.join(save_location, "input.txt")
+        input_txt = os.path.join(save_location, f"input_{video_name_prefix}.txt")
         f = open(input_txt, "w")
         for i_file, filename in enumerate(image_file_names):
-            if i_file == 0:
-                print("file {}\nduration 3".format(os.path.basename(filename)), file=f)
-            else:
-                print("file {}\nduration 2".format(os.path.basename(filename)), file=f)
+            print("file {}\nduration 1".format(os.path.basename(filename)), file=f)
         f.close()
 
         # cd to the save_location and run ffmpeg
         cmd_cd = "cd {}; ".format(save_location)
-        cmd_ffmpeg = 'ffmpeg -y -f concat -i input.txt -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -r 1 -pix_fmt yuv420p {}'.format(
-            output_name
-        )
+        cmd_ffmpeg = f'ffmpeg -y -f concat -i input_{video_name_prefix}.txt -vf "pad=ceil(iw/2)*2:ceil(ih/2)*2" -r 1 -pix_fmt yuv420p {output_name}'
         command_str = cmd_cd + cmd_ffmpeg
         out, err = subprocess.Popen(
             command_str, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE

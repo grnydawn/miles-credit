@@ -6,7 +6,8 @@ Functions:
     - get_projection(proj_name)
     - get_colormap(cmap_strings)
     - get_colormap_extend(var_range)
-    - get_variable_range(data)
+    - get_variable_range_with_rounding(data)
+    - get_variable_range(var_name, conf, level=level, method='mean_std')
     - figure_panel_planner(var_num, proj)
     - cartopy_single_panel(figsize=(13, 6.5), proj=ccrs.EckertIII())
     - cartopy_panel2(figsize=(13, 8), proj=ccrs.EckertIII())
@@ -31,6 +32,7 @@ import logging
 import datetime
 import numpy as np
 import xarray as xr
+import netCDF4 as nc
 # ---------- #
 # matplotlib
 import matplotlib.pyplot as plt
@@ -100,7 +102,7 @@ def get_colormap_extend(var_range):
     else:
         return 'both'
 
-def get_variable_range(data):
+def get_variable_range_with_rounding(data):
     '''
     Estimate pcolor value ranges based on the input data.
     '''
@@ -145,6 +147,35 @@ def get_variable_range(data):
         data_max = data_limit
     
     return [data_min, data_max]
+
+def get_variable_range(var_name, conf, level=-1, method='mean_std'):
+    
+    # detect value range based on mean and standard deviation
+    if method == 'mean_std':
+        with nc.Dataset(conf['data']['mean_path'], 'r') as ncio:
+            mean_levels = ncio[var_name][...]
+        
+        with nc.Dataset(conf['data']['std_path'], 'r') as ncio:
+            std_levels = ncio[var_name][...]
+
+        if level >= 0:
+            var_mean = mean_levels[level]
+            var_std = std_levels[level]
+        else:
+            var_mean = float(mean_levels)
+            var_std = float(std_levels)
+
+        var_range_min = var_mean - 2*var_std
+        var_range_max = var_mean + 2*var_std
+        return [var_range_min, var_range_max]
+            
+    elif method == 'quantile':
+        print('Quantile method not ready yet')
+        # quant_path = '/glade/campaign/cisl/aiml/credit_scalers/era5_quantile_scalers_2024-02-13_07:33.parquet'
+        # pd.read_parquet(quant_path)
+        return 'auto'
+    else:
+        return 'auto'
 
 def figure_panel_planner(var_num, proj):
     '''
@@ -291,9 +322,9 @@ def shared_mem_draw_wrapper(shm, level, step, visualization_key, conf, save_loca
     pred = xr.open_dataarray(bytes(shm.buf))
     if visualization_key == 'sigma_level_visualize':
         pred = pred.sel(level=level)
-    return draw_variables(pred, step, visualization_key, conf, save_location)
+    return draw_variables(pred, level, step, visualization_key, conf, save_location)
 
-def draw_variables(pred, step, visualization_key, conf=None, save_location=None):
+def draw_variables(pred, level, step, visualization_key, conf=None, save_location=None):
     '''
     This function produces figures for given variables. 
     '''
@@ -335,14 +366,21 @@ def draw_variables(pred, step, visualization_key, conf=None, save_location=None)
     for i_var, var in enumerate(vars):
         # get the current axis
         ax = AX[i_var]
+
+        # get variable name
+        var_name = var_names[i_var]
         
         # get the current variable
         pred_draw = pred.sel(vars=var) * var_factors[i_var]
         
         ## variable range
         var_lim = var_range[i_var]
+        
         if var_lim == 'auto':
-            var_lim = get_variable_range(pred_draw.values)
+            var_lim = get_variable_range(var, conf, level=level, method='mean_std')
+        
+        if var_lim == 'auto':
+            var_lim = get_variable_range_with_rounding(pred_draw.values)
 
         ## colorbar settings
         cbar_extend = get_colormap_extend(var_lim)
@@ -356,7 +394,6 @@ def draw_variables(pred, step, visualization_key, conf=None, save_location=None)
         CBar = colorbar_opt(fig, ax, cbar, cbar_extend)
         
         # title
-        var_name = var_names[i_var]
         dt_str = np.datetime_as_string(pred.datetime.values, unit='h', timezone='UTC')
         
         # different titles for upper air vs. single levels
