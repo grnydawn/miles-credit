@@ -4,11 +4,12 @@ seed: 1000
 data:
     variables: ['U','V','T','Q']
     surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
-    static_variables: ['SP','LSM'] # []
+    static_variables: ['Z_GDS4_SFC','LSM','tsi'] # []
     save_loc: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
     mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
     std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
-    quant_path: '/glade/campaign/cisl/aiml/credit_scalers/era5_quantile_scalers_2024-02-13_07:33.parquet'
+    quant_path: '/glade/derecho/scratch/dgagne/credit_scalers/era5_quantile_scalers_2024-03-29_00:52.parquet'
+    TOA_forcing_path: '/glade/derecho/scratch/dgagne/credit_scalers/solar_radiation_2024-03-28_2211.nc' 
     scaler_type: 'std' # 'std'
     history_len: 2 
     forecast_len: 0
