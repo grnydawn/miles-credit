@@ -9,7 +9,8 @@ from bridgescaler.distributed import DQuantileScaler
 from bridgescaler import print_scaler, read_scaler
 from os.path import exists, join
 from mpi4py import MPI
-
+import gc
+from memory_profiler import profile
 
 def main():
     parser = argparse.ArgumentParser()
@@ -124,8 +125,9 @@ def fit_era5_scaler_times(times, rank, era5_file_dir=None, vars_3d=None, vars_su
 def transform_era5_times(times, rank, scaler_file=None, era5_file_dir=None, vars_3d=None, vars_surf=None,
                          out_dir="/glade/derecho/scratch/dgagne/era5_quantile/"):
     dqs_df = pd.read_parquet(scaler_file)
-    dqs_3d = dqs_df["scaler_3d"].apply(read_scaler).sum()
-    dqs_surf = dqs_df["scaler_surface"].apply(read_scaler).sum()
+    dqs_end_dates = pd.DatetimeIndex(dqs_df["end_date"])
+    dqs_3d = dqs_df["scaler_3d"][dqs_end_dates < "2014-01-01"].apply(read_scaler).sum()
+    dqs_surf = dqs_df["scaler_surface"][dqs_end_dates < "2014-01-01"].apply(read_scaler).sum()
     curr_f_start = pd.Timestamp(pd.Timestamp(times[0]).strftime("%Y") + "-01-01 00:00")
     curr_f_end = pd.Timestamp(pd.Timestamp(times[0]).strftime("%Y") + "-12-31 23:00")
     curr_f_start_str = curr_f_start.strftime("%Y-%m-%d")
@@ -140,51 +142,31 @@ def transform_era5_times(times, rank, scaler_file=None, era5_file_dir=None, vars
     times_index = pd.DatetimeIndex(times)
     n_3d_vars = len(var_levels)
     n_vars = n_3d_vars + len(vars_surf)
-
-    var_index = pd.Index(np.concatenate((var_levels, vars_surf)), name="variable")
-    in_ds = xr.DataArray(data=(("time", "variable", "latitude", "longitude"),
-                               np.zeros((1, n_vars, eds["latitude"].size, eds["longitude"].size),
-                                        dtype=np.float32)),
-                         coords={"latitude": eds["latitude"],
-                                 "longitude": eds["longitude"],
-                                 "variable": var_index,
-                                 "time": [times_index[0]]},
-                         attrs=eds.attrs)
-    out_ds = xr.DataArray(data=(("time", "variable", "latitude", "longitude"),
-                                np.zeros((1, n_vars, eds["latitude"].size, eds["longitude"].size),
-                                         dtype=np.float32)),
-                          coords={"latitude": eds["latitude"],
-                                  "longitude": eds["longitude"],
-                                  "time": [times_index[0]],
-                                  "variable": var_index},
-                          attrs=eds.attrs)
-
     for t, ctime in enumerate(times_index):
         print(f"Rank {rank:d}: {ctime} {t + 1:d}/{n_times:d}")
+        
         if not curr_f_start >= ctime <= curr_f_end:
             eds.close()
             curr_f_start = pd.Timestamp(pd.Timestamp(ctime).strftime("%Y") + "-01-01 00:00")
             curr_f_end = pd.Timestamp(pd.Timestamp(ctime).strftime("%Y") + "-12-31 23:00")
             curr_f_start_str = curr_f_start.strftime("%Y-%m-%d")
             curr_f_end_str = curr_f_end.strftime("%Y-%m-%d")
-            eds = xr.open_zarr(join(era5_file_dir, f"TOTAL_{curr_f_start_str}_{curr_f_end_str}_staged.zarr"))
-        v = 0
+            eds = xr.open_zarr(join(era5_file_dir, f"TOTAL_{curr_f_start_str}_{curr_f_end_str}_staged.zarr"), chunks=None)
+        var_level_data = []
         for var in vars_3d:
             for level in levels:
-                in_ds[0, v] = eds[var].loc[ctime, level]
-                v += 1
-        for var in vars_surf:
-            in_ds[0, v] = eds[var].loc[ctime]
-            v += 1
-        in_ds.assign_coords({"time": [ctime], })
-        out_ds[:, :n_3d_vars] = dqs_3d.transform(in_ds[:, :n_3d_vars])
-        out_ds[:, n_3d_vars:] = dqs_surf.transform(in_ds[:, n_3d_vars:])
+                var_level_data.append(eds[var].loc[ctime, level])
+        level_data = xr.concat(var_level_data, pd.Index(var_levels, name="variable")).expand_dims("time", axis=0).load()
+        surf_data = eds[vars_surf].sel(time=ctime).to_dataarray(dim="surface_variable", name="era5_surface").expand_dims("time", axis=0).load()
+        level_quantile = dqs_3d.transform(level_data)
+        surf_quantile = dqs_surf.transform(surf_data)
         f_time_now = ctime.strftime("%Y-%m-%dT%H:%M:%S")
         full_out_dir = join(out_dir, ctime.strftime("%Y/%m/%d/"))
         if not exists(full_out_dir):
             os.makedirs(full_out_dir, exist_ok=True)
+        out_ds = xr.Dataset({"levels": level_quantile, "surface": surf_quantile})
         full_out_filename = join(full_out_dir, f"TOTAL_{f_time_now}_quantile.nc")
-        out_ds.to_netcdf(full_out_filename, encoding={"zlib": True, "complevel": 4})
+        out_ds.to_netcdf(full_out_filename, encoding={"levels": {"zlib": True, "complevel": 4}, "surface": {"zlib": True, "complevel": 4}})
     eds.close()
     return
 
