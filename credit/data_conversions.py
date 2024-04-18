@@ -1,6 +1,10 @@
+import logging
+
 import torch
 import xarray as xr
 from geocat.comp.interpolation import interp_hybrid_to_pressure
+
+logger = logging.getLogger(__name__)
 
 class dataConverter:
     '''
@@ -46,11 +50,15 @@ class dataConverter:
 
         # subset upper air and surface variables
         tensor_upper_air, tensor_single_level = self.split_and_reshape(pred)
+        logger.info(tensor_upper_air.shape)
+        logger.info(tensor_single_level.shape)
         tensor_upper_air = tensor_upper_air.squeeze(3)
         tensor_single_level = tensor_single_level.squeeze(2) # take out time dim=1, keep batch dim
+        logger.info(tensor_upper_air.shape)
+        logger.info(tensor_single_level.shape)
         # upper air variables
         darray_upper_air = xr.DataArray(
-            tensor_upper_air,
+            tensor_upper_air.detach().numpy(), # could put this in top level, this might be faster
             dims=["datetime", "vars", "level", "latitude", "longitude"],
             coords=dict(
                 datetime=forecast_datetimes,
@@ -63,7 +71,7 @@ class dataConverter:
 
         # diagnostics and surface variables
         darray_single_level = xr.DataArray(
-            tensor_single_level.squeeze(2),
+            tensor_single_level.detach().numpy(),
             dims=["datetime", "vars", "latitude", "longitude"],
             coords=dict(
                 datetime=forecast_datetimes,
