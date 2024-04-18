@@ -440,7 +440,7 @@ def predict(rank, world_size, conf, pool, smm):
     model.eval()
 
     # Set up metrics and containers
-    metrics = LatWeightedMetrics(conf)
+    metrics = LatWeightedMetrics(conf, predict_mode=True)
     metrics_results = defaultdict(list)
     loss_fn = VariableTotalLoss2D(conf, validation=True)
 
@@ -541,15 +541,21 @@ def predict(rank, world_size, conf, pool, smm):
                     .cpu()
                 )
 
+            ######### for debugging, save tensors
+            # save_ = os.path.expandvars(conf["save_loc"])
+            # torch.save(y, os.path.join(save_, 'y.pt'))
+            # torch.save(y_pred, os.path.join(save_, 'pred.pt'))
+
             # Compute metrics
+            utc_datetime = datetime.datetime.utcfromtimestamp(date_time)
+
             mae = loss_fn(y, y_pred)
-            metrics_dict = metrics(y_pred.float(), y.float())
+            metrics_dict = metrics(y_pred.float(), y.float(), forecast_datetime=forecast_hour)
             for k, m in metrics_dict.items():
                 metrics_results[k].append(m.item())
             metrics_results["forecast_hour"].append(forecast_hour)
             metrics_results["datetime"].append(date_time)
 
-            utc_datetime = datetime.datetime.utcfromtimestamp(date_time)
             print_str = f"Forecast: {forecast_count} "
             print_str += f"Date: {utc_datetime.strftime('%Y-%m-%d %H:%M:%S')} "
             print_str += f"Hour: {batch['forecast_hour'].item()} "

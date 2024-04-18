@@ -50,12 +50,10 @@ class dataConverter:
 
         # subset upper air and surface variables
         tensor_upper_air, tensor_single_level = self.split_and_reshape(pred)
-        logger.info(tensor_upper_air.shape)
-        logger.info(tensor_single_level.shape)
+
         tensor_upper_air = tensor_upper_air.squeeze(3)
         tensor_single_level = tensor_single_level.squeeze(2) # take out time dim=1, keep batch dim
-        logger.info(tensor_upper_air.shape)
-        logger.info(tensor_single_level.shape)
+
         # upper air variables
         darray_upper_air = xr.DataArray(
             tensor_upper_air.detach().numpy(), # could put this in top level, this might be faster

@@ -1,13 +1,17 @@
-import torch
+import os
 import numpy as np
 import xarray as xr
+import matplotlib.pyplot as plt
+import torch
+
 from credit.data_conversions import dataConverter
-from weatherbench2.derived_variables import ZonalEnergySpectrum
+from weatherbench2.derived_variables import ZonalEnergySpectrum, interpolate_spectral_frequencies
 
 class LatWeightedMetrics:
 
-    def __init__(self, conf):
+    def __init__(self, conf, predict_mode=False):
         self.conf = conf
+        self.predict_mode = predict_mode
         lat_file = conf['loss']['latitude_weights']
         atmos_vars = conf['data']['variables']
         surface_vars = conf['data']['surface_variables']
@@ -29,7 +33,7 @@ class LatWeightedMetrics:
             var_weights = [item for sublist in var_weights for item in sublist]
             self.w_var = torch.from_numpy(var_weights).unsqueeze(0).unsqueeze(-1)
 
-    def __call__(self, pred, y, clim=None, transform=None):
+    def __call__(self, pred, y, clim=None, transform=None, forecast_datetime=0):
         if transform is not None:
             pred = transform(pred)
             y = transform(y)
@@ -72,48 +76,96 @@ class LatWeightedMetrics:
 
         # additional metrics where xarray computations are needed
         # put metric configs here
-        zonal_metric = ZonalSpectrumMetric(self.conf, 
-                                           w_lat, 
-                                           x_variables=["U", "V"],
-                                           single_level_variables=['SP'])
-        loss_dict = loss_dict | zonal_metric(pred, y) # merge two dictionaries
-
+        # convert to xarray:
+        if self.predict_mode:
+            self.converter = dataConverter(self.conf)
+            pred_ds = self.converter.tensor_to_Dataset(pred, [forecast_datetime])
+            y_ds = self.converter.tensor_to_Dataset(y, [forecast_datetime])
+            zonal_metrics = ZonalSpectrumMetric(self.conf)
+            loss_dict = loss_dict | zonal_metrics(pred_ds, y_ds) # merge two dictionaries
+        
         return loss_dict
 
 class ZonalSpectrumMetric:
-    def __init__(self, conf, w_lat, #w_var - not implemented yet 
-                 x_variables=["U", "V"], single_level_variables=[]):
+    def __init__(self, conf, #w_var - not implemented yet 
+                 x_variables=["U", "V", "T", "Q"], single_level_variables=["SP", "t2m"], 
+                 spectrum_vis_levels=[8,10], figsize=(50,5)):
         '''
         _variables arguments determine which data vars to compute spectra metric
         '''
         self.conf = conf
-        self.converter = dataConverter(self.conf) # can move this out to the latweightedmetrics class
-        self.w_lat = w_lat
         self.variables = x_variables + single_level_variables
         self.x_variables = x_variables
         self.single_level_variables = single_level_variables
         self.zonal_spectrum_calculator = ZonalEnergySpectrum(self.variables)
+        self.spectrum_vis_levels = spectrum_vis_levels
+        if conf["loss"]["use_latitude_weights"]:
+            lat = xr.open_dataset(conf['loss']['latitude_weights'])["latitude"]
+            w_lat = np.cos(np.deg2rad(lat))
+            self.w_lat = w_lat / w_lat.mean()
+        self.ifs_levels = xr.open_dataset('/glade/derecho/scratch/dkimpara/nwp_files/ifs_levels.nc')
+        if figsize:
+            self.figsize = figsize
+        else:
+            num_vars = len(x_variables) * len(spectrum_vis_levels) + len(single_level_variables)
+            self.figsize = (5 * num_vars, 5)
 
-    def __call__(self, pred, y):
+    def __call__(self, pred_ds, y_ds):
         '''
         pred, y can be normalized or unnormalized tensors.
         trying to achieve minimal interface with LatWeightedMetrics 
         '''
         # first dim is the batch dim
-        pred_ds = self.converter.tensor_to_Dataset(pred, range(pred.shape[0]))
-        y_ds = self.converter.tensor_to_Dataset(y, range(y.shape[0]))
         loss_dict = {}
 
-        # add additional metrics this way if needed
-        # for metric, metric_header_str in [
-        #     (self.lat_weighted_spectrum_diff, 'spectrum_mse')
-        # ]:
-        loss = self.lat_weighted_spectrum_diff(pred_ds, y_ds)
-        loss_dict = self.store_metrics(loss, loss_dict, 'spectrum_mse')
-        
-        return loss_dict
+        # compute spectrum and add epsilon to avoid division by zero
+        epsilon = 1e-7
+        pred_spectrum = self.zonal_spectrum_calculator.compute(pred_ds) + epsilon
+        y_spectrum = self.zonal_spectrum_calculator.compute(y_ds) + epsilon
+        loss = self.lat_weighted_spectrum_diff(pred_spectrum, y_spectrum)
+        loss_dict = self.store_loss(loss, loss_dict, 'spectrum_mse')
 
-    def store_metrics(self, loss, loss_dict, metric_header_str):
+        # compute average zonal spectrum
+        avg_pred_spectrum = self.get_avg_spectrum(pred_spectrum)
+        avg_y_spectrum = self.get_avg_spectrum(y_spectrum)
+        
+        # visualize
+        fig, axs = plt.subplots(ncols=len(self.x_variables) * len(self.spectrum_vis_levels) + len(self.single_level_variables),
+                        figsize = self.figsize)
+        fig.suptitle(f't={avg_pred_spectrum.datetime.values[0]}')
+        for ax in axs:
+            ax.set_yscale('log')
+            ax.set_xscale('log')
+            
+        curr_ax = 0
+        for level in self.spectrum_vis_levels:
+            for variable in self.x_variables:
+                avg_pred_spectrum[variable].sel(level=level).plot(x='wavelength',ax=axs[curr_ax], color='r')
+                avg_y_spectrum[variable].sel(level=level).plot(x='wavelength',ax=axs[curr_ax], color='0')
+
+                axs[curr_ax].set_title(f'{variable} {self.ifs_levels.ref_hPa.sel(level=level).values}')
+                axs[curr_ax].set_ylabel('Power')
+                curr_ax += 1
+            
+        for variable in self.single_level_variables:
+            avg_pred_spectrum[variable].plot(x='wavelength', ax=axs[curr_ax],color='r')
+            avg_y_spectrum[variable].plot(x='wavelength', ax=axs[curr_ax],color='0')
+            axs[curr_ax].set_title(variable)
+            axs[curr_ax].set_ylabel('Power')
+            curr_ax += 1
+
+        fig.savefig(os.path.join(os.path.expandvars(self.conf['save_loc']), 
+                                f'forecasts/spectra_t{avg_pred_spectrum.datetime.values[0]}'))
+
+        return loss_dict
+    
+    def get_avg_spectrum(self, ds_spectrum):
+        ds_spectrum = ds_spectrum.sel(level=self.spectrum_vis_levels)
+        ds_spectrum = interpolate_spectral_frequencies(ds_spectrum, 'zonal_wavenumber')
+        ds_spectrum = ds_spectrum.weighted(self.w_lat).mean(dim='latitude')
+        return ds_spectrum
+
+    def store_loss(self, loss, loss_dict, metric_header_str):
         '''
         loss: dataset
             w/ each variable dim must include level if atmos var, 
@@ -135,17 +187,12 @@ class ZonalSpectrumMetric:
         loss_dict[f"{metric_header_str}"] = np.mean([loss_dict[k] for k in keys])
         return loss_dict
 
-    def lat_weighted_spectrum_diff(self, pred_ds, y_ds):
+    def lat_weighted_spectrum_diff(self, pred_spectrum, y_spectrum):
         # using squared distance
         # variables to compute spectra on determined by class init
-        # Add epsilon to avoid division by zero
-        epsilon = 1e-7
-
-        pred_spectrum = self.zonal_spectrum_calculator.compute(pred_ds) + epsilon
-        y_spectrum = self.zonal_spectrum_calculator.compute(y_ds) + epsilon
         sq_diff = np.square(np.log10(pred_spectrum) - np.log10(y_spectrum))
         sq_diff = sq_diff.sum(dim=['datetime', 'zonal_wavenumber'])
-        return sq_diff * self.w_lat.squeeze().numpy()
+        return sq_diff * self.w_lat
     
 
 
