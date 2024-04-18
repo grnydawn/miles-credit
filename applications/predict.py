@@ -49,7 +49,6 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 # ---------- #
 # credit
 from credit.data import PredictForecast
-from credit.trainer import TOADataLoader
 from credit.loss import VariableTotalLoss2D
 from credit.models import load_model
 from credit.metrics import LatWeightedMetrics
@@ -405,10 +404,6 @@ def predict(rank, world_size, conf, pool, smm):
         ]
     )
 
-    # Load TOA if we are using that
-    if "static_variables" in conf["data"] and "tsi" in conf["data"]["static_variables"]:
-        TOA = TOADataLoader(conf)
-
     dataset = PredictForecast(
         filenames=all_ERA_files,
         forecasts=load_forecasts(conf),
@@ -664,35 +659,11 @@ def predict(rank, world_size, conf, pool, smm):
             # setup for next iteration, transform to z-space and send to device
             y_pred = state_transformer.transform_array(y_pred).to(device)
 
-            # if history_len > 1:
-            #     x_detach = x.detach()[:, :, 1:]
-            #     if "static" in batch:
-            #         y_pred = torch.cat((y_pred, static[:, :, 0:1].clone()), dim=1)
-            #     if "TOA" in batch:  # update the TOA based on doy and hod
-            #         elapsed_time = pd.Timedelta(hours=forecast_count)
-            #         # Datetime in predict.py refers to the time for y (not x)
-            #         current_times = [pd.to_datetime(_t, unit="ns") + elapsed_time for _t in batch["datetime"]]
-            #         toa = torch.cat([TOA(_t).unsqueeze(0) for _t in current_times], dim=0).to(device)
-            #         y_pred = torch.cat([y_pred, toa], dim=1)
-            #     x = torch.cat([x_detach, y_pred], dim=2).detach()
-            # else:
-            #     if "static" in batch or "TOA" in batch:
-            #         x = y_pred.detach()
-            #         if "static" in batch:
-            #             x = torch.cat((x, static[:, :, 0:1].clone()), dim=1)
-            #         if "TOA" in batch:  # update the TOA based on doy and hod
-            #             elapsed_time = pd.Timedelta(hours=forecast_count)
-            #             current_times = [pd.to_datetime(_t, unit="ns") + elapsed_time for _t in batch["datetime"]]
-            #             toa = torch.cat([TOA(_t).unsqueeze(0) for _t in current_times], dim=0).to(device)
-            #             x = torch.cat([x, toa], dim=1)
-            #     else:
-            #         x = y_pred.detach()
-
             if history_len == 1:
                 x = y_pred.detach()
             else:
                 # use multiple past forecast steps as inputs
-                static_dim_size = abs(x.shape[1] - y_pred.shape[1]) # static channels will get updated on next pass
+                static_dim_size = abs(x.shape[1] - y_pred.shape[1])  # static channels will get updated on next pass
                 x_detach = x[:, :-static_dim_size, 1:].detach()
                 x = torch.cat([x_detach, y_pred.detach()], dim=2)
 
