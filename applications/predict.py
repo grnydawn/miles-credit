@@ -7,6 +7,7 @@ import yaml
 import glob
 import logging
 import warnings
+import functools
 import subprocess
 from pathlib import Path
 from functools import partial
@@ -14,6 +15,7 @@ from multiprocessing import Pool
 from multiprocessing.managers import SharedMemoryManager
 from collections import defaultdict
 from argparse import ArgumentParser
+
 
 # ---------- #
 # Numerics
@@ -30,6 +32,20 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision import transforms
 # import wandb
 
+from torch.distributed.fsdp.fully_sharded_data_parallel import (
+    MixedPrecision,
+    CPUOffload
+)
+from torch.distributed.fsdp.wrap import (
+    transformer_auto_wrap_policy,
+    size_based_auto_wrap_policy,
+)
+from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
+   checkpoint_wrapper,
+   CheckpointImpl,
+   apply_activation_checkpointing,
+)
+
 # ---------- #
 # credit
 from credit.data import PredictForecast
@@ -40,6 +56,12 @@ from credit.transforms import ToTensor, NormalizeState
 from credit.seed import seed_everything
 from credit.pbs import launch_script, launch_script_mpi
 from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
+from credit.forecast import load_forecasts
+from credit.models.checkpoint import (
+    TorchFSDPModel,
+    TorchFSDPCheckpointIO
+)
+from credit.mixed_precision import parse_dtype
 
 # ---------- #
 from credit.visualization_tools import shared_mem_draw_wrapper
@@ -143,7 +165,7 @@ def save_netcdf(list_darray_upper_air, list_darray_single_level, conf):
     )
 
     # create save directory for xarrays
-    save_location = os.path.join(os.path.expandvars(conf["save_loc"]), "forecasts")
+    save_location = os.path.join(os.path.expandvars(conf["save_loc"]), "forecasts", "netcdf")
     os.makedirs(save_location, exist_ok=True)
 
     # create file name to save upper air variables
@@ -167,7 +189,7 @@ def save_netcdf(list_darray_upper_air, list_darray_single_level, conf):
         path=nc_filename_all,
         format="NETCDF4",
         engine="netcdf4",
-        encoding={variable:{"zlib": True, "complevel": 1} for variable in ds.data_vars}
+        encoding={variable: {"zlib": True, "complevel": 1} for variable in ds.data_vars}
     )
     logger.info(
         f"wrote .nc file for prediction: \n{nc_filename_all}"
@@ -243,6 +265,113 @@ def create_shared_mem(da, smm):
     return shm
 
 
+def distributed_model_wrapper(conf, neural_network, device):
+
+    if conf["trainer"]["mode"] == "fsdp":
+
+        # Define the sharding policies
+
+        if "crossformer" in conf["model"]["type"]:
+            from credit.models.crossformer_skip import Attention as Attend
+        elif "fuxi" in conf["model"]["type"]:
+            from credit.models.fuxi import UTransformer as Attend
+        else:
+            raise OSError("You asked for FSDP but only crossformer and fuxi are currently supported.")
+
+        auto_wrap_policy1 = functools.partial(
+            transformer_auto_wrap_policy,
+            transformer_layer_cls={Attend}
+        )
+
+        auto_wrap_policy2 = functools.partial(
+            size_based_auto_wrap_policy, min_num_params=1_000
+        )
+
+        def combined_auto_wrap_policy(module, recurse, nonwrapped_numel):
+            # Define a new policy that combines policies
+            p1 = auto_wrap_policy1(module, recurse, nonwrapped_numel)
+            p2 = auto_wrap_policy2(module, recurse, nonwrapped_numel)
+            return p1 or p2
+
+        # Mixed precision
+
+        use_mixed_precision = conf["trainer"]["use_mixed_precision"] if "use_mixed_precision" in conf["trainer"] else False
+
+        logging.info(f"Using mixed_precision: {use_mixed_precision}")
+
+        if use_mixed_precision:
+            for key, val in conf["trainer"]["mixed_precision"].items():
+                conf["trainer"]["mixed_precision"][key] = parse_dtype(val)
+            mixed_precision_policy = MixedPrecision(**conf["trainer"]["mixed_precision"])
+        else:
+            mixed_precision_policy = None
+
+        # CPU offloading
+
+        cpu_offload = conf["trainer"]["cpu_offload"] if "cpu_offload" in conf["trainer"] else False
+
+        logging.info(f"Using CPU offloading: {cpu_offload}")
+
+        # FSDP module
+
+        model = TorchFSDPModel(
+            neural_network,
+            use_orig_params=True,
+            auto_wrap_policy=combined_auto_wrap_policy,
+            mixed_precision=mixed_precision_policy,
+            cpu_offload=CPUOffload(offload_params=cpu_offload)
+        )
+
+        # activation checkpointing on the transformer blocks
+
+        activation_checkpoint = conf["trainer"]["activation_checkpoint"] if "activation_checkpoint" in conf["trainer"] else False
+
+        logging.info(f"Activation checkpointing: {activation_checkpoint}")
+
+        if activation_checkpoint:
+
+            # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
+
+            non_reentrant_wrapper = functools.partial(
+                checkpoint_wrapper,
+                checkpoint_impl=CheckpointImpl.NO_REENTRANT,
+            )
+
+            check_fn = lambda submodule: isinstance(submodule, Attend)
+
+            apply_activation_checkpointing(
+                model,
+                checkpoint_wrapper_fn=non_reentrant_wrapper,
+                check_fn=check_fn
+            )
+
+    elif conf["trainer"]["mode"] == "ddp":
+        model = DDP(neural_network, device_ids=[device])
+    else:
+        model = neural_network
+
+    return model
+
+
+def load_model_state(conf, model, device):
+    save_loc = os.path.expandvars(conf['save_loc'])
+    #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
+    ckpt = os.path.join(save_loc, "checkpoint.pt")
+    checkpoint = torch.load(ckpt, map_location=device)
+    if conf["trainer"]["mode"] == "fsdp":
+        logging.info(f"Loading FSDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+        checkpoint_io = TorchFSDPCheckpointIO()
+        checkpoint_io.load_unsharded_model(model, os.path.join(save_loc, "model_checkpoint.pt"))
+    else:
+        if conf["trainer"]["mode"] == "ddp":
+            logging.info(f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+            model.module.load_state_dict(checkpoint["model_state_dict"])
+        else:
+            logging.info(f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+            model.load_state_dict(checkpoint["model_state_dict"])
+    return model
+
+
 def predict(rank, world_size, conf, pool, smm):
 
     if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
@@ -277,7 +406,7 @@ def predict(rank, world_size, conf, pool, smm):
 
     dataset = PredictForecast(
         filenames=all_ERA_files,
-        forecasts=conf["predict"]["forecasts"],
+        forecasts=load_forecasts(conf),
         history_len=history_len,
         forecast_len=forecast_len,
         skip_periods=time_step,
@@ -299,9 +428,14 @@ def predict(rank, world_size, conf, pool, smm):
 
     # load model
     model = load_model(conf, load_weights=True).to(device)
+
     # Warning -- see next line
-    if conf["trainer"]["mode"] == "ddp":  # A new field needs to be added to predict
-        model = DDP(model, device_ids=[device])
+    distributed = conf["trainer"]["mode"] in ["ddp", "fsdp"]
+    if distributed:  # A new field needs to be added to predict
+        model = distributed_model_wrapper(conf, model, device)
+        if conf["trainer"]["mode"] == "fsdp":
+            # Load model weights (if any), an optimizer, scheduler, and gradient scaler
+            model = load_model_state(conf, model, device)
 
     model.eval()
 
@@ -338,6 +472,17 @@ def predict(rank, world_size, conf, pool, smm):
         filenames_diagnostics = []
         filenames_surface = []
 
+        # Total # of figures
+        N_vars = len(
+            conf["visualization"]["sigma_level_visualize"]["variable_keys"]
+        )
+        N_vars += len(
+            conf["visualization"]["diagnostic_variable_visualize"]["variable_keys"]
+        )
+        N_vars += len(
+            conf["visualization"]["surface_visualize"]["variable_keys"]
+        )
+
         # y_pred allocation
         y_pred = None
 
@@ -361,12 +506,14 @@ def predict(rank, world_size, conf, pool, smm):
                     os.path.expandvars(conf["save_loc"]),
                     f"forecasts/images_{init_time}",
                 )
-                os.makedirs(img_save_loc, exist_ok=True)
+                if N_vars > 0:
+                    os.makedirs(img_save_loc, exist_ok=True)
 
             y = model.concat_and_reshape(batch["y"], batch["y_surf"]).to(device)
 
             # Predict
             y_pred = model(x)
+
             # convert to real space for laplace filter and metrics
             y_pred = state_transformer.inverse_transform(y_pred.cpu())
             y = state_transformer.inverse_transform(y.cpu())
@@ -512,18 +659,55 @@ def predict(rank, world_size, conf, pool, smm):
             gc.collect()
 
             if batch["stop_forecast"][0]:
-                break
-    # save metrics csv
-    save_location = os.path.join(os.path.expandvars(conf["save_loc"]), "forecasts")
-    os.makedirs(save_location, exist_ok=True)  # should already be made above
-    df = pd.DataFrame(metrics_results)
-    df.to_csv(os.path.join(save_location, f"metrics{init_time}.csv"))
+                # save metrics csv
+                save_location = os.path.join(os.path.expandvars(conf["save_loc"]), "forecasts", "metrics")
+                os.makedirs(save_location, exist_ok=True)  # should already be made above
+                df = pd.DataFrame(metrics_results)
+                df.to_csv(os.path.join(save_location, f"metrics{init_time}.csv"))
+
+                # save forecast results to file
+                if "save_format" in conf["predict"] and conf["predict"]["save_format"] == "nc":
+                    logger.info("Save forecasts as netCDF format")
+                    filename_netcdf = save_netcdf(
+                        list_darray_upper_air, list_darray_single_level, conf
+                    )
+                else:
+                    logger.info("Warning: forecast results will not be saved")
+
+                # forecast count = a constant for each run
+                forecast_count += 1
+
+                # lists to collect x-arrays
+                list_darray_upper_air = []
+                list_darray_single_level = []
+
+                # a list that collects image file names
+                job_info = []
+                filenames_upper_air = []
+                filenames_diagnostics = []
+                filenames_surface = []
+
+                # y_pred allocation
+                y_pred = None
+
+                # Set up metrics and containers
+                metrics = LatWeightedMetrics(conf)
+                metrics_results = defaultdict(list)
+
+                gc.collect()
+
+                if distributed:
+                    torch.distributed.barrier()
+
 
     # collect all image file names for making videos
     filename_bundle = {}
     filename_bundle["sigma_level_visualize"] = filenames_upper_air
     filename_bundle["diagnostic_variable_visualize"] = filenames_diagnostics
     filename_bundle["surface_visualize"] = filenames_surface
+
+    if distributed:
+        torch.distributed.barrier()
 
     return (
         list_darray_upper_air,
@@ -563,11 +747,30 @@ if __name__ == "__main__":
         default=4,
         help="Number of processes (world size) for multiprocessing",
     )
+
+    parser.add_argument(
+        "-m",
+        "--mode",
+        type=str,
+        default=0,
+        help="Update the config to use none, DDP, or FSDP",
+    )
+
+    parser.add_argument(
+        "-nd",
+        "--no-data",
+        type=str,
+        default=0,
+        help="If set to True, only pandas CSV files will we saved for each forecast",
+    )
+
     # parse
     args = parser.parse_args()
     args_dict = vars(args)
     config = args_dict.pop("model_config")
     launch = int(args_dict.pop("launch"))
+    mode = str(args_dict.pop("mode"))
+    no_data = 0 if "no-data" not in args_dict else int(args_dict.pop("no-data"))
 
     # Set up logger to print stuff
     root = logging.getLogger()
@@ -583,6 +786,11 @@ if __name__ == "__main__":
     # Load the configuration and get the relevant variables
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
+
+    # Update config using override options
+    if mode in ["none", "ddp", "fsdp"]:
+        logger.info(f"Setting the running mode to {mode}")
+        conf["trainer"]["mode"] = mode
 
     # Launch PBS jobs
     if launch:
@@ -629,17 +837,22 @@ if __name__ == "__main__":
                 filename_bundle,
             ) = predict(0, 1, conf, pool, smm)
 
-        # save forecast results to file
-        if conf["predict"]["save_format"] == "nc":
-            logger.info("Save forecasts as netCDF format")
-            filename_netcdf = save_netcdf(
-                list_darray_upper_air, list_darray_single_level, conf
-            )
-        else:
-            logger.info("Warning: forecast results will not be saved")
+        # # save forecast results to file
+        # if "save_format" in conf["predict"] and conf["predict"]["save_format"] == "nc" and not no_data:
+        #     logger.info("Save forecasts as netCDF format")
+        #     filename_netcdf = save_netcdf(
+        #         list_darray_upper_air, list_darray_single_level, conf
+        #     )
+        # else:
+        #     logger.info("Warning: forecast results will not be saved")
         pool.close()
         pool.join()
     # exit the context before making videos
+
+    if no_data:
+        # set the fields in the config file to prevent any movies from being made
+        for movie_option in ["sigma_level_visualize", "diagnostic_variable_visualize", "surface_visualize"]:
+            conf["visualization"][movie_option] = []
 
     # ---------------------------------------------------------------------------------- #
     # Making videos need to get() after pool closes otherwise .get blocks computation

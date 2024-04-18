@@ -7,7 +7,7 @@ import torch.distributed.checkpoint as DCP
 from torch.distributed.fsdp import StateDictType
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 import torch.nn.functional as F
-from credit.models.base_model import BaseModel
+#from credit.models.base_model import BaseModel
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -42,7 +42,7 @@ def load_premade_encoder_model(model_conf):
             f"Model name {name} not recognized. Please choose from {supported_models.keys()}")
 
 
-class SegmentationModel(BaseModel):
+class SegmentationModel(torch.nn.Module):
 
     def __init__(self, conf):
 
@@ -66,6 +66,17 @@ class SegmentationModel(BaseModel):
 
         self.model = load_premade_encoder_model(conf['model']['architecture'])
 
+    def concat_and_reshape(self, x1, x2):
+        x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
+        x_concat = torch.cat((x1, x2), dim=2)
+        return x_concat.permute(0, 2, 1, 3, 4)
+
+    def split_and_reshape(self, tensor):
+        tensor1 = tensor[:, :int(self.channels * self.levels), :, :, :]
+        tensor2 = tensor[:, -int(self.surface_channels):, :, :, :]
+        tensor1 = tensor1.view(tensor1.shape[0], self.channels, self.levels, tensor1.shape[2], tensor1.shape[3], tensor1.shape[4])
+        return tensor1, tensor2
+
     def forward(self, x):
         x = F.avg_pool3d(x, kernel_size=(2, 1, 1)) if x.shape[2] > 1 else x
         x = x.squeeze(2) # squeeze time dim
@@ -83,6 +94,3 @@ class SegmentationModel(BaseModel):
         k4 = integrate_step(x, k3, 1.0)
 
         return (k1 + 2 * k2 + 2 * k3 + k4) / 6
-
-
-
