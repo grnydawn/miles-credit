@@ -34,6 +34,7 @@ def accum_log(log, new_logs):
 
 
 class TOADataLoader:
+    # This should get moved to solar.py at some point
     def __init__(self, conf):
         self.TOA = xr.open_dataset(conf["data"]["TOA_forcing_path"])
         self.times_b = pd.to_datetime(self.TOA.time.values)

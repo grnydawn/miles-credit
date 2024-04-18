@@ -627,7 +627,12 @@ class PredictForecast(torch.utils.data.IterableDataset):
 
                 if self.transform:
                     sample_x = self.transform(sample_x)
-
+                    # Add static vars, if any, to the return dictionary
+                    if "static" in sample_x:
+                        concatenated_samples["static"] = []
+                    if "TOA" in sample_x:
+                        concatenated_samples["TOA"] = []
+                
                 for key in concatenated_samples.keys():
                     concatenated_samples[key] = sample_x[key].squeeze(0) if self.history_len == 1 else sample_x[key]
 

@@ -253,7 +253,7 @@ class ToTensor:
         return_dict = {}
 
         for key, value in sample.items():
-            if key == 'historical_ERA5_images':
+            if key == 'historical_ERA5_images' or key == 'x':
                 self.datetime = value['time']
                 self.doy = value['time.dayofyear']
                 self.hod = value['time.hour']
