@@ -116,9 +116,11 @@ def get_contiguous_segments(dt_index: pd.DatetimeIndex, min_timesteps: int, max_
 
 
 def get_zarr_chunk_sequences(
-    n_chunks_per_disk_load: int,
-    zarr_chunk_boundaries: Iterable[int],
-    contiguous_segments: Iterable[Segment]) -> Iterable[Segment]:
+        n_chunks_per_disk_load: int,
+        zarr_chunk_boundaries: Iterable[int],
+        contiguous_segments: Iterable[Segment]
+        ) -> Iterable[Segment]:
+
     """
 
     Args:
@@ -182,29 +184,6 @@ def get_zarr_chunk_sequences(
 
     return zarr_chunk_sequences
 
-
-Array = Union[np.ndarray, xr.DataArray]
-IMAGE_ATTR_NAMES = ('historical_ERA5_images', 'target_ERA5_images')
-
-
-class Sample(TypedDict):
-    """Simple class for structuring data for the ML model.
-
-    Using typing.TypedDict gives us several advantages:
-      1. Single 'source of truth' for the type and documentation of each example.
-      2. A static type checker can check the types are correct.
-
-    Instead of TypedDict, we could use typing.NamedTuple,
-    which would provide runtime checks, but the deal-breaker with Tuples is that they're immutable
-    so we cannot change the values in the transforms.
-    """
-    # IMAGES
-    # Shape: batch_size, seq_length, lat, lon, lev
-    historical_ERA5_images: Array
-    target_ERA5_images: Array
-
-    # METADATA
-    datetime_index: Array
 
 
 def flatten_list(list_of_lists):
@@ -342,6 +321,7 @@ class ERA5Dataset(torch.utils.data.Dataset):
             sample = self.transform(sample)
         return sample
 
+
 class Dataset_BridgeScaler(torch.utils.data.Dataset):
     def __init__(
         self,
@@ -350,7 +330,7 @@ class Dataset_BridgeScaler(torch.utils.data.Dataset):
         transform: Optional[Callable] = None,
     ):
         years_do = list(conf["data"][conf_dataset])
-        self.available_dates = pd.date_range(str(years_do[0]),str(years_do[1]),freq='1H')
+        self.available_dates = pd.date_range(str(years_do[0]), str(years_do[1]), freq='1H')
         self.data_path = str(conf["data"]["bs_data_path"])
         self.history_len = int(conf["data"]["history_len"])
         self.forecast_len = int(conf["data"]["forecast_len"])
@@ -379,140 +359,136 @@ class Dataset_BridgeScaler(torch.utils.data.Dataset):
         # Add forecast indices
         for i in range(1, forecast_len + 1):
             indlist.append(index + i * skip_periods)
-    
+
         # Add history indices
         for i in range(1, history_len + 1):
             indlist.append(index - i * skip_periods)
-    
+
         # Sort the list to maintain order
         indlist = sorted(indlist)
         return indlist
 
     def __getitem__(self, index):
-        
-        if (self.skip_periods==None) & (self.one_shot==None):
-            print('here')
-            exiting = False
-            date_index = self.available_dates[index]
-            
-            indlist = sorted([index] + 
-                        [index + (i) + 1 for i in range(self.forecast_len)] + 
-                        [index - i - 1 for i in range(self.history_len)])
 
-            if np.min(indlist)<0:
+        if (self.skip_periods is None) & (self.one_shot is None):
+            date_index = self.available_dates[index]
+
+            indlist = sorted(
+                [index]
+                + [index + (i) + 1 for i in range(self.forecast_len)]
+                + [index - i - 1 for i in range(self.history_len)]
+                )
+
+            if np.min(indlist) < 0:
                 indlist = list(np.array(indlist)+np.abs(np.min(indlist)))
                 index += np.abs(np.min(indlist))
-            if np.max(indlist)>=self.__len__():
+            if np.max(indlist) >= self.__len__():
                 indlist = list(np.array(indlist)-np.abs(np.max(indlist))+self.__len__()-1)
                 index -= np.abs(np.max(indlist))
-            print(indlist)
             date_index = self.available_dates[indlist]
             str_tot_find = f'%Y/%m/%d/{self.file_format}'
             fs = [f"{self.data_path}/{bb.strftime(str_tot_find)}" for bb in date_index]
-            if len(fs) < 2: 
-                raise("Must be greater than one day in the list [x and x+1 minimum]")
-                
+            if len(fs) < 2:
+                raise "Must be greater than one day in the list [x and x+1 minimum]"
+
             fe = [1 if os.path.exists(fn) else 0 for fn in fs]
             if np.sum(fe) == len(fs):
-                allgood=1
+                pass
             else:
-                raise("weve left the training dataset, check your dataloader logic")
-    
-            DShist = xr.open_mfdataset(fs[1:self.history_len + 1])
-            DSfor = xr.open_mfdataset(fs[self.history_len + 1:self.history_len + 1 + self.forecast_len])
+                raise "weve left the training dataset, check your dataloader logic"
+
+            DShist = xr.open_mfdataset(fs[1:self.history_len + 1]).load()
+            DSfor = xr.open_mfdataset(fs[self.history_len + 1:self.history_len + 1 + self.forecast_len]).load()
 
             sample = Sample(
                 historical_ERA5_images=DShist,
                 target_ERA5_images=DSfor,
                 datetime_index=date_index
             )
-    
+
             if self.transform:
                 sample = self.transform(sample)
             return sample
         if self.one_shot is not None:
-           
-            exiting = False
             date_index = self.available_dates[index]
-            
-            indlist = sorted([index] + 
-                        [index + (i) + 1 for i in range(self.forecast_len)] + 
-                        [index - i - 1 for i in range(self.history_len)])
+
+            indlist = sorted(
+                [index] +
+                [index + (i) + 1 for i in range(self.forecast_len)] +
+                [index - i - 1 for i in range(self.history_len)]
+                )
             # indlist.append(index+self.one_shot)
-            
-            if np.min(indlist)<0:
+
+            if np.min(indlist) < 0:
                 indlist = list(np.array(indlist)+np.abs(np.min(indlist)))
                 index += np.abs(np.min(indlist))
-            if np.max(indlist)>=self.__len__():
+            if np.max(indlist) >= self.__len__():
                 indlist = list(np.array(indlist)-np.abs(np.max(indlist))+self.__len__()-1)
                 index -= np.abs(np.max(indlist))
-                                
-            print(indlist)   
+
             date_index = self.available_dates[indlist]
             str_tot_find = f'%Y/%m/%d/{self.file_format}'
             fs = [f"{self.data_path}/{bb.strftime(str_tot_find)}" for bb in date_index]
 
-            if len(fs) < 2: 
-                raise("Must be greater than one day in the list [x and x+1 minimum]")
-                
+            if len(fs) < 2:
+                raise "Must be greater than one day in the list [x and x+1 minimum]"
+
             fe = [1 if os.path.exists(fn) else 0 for fn in fs]
             if np.sum(fe) == len(fs):
-                allgood=1
+                pass
             else:
-                raise("weve left the training dataset, check your dataloader logic")
-    
-            DShist = xr.open_mfdataset(fs[:self.history_len])
-            DSfor = xr.open_mfdataset(fs[-2])
+                raise "weve left the training dataset, check your dataloader logic"
+
+            DShist = xr.open_mfdataset(fs[:self.history_len]).load()
+            DSfor = xr.open_mfdataset(fs[-2]).load()
 
             sample = Sample(
                 historical_ERA5_images=DShist,
                 target_ERA5_images=DSfor,
                 datetime_index=date_index
             )
-            
+
             if self.transform:
                 sample = self.transform(sample)
             return sample
-        
+
         if (self.skip_periods is not None) and (self.one_shot is None):
-            exiting = False
             date_index = self.available_dates[index]
-            
             indlist = self.evenly_spaced_indlist(index, self.skip_periods, self.forecast_len, self.history_len)
 
-            if np.min(indlist)<0:
+            if np.min(indlist) < 0:
                 indlist = list(np.array(indlist)+np.abs(np.min(indlist)))
                 index += np.abs(np.min(indlist))
-            if np.max(indlist)>=self.__len__():
+            if np.max(indlist) >= self.__len__():
                 indlist = list(np.array(indlist)-np.abs(np.max(indlist))+self.__len__()-1)
                 index -= np.abs(np.max(indlist))
-            
-            print(indlist)
+
             date_index = self.available_dates[indlist]
             str_tot_find = f'%Y/%m/%d/{self.file_format}'
             fs = [f"{self.data_path}/{bb.strftime(str_tot_find)}" for bb in date_index]
 
-            if len(fs) < 2: 
-                raise("Must be greater than one day in the list [x and x+1 minimum]")
-                
+            if len(fs) < 2:
+                raise "Must be greater than one day in the list [x and x+1 minimum]"
+
             fe = [1 if os.path.exists(fn) else 0 for fn in fs]
             if np.sum(fe) == len(fs):
-                allgood=1
+                pass
             else:
-                raise("weve left the training dataset, check your dataloader logic")
-    
-            DShist = xr.open_mfdataset(fs[:self.history_len])
-            DSfor = xr.open_mfdataset(fs[self.history_len:self.history_len+self.forecast_len])
+                raise "weve left the training dataset, check your dataloader logic"
+
+            DShist = xr.open_mfdataset(fs[:self.history_len]).load()
+            DSfor = xr.open_mfdataset(fs[self.history_len:self.history_len+self.forecast_len]).load()
 
             sample = Sample(
                 historical_ERA5_images=DShist,
                 target_ERA5_images=DSfor,
                 datetime_index=date_index
             )
-    
+
             if self.transform:
                 sample = self.transform(sample)
             return sample
+
 
 class SequentialDataset(torch.utils.data.Dataset):
 
@@ -804,7 +780,7 @@ class PredictForecast(torch.utils.data.IterableDataset):
                         concatenated_samples["static"] = []
                     if "TOA" in sample_x:
                         concatenated_samples["TOA"] = []
-                
+
                 for key in concatenated_samples.keys():
                     concatenated_samples[key] = sample_x[key].squeeze(0) if self.history_len == 1 else sample_x[key]
 

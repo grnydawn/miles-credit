@@ -8,7 +8,6 @@ from typing import Dict
 import pandas as pd
 from bridgescaler import read_scaler
 from torchvision import transforms as tforms
-import os
 
 
 logger = logging.getLogger(__name__)
@@ -17,13 +16,18 @@ logger = logging.getLogger(__name__)
 def load_transforms(conf):
     if conf["data"]["scaler_type"] == 'quantile':
         transform_scaler = NormalizeState_Quantile(conf)
+    elif conf["data"]["scaler_type"] == 'quantile-cached':
+        transform_scaler = NormalizeState_Quantile_Bridgescalar(conf)
     elif conf["data"]["scaler_type"] == 'std':
         transform_scaler = NormalizeState(conf)
     else:
         logger.log('scaler type not supported check data: scaler_type in config file')
         raise
 
-    to_tensor_scaler = ToTensor(conf=conf)
+    if conf["data"]["scaler_type"] == 'quantile-cached':
+        to_tensor_scaler = ToTensor_BridgeScaler(conf)
+    else:
+        to_tensor_scaler = ToTensor(conf=conf)
 
     return tforms.Compose([
             transform_scaler,
@@ -334,8 +338,8 @@ class NormalizeState_Quantile_Bridgescalar:
         self.scaler_3d = self.scaler_3ds.sum()
         self.scaler_surf = self.scaler_surfs.sum()
 
-        self.scaler_surf.channels_last=False
-        self.scaler_3d.channels_last=False
+        self.scaler_surf.channels_last = False
+        self.scaler_3d.channels_last = False
 
     def __call__(self, sample: Sample, inverse: bool = False) -> Sample:
         if inverse:
@@ -345,34 +349,34 @@ class NormalizeState_Quantile_Bridgescalar:
 
     def inverse_transform(self, x: torch.Tensor) -> torch.Tensor:
         device = x.device
-        tensor = x[:, :(len(self.variables)*self.levels), :, :]  #B, Var, H, W
-        surface_tensor = x[:, (len(self.variables)*self.levels):, :, :]  #B, Var, H, W
+        tensor = x[:, :(len(self.variables)*self.levels), :, :]  # B, Var, H, W
+        surface_tensor = x[:, (len(self.variables)*self.levels):, :, :]  # B, Var, H, W
         # Reverse quantile transform using bridge scaler:
         transformed_tensor = tensor.clone()
         transformed_surface_tensor = surface_tensor.clone()
-        #3dvars
+        # 3dvars
         rscal_3d = (np.array(x[:, :(len(self.variables)*self.levels), :, :]))
-        
+
         transformed_tensor[:, :, :, :] = torch.tensor((self.scaler_3d.inverse_transform(rscal_3d))).to(device)
-        #surf
+        # surf
         rscal_surf = np.array(x[:, (len(self.variables)*self.levels):, :, :])
         transformed_surface_tensor[:, :, :, :] = torch.tensor((self.scaler_surf.inverse_transform(rscal_surf))).to(device)
-        #cat them
+        # cat them
         transformed_x = torch.cat((transformed_tensor, transformed_surface_tensor), dim=1)
-        #return
+        # return
         return transformed_x.to(device)
 
     def transform(self, sample):
         normalized_sample = {}
         for key, value in sample.items():
-            normalized_sample[key]=value
+            normalized_sample[key] = value
         return normalized_sample
 
 
 class ToTensor_BridgeScaler:
     def __init__(self, conf):
-        
-        self.conf = conf        
+
+        self.conf = conf
         self.hist_len = int(conf["data"]["history_len"])
         self.for_len = int(conf["data"]["forecast_len"])
         self.variables = conf["data"]["variables"]
@@ -382,7 +386,8 @@ class ToTensor_BridgeScaler:
         self.lonN = int(conf["model"]["image_width"])
         self.latN = int(conf["model"]["image_height"])
         self.levels = int(conf["model"]["levels"])
-        
+        self.one_shot = (conf["data"]["one_shot"])
+
     def __call__(self, sample: Sample) -> Sample:
 
         return_dict = {}
@@ -403,8 +408,10 @@ class ToTensor_BridgeScaler:
                 y_surf = torch.tensor(np.array(value['surface'])).squeeze()
                 return_dict['y_surf'] = y_surf if len(y_surf.shape) == 4 else y_surf.unsqueeze(0)
                 len_vars = len(self.variables)
-                print('forecast len:', self.for_len)
-                return_dict['y'] = torch.tensor(np.reshape(np.array(value['levels']), [self.for_len+1, len_vars,self.levels, self.latN, self.lonN]))
+                if self.one_shot:
+                    return_dict['y'] = torch.tensor(np.reshape(np.array(value['levels']), [1, len_vars, self.levels, self.latN, self.lonN]))
+                else:
+                    return_dict['y'] = torch.tensor(np.reshape(np.array(value['levels']), [self.for_len + 1, len_vars, self.levels, self.latN, self.lonN]))
 
         if self.static_variables:
             DSD = xr.open_dataset(self.conf["loss"]["latitude_weights"])

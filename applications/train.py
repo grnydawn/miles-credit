@@ -36,7 +36,7 @@ from torchsummary import summary
 
 from credit.models import load_model
 from credit.loss import VariableTotalLoss2D
-from credit.data import ERA5Dataset
+from credit.data import ERA5Dataset, Dataset_BridgeScaler
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
 from credit.trainer import Trainer
@@ -81,14 +81,22 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
 
     transforms = load_transforms(conf)
 
-    dataset = ERA5Dataset(
-        filenames=files,
-        history_len=history_len,
-        forecast_len=forecast_len,
-        skip_periods=time_step,
-        one_shot=one_shot,
-        transform=transforms
-    )
+    if conf["data"]["scaler_type"] == "quantile-cached":
+        dataset = Dataset_BridgeScaler(
+            conf,
+            conf_dataset='bs_years_train' if is_train else 'bs_years_val',
+            transform=transforms
+        )
+    else:
+        dataset = ERA5Dataset(
+            filenames=files,
+            history_len=history_len,
+            forecast_len=forecast_len,
+            skip_periods=time_step,
+            one_shot=one_shot,
+            transform=transforms
+        )
+
     sampler = DistributedSampler(
         dataset,
         num_replicas=world_size,
