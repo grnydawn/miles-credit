@@ -65,7 +65,7 @@ from credit.mixed_precision import parse_dtype
 
 # ---------- #
 from credit.visualization_tools import shared_mem_draw_wrapper
-#from visualization_tools import shared_mem_draw_wrapper
+# from visualization_tools import shared_mem_draw_wrapper
 
 logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")
@@ -485,6 +485,7 @@ def predict(rank, world_size, conf, pool, smm):
 
         # y_pred allocation
         y_pred = None
+        static = None
 
         # model inference loop
         for batch in data_loader:
@@ -508,6 +509,17 @@ def predict(rank, world_size, conf, pool, smm):
                 )
                 if N_vars > 0:
                     os.makedirs(img_save_loc, exist_ok=True)
+
+            # Add statics
+            if "static" in batch:
+                if static is None:
+                    static = batch["static"].to(device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float()
+                x = torch.cat((x, static.clone()), dim=1)
+
+            # Add solar "statics"
+            if "TOA" in batch:
+                toa = batch["TOA"].to(device)
+                x = torch.cat([x, toa.unsqueeze(1)], dim=1)
 
             y = model.concat_and_reshape(batch["y"], batch["y_surf"]).to(device)
 
@@ -651,7 +663,8 @@ def predict(rank, world_size, conf, pool, smm):
                 x = y_pred.detach()
             else:
                 # use multiple past forecast steps as inputs
-                x_detach = x[:, :, 1:].detach()
+                static_dim_size = abs(x.shape[1] - y_pred.shape[1])  # static channels will get updated on next pass
+                x_detach = x[:, :-static_dim_size, 1:].detach()
                 x = torch.cat([x_detach, y_pred.detach()], dim=2)
 
             # Explicitly release GPU memory
@@ -698,7 +711,6 @@ def predict(rank, world_size, conf, pool, smm):
 
                 if distributed:
                     torch.distributed.barrier()
-
 
     # collect all image file names for making videos
     filename_bundle = {}
