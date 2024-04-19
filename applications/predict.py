@@ -806,6 +806,9 @@ if __name__ == "__main__":
     # Load the configuration and get the relevant variables
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
+    # create a save location for rollout
+    forecast_save_loc = os.path.join(os.path.expandvars(conf['save_loc']), 'forecasts')
+    os.makedirs(forecast_save_loc, exist_ok=True)
 
     # Update config using override options
     if mode in ["none", "ddp", "fsdp"]:
