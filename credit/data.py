@@ -1,6 +1,7 @@
 from typing import Optional, Callable, TypedDict, Union, Iterable, NamedTuple
 from dataclasses import dataclass
 import numpy as np
+import os
 import pandas as pd
 import xarray as xr
 import torch
@@ -341,6 +342,177 @@ class ERA5Dataset(torch.utils.data.Dataset):
             sample = self.transform(sample)
         return sample
 
+class Dataset_BridgeScaler(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        conf,
+        conf_dataset,
+        transform: Optional[Callable] = None,
+    ):
+        years_do = list(conf["data"][conf_dataset])
+        self.available_dates = pd.date_range(str(years_do[0]),str(years_do[1]),freq='1H')
+        self.data_path = str(conf["data"]["bs_data_path"])
+        self.history_len = int(conf["data"]["history_len"])
+        self.forecast_len = int(conf["data"]["forecast_len"])
+        self.forecast_len = 1 if self.forecast_len == 0 else self.forecast_len
+        self.file_format = str(conf["data"]["bs_file_format"])
+        self.transform = transform
+        self.skip_periods = conf["data"]["skip_periods"]
+        self.one_shot = conf["data"]["one_shot"]
+        self.total_seq_len = self.history_len + self.forecast_len
+        self.first_date = self.available_dates[0]
+        self.last_date = self.available_dates[-1]
+
+    def __post_init__(self):
+        # Total sequence length of each sample.
+        self.total_seq_len = self.history_len + self.forecast_len
+
+    def __len__(self):
+        tlen = 0
+        tlen = len(self.available_dates)
+        return tlen
+
+    def evenly_spaced_indlist(self, index, skip_periods, forecast_len, history_len):
+        # Initialize the list with the base index
+        indlist = [index]
+
+        # Add forecast indices
+        for i in range(1, forecast_len + 1):
+            indlist.append(index + i * skip_periods)
+    
+        # Add history indices
+        for i in range(1, history_len + 1):
+            indlist.append(index - i * skip_periods)
+    
+        # Sort the list to maintain order
+        indlist = sorted(indlist)
+        return indlist
+
+    def __getitem__(self, index):
+        
+        if (self.skip_periods==None) & (self.one_shot==None):
+            print('here')
+            exiting = False
+            date_index = self.available_dates[index]
+            
+            indlist = sorted([index] + 
+                        [index + (i) + 1 for i in range(self.forecast_len)] + 
+                        [index - i - 1 for i in range(self.history_len)])
+
+            if np.min(indlist)<0:
+                indlist = list(np.array(indlist)+np.abs(np.min(indlist)))
+                index += np.abs(np.min(indlist))
+            if np.max(indlist)>=self.__len__():
+                indlist = list(np.array(indlist)-np.abs(np.max(indlist))+self.__len__()-1)
+                index -= np.abs(np.max(indlist))
+            print(indlist)
+            date_index = self.available_dates[indlist]
+            str_tot_find = f'%Y/%m/%d/{self.file_format}'
+            fs = [f"{self.data_path}/{bb.strftime(str_tot_find)}" for bb in date_index]
+            if len(fs) < 2: 
+                raise("Must be greater than one day in the list [x and x+1 minimum]")
+                
+            fe = [1 if os.path.exists(fn) else 0 for fn in fs]
+            if np.sum(fe) == len(fs):
+                allgood=1
+            else:
+                raise("weve left the training dataset, check your dataloader logic")
+    
+            DShist = xr.open_mfdataset(fs[1:self.history_len + 1])
+            DSfor = xr.open_mfdataset(fs[self.history_len + 1:self.history_len + 1 + self.forecast_len])
+
+            sample = Sample(
+                historical_ERA5_images=DShist,
+                target_ERA5_images=DSfor,
+                datetime_index=date_index
+            )
+    
+            if self.transform:
+                sample = self.transform(sample)
+            return sample
+        if self.one_shot is not None:
+           
+            exiting = False
+            date_index = self.available_dates[index]
+            
+            indlist = sorted([index] + 
+                        [index + (i) + 1 for i in range(self.forecast_len)] + 
+                        [index - i - 1 for i in range(self.history_len)])
+            # indlist.append(index+self.one_shot)
+            
+            if np.min(indlist)<0:
+                indlist = list(np.array(indlist)+np.abs(np.min(indlist)))
+                index += np.abs(np.min(indlist))
+            if np.max(indlist)>=self.__len__():
+                indlist = list(np.array(indlist)-np.abs(np.max(indlist))+self.__len__()-1)
+                index -= np.abs(np.max(indlist))
+                                
+            print(indlist)   
+            date_index = self.available_dates[indlist]
+            str_tot_find = f'%Y/%m/%d/{self.file_format}'
+            fs = [f"{self.data_path}/{bb.strftime(str_tot_find)}" for bb in date_index]
+
+            if len(fs) < 2: 
+                raise("Must be greater than one day in the list [x and x+1 minimum]")
+                
+            fe = [1 if os.path.exists(fn) else 0 for fn in fs]
+            if np.sum(fe) == len(fs):
+                allgood=1
+            else:
+                raise("weve left the training dataset, check your dataloader logic")
+    
+            DShist = xr.open_mfdataset(fs[:self.history_len])
+            DSfor = xr.open_mfdataset(fs[-2])
+
+            sample = Sample(
+                historical_ERA5_images=DShist,
+                target_ERA5_images=DSfor,
+                datetime_index=date_index
+            )
+            
+            if self.transform:
+                sample = self.transform(sample)
+            return sample
+        
+        if (self.skip_periods is not None) and (self.one_shot is None):
+            exiting = False
+            date_index = self.available_dates[index]
+            
+            indlist = self.evenly_spaced_indlist(index, self.skip_periods, self.forecast_len, self.history_len)
+
+            if np.min(indlist)<0:
+                indlist = list(np.array(indlist)+np.abs(np.min(indlist)))
+                index += np.abs(np.min(indlist))
+            if np.max(indlist)>=self.__len__():
+                indlist = list(np.array(indlist)-np.abs(np.max(indlist))+self.__len__()-1)
+                index -= np.abs(np.max(indlist))
+            
+            print(indlist)
+            date_index = self.available_dates[indlist]
+            str_tot_find = f'%Y/%m/%d/{self.file_format}'
+            fs = [f"{self.data_path}/{bb.strftime(str_tot_find)}" for bb in date_index]
+
+            if len(fs) < 2: 
+                raise("Must be greater than one day in the list [x and x+1 minimum]")
+                
+            fe = [1 if os.path.exists(fn) else 0 for fn in fs]
+            if np.sum(fe) == len(fs):
+                allgood=1
+            else:
+                raise("weve left the training dataset, check your dataloader logic")
+    
+            DShist = xr.open_mfdataset(fs[:self.history_len])
+            DSfor = xr.open_mfdataset(fs[self.history_len:self.history_len+self.forecast_len])
+
+            sample = Sample(
+                historical_ERA5_images=DShist,
+                target_ERA5_images=DSfor,
+                datetime_index=date_index
+            )
+    
+            if self.transform:
+                sample = self.transform(sample)
+            return sample
 
 class SequentialDataset(torch.utils.data.Dataset):
 
