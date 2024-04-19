@@ -16,6 +16,12 @@ data:
     valid_history_len: 2
     valid_forecast_len: 0
     one_shot: True
+    skip_periods: null
+    bs_years_train: ['2010-01-01','2011-01-01'] #only used with bridgescalar developed datasets
+    bs_years_val: ['2011-01-01','2012-01-01'] #only used with bridgescalar developed datasets
+    bs_years_test: ['2013-01-01','2014-01-01'] #only used with bridgescalar developed datasets
+    bs_data_path: '/glade/derecho/scratch/dgagne/era5_quantile/' #only used with bridgescalar developed datasets
+    bs_file_format: 'TOTAL_%Y-%m-%dT%H:%M:%S_quantile.nc' #only used with bridgescalar developed datasets
     
 trainer:
     mode: none # none, ddp, fsdp

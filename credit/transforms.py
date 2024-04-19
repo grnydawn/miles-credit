@@ -312,3 +312,301 @@ class ToTensor:
             return_dict['static'] = np.stack(arrs, axis=0)
 
         return return_dict
+
+
+
+class Dataset_BridgeScaler(torch.utils.data.Dataset):
+    def __init__(
+        self,
+        conf,
+        conf_dataset,
+        years: list = ['2010-01-01','2011-01-01'],
+        data_path: str = '/glade/derecho/scratch/dgagne/era5_quantile/',
+        file_format: str = 'TOTAL_%Y-%m-%dT%H:%M:%S_quantile.nc',
+        history_len: int = 2,
+        forecast_len: int = 1,
+        transform: Optional[Callable] = None,
+        seed=42,
+        skip_periods=None,
+        one_shot=None,
+    ):
+        years_do = list(conf["data"][conf_dataset])
+        self.available_dates = pd.date_range(str(years_do[0]),str(years_do[1]),freq='1H')
+        self.data_path = str(conf["data"]["bs_data_path"])
+        self.history_len = int(conf["data"]["history_len"])
+        self.forecast_len = int(conf["data"]["forecast_len"])
+        self.forecast_len = 1 if self.forecast_len == 0 else self.forecast_len
+        self.file_format = str(conf["data"]["bs_file_format"])
+        self.transform = transform
+        self.skip_periods = conf["data"]["skip_periods"]
+        self.one_shot = conf["data"]["one_shot"]
+        self.total_seq_len = self.history_len + self.forecast_len
+        self.first_date = self.available_dates[0]
+        self.last_date = self.available_dates[-1]
+
+    def __post_init__(self):
+        # Total sequence length of each sample.
+        self.total_seq_len = self.history_len + self.forecast_len
+
+    def __len__(self):
+        tlen = 0
+        tlen = len(self.available_dates)
+        return tlen
+
+    def evenly_spaced_indlist(self, index, skip_periods, forecast_len, history_len):
+        # Initialize the list with the base index
+        indlist = [index]
+
+        # Add forecast indices
+        for i in range(1, forecast_len + 1):
+            indlist.append(index + i * skip_periods)
+    
+        # Add history indices
+        for i in range(1, history_len + 1):
+            indlist.append(index - i * skip_periods)
+    
+        # Sort the list to maintain order
+        indlist = sorted(indlist)
+        return indlist
+
+    def __getitem__(self, index):
+        
+        if (self.skip_periods==None) & (self.one_shot==None):
+            print('here')
+            exiting = False
+            date_index = self.available_dates[index]
+            
+            indlist = sorted([index] + 
+                        [index + (i) + 1 for i in range(self.forecast_len)] + 
+                        [index - i - 1 for i in range(self.history_len)])
+
+            if np.min(indlist)<0:
+                indlist = list(np.array(indlist)+np.abs(np.min(indlist)))
+                index += np.abs(np.min(indlist))
+            if np.max(indlist)>=self.__len__():
+                indlist = list(np.array(indlist)-np.abs(np.max(indlist))+self.__len__()-1)
+                index -= np.abs(np.max(indlist))
+            print(indlist)
+            date_index = self.available_dates[indlist]
+            str_tot_find = f'%Y/%m/%d/{self.file_format}'
+            fs = [f"{self.data_path}/{bb.strftime(str_tot_find)}" for bb in date_index]
+            if len(fs) < 2: 
+                raise("Must be greater than one day in the list [x and x+1 minimum]")
+                
+            fe = [1 if os.path.exists(fn) else 0 for fn in fs]
+            if np.sum(fe) == len(fs):
+                allgood=1
+            else:
+                raise("weve left the training dataset, check your dataloader logic")
+    
+            DShist = xr.open_mfdataset(fs[1:self.history_len + 1])
+            DSfor = xr.open_mfdataset(fs[self.history_len + 1:self.history_len + 1 + self.forecast_len])
+
+            sample = Sample(
+                historical_ERA5_images=DShist,
+                target_ERA5_images=DSfor,
+                datetime_index=date_index
+            )
+    
+            if self.transform:
+                sample = self.transform(sample)
+            return sample
+        if self.one_shot is not None:
+           
+            exiting = False
+            date_index = self.available_dates[index]
+            
+            indlist = sorted([index] + 
+                        [index + (i) + 1 for i in range(self.forecast_len)] + 
+                        [index - i - 1 for i in range(self.history_len)])
+            # indlist.append(index+self.one_shot)
+            
+            if np.min(indlist)<0:
+                indlist = list(np.array(indlist)+np.abs(np.min(indlist)))
+                index += np.abs(np.min(indlist))
+            if np.max(indlist)>=self.__len__():
+                indlist = list(np.array(indlist)-np.abs(np.max(indlist))+self.__len__()-1)
+                index -= np.abs(np.max(indlist))
+                                
+            print(indlist)   
+            date_index = self.available_dates[indlist]
+            str_tot_find = f'%Y/%m/%d/{self.file_format}'
+            fs = [f"{self.data_path}/{bb.strftime(str_tot_find)}" for bb in date_index]
+
+            if len(fs) < 2: 
+                raise("Must be greater than one day in the list [x and x+1 minimum]")
+                
+            fe = [1 if os.path.exists(fn) else 0 for fn in fs]
+            if np.sum(fe) == len(fs):
+                allgood=1
+            else:
+                raise("weve left the training dataset, check your dataloader logic")
+    
+            DShist = xr.open_mfdataset(fs[:self.history_len])
+            DSfor = xr.open_mfdataset(fs[-2])
+
+            sample = Sample(
+                historical_ERA5_images=DShist,
+                target_ERA5_images=DSfor,
+                datetime_index=date_index
+            )
+            
+            if self.transform:
+                sample = self.transform(sample)
+            return sample
+        
+        if (self.skip_periods is not None) and (self.one_shot is None):
+            exiting = False
+            date_index = self.available_dates[index]
+            
+            indlist = self.evenly_spaced_indlist(index, self.skip_periods, self.forecast_len, self.history_len)
+
+            if np.min(indlist)<0:
+                indlist = list(np.array(indlist)+np.abs(np.min(indlist)))
+                index += np.abs(np.min(indlist))
+            if np.max(indlist)>=self.__len__():
+                indlist = list(np.array(indlist)-np.abs(np.max(indlist))+self.__len__()-1)
+                index -= np.abs(np.max(indlist))
+            
+            print(indlist)
+            date_index = self.available_dates[indlist]
+            str_tot_find = f'%Y/%m/%d/{self.file_format}'
+            fs = [f"{self.data_path}/{bb.strftime(str_tot_find)}" for bb in date_index]
+
+            if len(fs) < 2: 
+                raise("Must be greater than one day in the list [x and x+1 minimum]")
+                
+            fe = [1 if os.path.exists(fn) else 0 for fn in fs]
+            if np.sum(fe) == len(fs):
+                allgood=1
+            else:
+                raise("weve left the training dataset, check your dataloader logic")
+    
+            DShist = xr.open_mfdataset(fs[:self.history_len])
+            DSfor = xr.open_mfdataset(fs[self.history_len:self.history_len+self.forecast_len])
+
+            sample = Sample(
+                historical_ERA5_images=DShist,
+                target_ERA5_images=DSfor,
+                datetime_index=date_index
+            )
+    
+            if self.transform:
+                sample = self.transform(sample)
+            return sample
+
+class NormalizeState_Quantile_Bridgescalar:
+    """Class to use the bridgescaler Quantile functionality.
+    Some hoops have to be jumped thorugh, and the efficiency could be
+    improved if we were to retrain the bridgescaler.
+    """
+    def __init__(
+        self,
+        conf
+    ):
+        self.scaler_file = conf['data']['quant_path']
+        self.variables = conf['data']['variables']
+        self.surface_variables = conf['data']['surface_variables']
+        self.levels = int(conf['model']['levels'])
+        self.scaler_df = pd.read_parquet(self.scaler_file)
+        self.scaler_3ds = self.scaler_df["scaler_3d"].apply(read_scaler)
+        self.scaler_surfs = self.scaler_df["scaler_surface"].apply(read_scaler)
+        self.scaler_3d = self.scaler_3ds.sum()
+        self.scaler_surf = self.scaler_surfs.sum()
+
+        self.scaler_surf.channels_last=False
+        self.scaler_3d.channels_last=False
+
+    def __call__(self, sample: Sample, inverse: bool = False) -> Sample:
+        if inverse:
+            return self.inverse_transform(sample)
+        else:
+            return self.transform(sample)
+
+    def inverse_transform(self, x: torch.Tensor) -> torch.Tensor:
+        device = x.device
+        tensor = x[:, :(len(self.variables)*self.levels), :, :]  #B, Var, H, W
+        surface_tensor = x[:, (len(self.variables)*self.levels):, :, :]  #B, Var, H, W
+        # Reverse quantile transform using bridge scaler:
+        transformed_tensor = tensor.clone()
+        transformed_surface_tensor = surface_tensor.clone()
+        #3dvars
+        rscal_3d = (np.array(x[:, :(len(self.variables)*self.levels), :, :]))
+        
+        transformed_tensor[:, :, :, :] = torch.tensor((self.scaler_3d.inverse_transform(rscal_3d))).to(device)
+        #surf
+        rscal_surf = np.array(x[:, (len(self.variables)*self.levels):, :, :])
+        transformed_surface_tensor[:, :, :, :] = torch.tensor((self.scaler_surf.inverse_transform(rscal_surf))).to(device)
+        #cat them
+        transformed_x = torch.cat((transformed_tensor, transformed_surface_tensor), dim=1)
+        #return
+        return transformed_x.to(device)
+
+    def transform(self, sample):
+        normalized_sample = {}
+        for key, value in sample.items():
+            normalized_sample[key]=value
+        return normalized_sample
+
+
+class ToTensor_BridgeScaler:
+    def __init__(self, conf):
+        
+        self.conf = conf        
+        self.hist_len = int(conf["data"]["history_len"])
+        self.for_len = int(conf["data"]["forecast_len"])
+        self.variables = conf["data"]["variables"]
+        self.surface_variables = conf["data"]["surface_variables"]
+        self.allvars = self.variables + self.surface_variables
+        self.static_variables = conf["data"]["static_variables"]
+        self.lonN = int(conf["model"]["image_width"])
+        self.latN = int(conf["model"]["image_height"])
+        self.levels = int(conf["model"]["levels"])
+        
+    def __call__(self, sample: Sample) -> Sample:
+
+        return_dict = {}
+
+        for key, value in sample.items():
+            if key == 'historical_ERA5_images':
+                self.datetime = value['time']
+                self.doy = value['time.dayofyear']
+                self.hod = value['time.hour']
+
+            if key == 'historical_ERA5_images' or key == 'x':
+                x_surf = torch.tensor(np.array(value['surface'])).squeeze()
+                return_dict['x_surf'] = x_surf if len(x_surf.shape) == 4 else x_surf.unsqueeze(0)
+                len_vars = len(self.variables)
+                return_dict['x'] = torch.tensor(np.reshape(np.array(value['levels']), [self.hist_len, len_vars, self.levels, self.latN, self.lonN]))
+
+            elif key == 'target_ERA5_images' or key == 'y':
+                y_surf = torch.tensor(np.array(value['surface'])).squeeze()
+                return_dict['y_surf'] = y_surf if len(y_surf.shape) == 4 else y_surf.unsqueeze(0)
+                len_vars = len(self.variables)
+                print('forecast len:', self.for_len)
+                return_dict['y'] = torch.tensor(np.reshape(np.array(value['levels']), [self.for_len+1, len_vars,self.levels, self.latN, self.lonN]))
+
+        if self.static_variables:
+            DSD = xr.open_dataset(self.conf["loss"]["latitude_weights"])
+            arrs = []
+            for sv in self.static_variables:
+                if sv == 'tsi':
+                    TOA = xr.open_dataset(self.conf["data"]["TOA_forcing_path"])
+                    times_b = pd.to_datetime(TOA.time.values)
+                    mask_toa = [any(i == time.dayofyear and j == time.hour for i, j in zip(self.doy, self.hod)) for time in times_b]
+                    return_dict['TOA'] = torch.tensor(((TOA[sv].sel(time=mask_toa))/2540585.74).to_numpy())
+                    # Need the datetime at time t(i) (which is the last element) to do multi-step training
+                    return_dict['datetime'] = pd.to_datetime(self.datetime).astype(int).values[-1]
+
+                if sv == 'Z_GDS4_SFC':
+                    arr = 2*torch.tensor(np.array(((DSD[sv]-DSD[sv].min())/(DSD[sv].max()-DSD[sv].min()))))
+                else:
+                    try:
+                        arr = DSD[sv].squeeze()
+                    except:
+                        continue
+                arrs.append(arr)
+
+            return_dict['static'] = np.stack(arrs, axis=0)
+
+        return return_dict
