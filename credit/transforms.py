@@ -12,6 +12,7 @@ from torchvision import transforms as tforms
 
 logger = logging.getLogger(__name__)
 
+
 def load_transforms(conf):
     if conf["data"]["scaler_type"] == 'quantile':
         transform_scaler = NormalizeState_Quantile(conf)
@@ -22,11 +23,12 @@ def load_transforms(conf):
         raise
 
     to_tensor_scaler = ToTensor(conf=conf)
-    
+
     return tforms.Compose([
             transform_scaler,
             to_tensor_scaler,
         ])
+
 
 class NormalizeState:
     def __init__(
@@ -46,7 +48,7 @@ class NormalizeState:
             return self.inverse_transform(sample)
         else:
             return self.transform(sample)
-        
+
     def transform_array(self, x: torch.Tensor) -> torch.Tensor:
         device = x.device
         tensor = x[:, :(len(self.variables)*self.levels), :, :]
@@ -124,8 +126,8 @@ class NormalizeState_Quantile:
         self.scaler_3d = self.scaler_3ds.sum()
         self.scaler_surf = self.scaler_surfs.sum()
 
-        self.scaler_surf.channels_last=False
-        self.scaler_3d.channels_last=False
+        self.scaler_surf.channels_last = False
+        self.scaler_3d.channels_last = False
 
     def __call__(self, sample: Sample, inverse: bool = False) -> Sample:
         if inverse:
@@ -156,9 +158,9 @@ class NormalizeState_Quantile:
         normalized_sample = {}
         for key, value in sample.items():
             if isinstance(value, xr.Dataset):
-                var_levels=[]
+                var_levels = []
                 for var in self.variables:
-                    levels=value.level.values
+                    levels = value.level.values
                     for level in levels:
                         var_levels.append(f"{var}_{level:d}")
                 ds_times = (value["time"].values)
@@ -171,18 +173,18 @@ class NormalizeState_Quantile:
                     e3d = xr.concat(var_slices, pd.Index(var_levels, name="variable"))
                     e3d = e3d.expand_dims(dim="time", axis=0)
                     TTtrans = self.scaler_3d.transform(np.array(e3d))
-                    #this is bad and should be fixed:         
-                    value['U'].sel(time=time)[:,:,:]=(TTtrans[:,:self.levels,:,:].squeeze())
-                    value['V'].sel(time=time)[:,:,:]=(TTtrans[:,self.levels:(self.levels*2),:,:].squeeze())
-                    value['T'].sel(time=time)[:,:,:]=(TTtrans[:,(self.levels*2):(self.levels*3),:,:].squeeze())
-                    value['Q'].sel(time=time)[:,:,:]=(TTtrans[:,(self.levels*3):(self.levels*4),:,:].squeeze())
+                    #this is bad and should be fixed:
+                    value['U'].sel(time=time)[:, :, :] = TTtrans[:, :self.levels, :, :].squeeze()
+                    value['V'].sel(time=time)[:, :, :] = TTtrans[:, self.levels: (self.levels*2), :, :].squeeze()
+                    value['T'].sel(time=time)[:, :, :] = TTtrans[:, (self.levels*2): (self.levels*3), :, :].squeeze()
+                    value['Q'].sel(time=time)[:, :, :] = TTtrans[:, (self.levels*3): (self.levels*4), :, :].squeeze()
                     e_surf = xr.concat([value[v].sel(time=time) for v in self.surface_variables], pd.Index(self.surface_variables, name="variable"))
                     e_surf = e_surf.expand_dims(dim="time", axis=0)
                     TTtrans = self.scaler_surf.transform(e_surf)
-    
-                    for ee,varvar in enumerate(self.surface_variables):    
-                        value[varvar].sel(time=time)[:,:]=TTtrans[0,ee,:,:].squeeze()
-            normalized_sample[key]=value
+
+                    for ee, varvar in enumerate(self.surface_variables):
+                        value[varvar].sel(time=time)[:, :] = TTtrans[0, ee, :, :].squeeze()
+            normalized_sample[key] = value
         return normalized_sample
 
 
@@ -235,6 +237,7 @@ class NormalizeTendency:
 
         return transformed_tensor, transformed_surface_tensor
 
+
 class ToTensor:
     def __init__(self, conf):
         self.conf = conf
@@ -250,7 +253,8 @@ class ToTensor:
         return_dict = {}
 
         for key, value in sample.items():
-            if key == 'historical_ERA5_images':
+            if key == 'historical_ERA5_images' or key == 'x':
+                self.datetime = value['time']
                 self.doy = value['time.dayofyear']
                 self.hod = value['time.hour']
 
@@ -291,9 +295,11 @@ class ToTensor:
                 if sv == 'tsi':
                     TOA = xr.open_dataset(self.conf["data"]["TOA_forcing_path"])
                     times_b = pd.to_datetime(TOA.time.values)
-                    mask_toa = [(time.dayofyear in self.doy) and (time.hour  in self.hod) for time in times_b]
-                    return_dict['TOA'] = (TOA[sv].sel(time=mask_toa))/(2540585.74)
-                    #return_dict['TOA'] = torch.tensor(((TOA[sv].sel(time=mask_toa))/(2540585.74)).to_numpy())                    
+                    mask_toa = [any(i == time.dayofyear and j == time.hour for i, j in zip(self.doy, self.hod)) for time in times_b]
+                    return_dict['TOA'] = torch.tensor(((TOA[sv].sel(time=mask_toa))/2540585.74).to_numpy())
+                    # Need the datetime at time t(i) (which is the last element) to do multi-step training
+                    return_dict['datetime'] = pd.to_datetime(self.datetime).astype(int).values[-1]
+
                 if sv == 'Z_GDS4_SFC':
                     arr = 2*torch.tensor(np.array(((DSD[sv]-DSD[sv].min())/(DSD[sv].max()-DSD[sv].min()))))
                 else:
@@ -302,7 +308,7 @@ class ToTensor:
                     except:
                         continue
                 arrs.append(arr)
-            
-            return_dict['static']=np.stack(arrs, axis=0)
+
+            return_dict['static'] = np.stack(arrs, axis=0)
 
         return return_dict

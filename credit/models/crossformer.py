@@ -294,6 +294,7 @@ class CrossFormer(BaseModel):
         frame_patch_size=2,
         channels=4,
         surface_channels=7,
+        static_channels=0,
         levels=15,
         dim=(64, 128, 256, 512),
         depth=(2, 2, 8, 2),
@@ -326,7 +327,8 @@ class CrossFormer(BaseModel):
         self.pad_lon = pad_lon
         self.pad_lat = pad_lat
         self.use_spectral_norm = use_spectral_norm
-        input_channels = channels * levels + surface_channels
+        input_channels = channels * levels + surface_channels + static_channels
+        output_channels = channels * levels + surface_channels
 
         dim = cast_tuple(dim, 4)
         depth = cast_tuple(depth, 4)
@@ -369,7 +371,7 @@ class CrossFormer(BaseModel):
         self.up_block1 = UpBlock(1 * last_dim, last_dim // 2, dim[0])
         self.up_block2 = UpBlock(2 * (last_dim // 2), last_dim // 4, dim[0])
         self.up_block3 = UpBlock(2 * (last_dim // 4), last_dim // 8, dim[0])
-        self.up_block4 = nn.ConvTranspose2d(2 * (last_dim // 8), input_channels, kernel_size=4, stride=2, padding=1)
+        self.up_block4 = nn.ConvTranspose2d(2 * (last_dim // 8), output_channels, kernel_size=4, stride=2, padding=1)
 
         if self.use_spectral_norm:
             logger.info("Adding spectral norm to all conv and linear layers")
@@ -488,13 +490,14 @@ if __name__ == "__main__":
     frames = 2
     channels = 4
     surface_channels = 7
+    static_channels = 3
     patch_height = 1
     patch_width = 1
     frame_patch_size = 2
     pad_lon = 80
     pad_lat = 80
 
-    input_tensor = torch.randn(1, channels * levels + surface_channels, frames, image_height, image_width).to("cuda")
+    input_tensor = torch.randn(1, channels * levels + surface_channels + static_channels, frames, image_height, image_width).to("cuda")
 
     model = CrossFormer(
         image_height=image_height,
@@ -505,6 +508,7 @@ if __name__ == "__main__":
         frame_patch_size=frame_patch_size,
         channels=channels,
         surface_channels=surface_channels,
+        static_channels=static_channels,
         levels=levels,
         dim=(64, 128, 256, 512),
         depth=(2, 2, 8, 2),

@@ -5,6 +5,7 @@ from collections import defaultdict
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 import torch
 import torch.distributed as dist
 import torch.fft
@@ -30,6 +31,19 @@ def accum_log(log, new_logs):
         old_value = log.get(key, 0.)
         log[key] = old_value + new_value
     return log
+
+
+class TOADataLoader:
+    # This should get moved to solar.py at some point
+    def __init__(self, conf):
+        self.TOA = xr.open_dataset(conf["data"]["TOA_forcing_path"])
+        self.times_b = pd.to_datetime(self.TOA.time.values)
+
+    def __call__(self, datetime_input):
+        doy = datetime_input.dayofyear
+        hod = datetime_input.hour
+        mask_toa = [doy == time.dayofyear and hod == time.hour for time in self.times_b]
+        return torch.tensor(((self.TOA['tsi'].sel(time=mask_toa))/2540585.74).to_numpy()).unsqueeze(0)
 
 
 class Trainer:
@@ -64,6 +78,9 @@ class Trainer:
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
         rollout_p = 1.0 if 'stop_rollout' not in conf['trainer'] else conf['trainer']['stop_rollout']
 
+        if "static_variables" in conf["data"] and "tsi" in conf["data"]["static_variables"]:
+            self.toa = TOADataLoader(conf)
+
         # update the learning rate if epoch-by-epoch updates that dont depend on a metric
         if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "lambda":
             scheduler.step()
@@ -84,6 +101,7 @@ class Trainer:
             disable=True if self.rank > 0 else False
         )
 
+        static = None
         results_dict = defaultdict(list)
 
         for i, batch in batch_group_generator:
@@ -98,6 +116,15 @@ class Trainer:
                     batch["x"],
                     batch["x_surf"]
                 ).to(self.device)
+
+                if "static" in batch:
+                    if static is None:
+                        static = batch["static"].to(self.device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float()
+                    x = torch.cat((x, static.clone()), dim=1)
+
+                if "TOA" in batch:
+                    toa = batch["TOA"].to(self.device)
+                    x = torch.cat([x, toa.unsqueeze(1)], dim=1)
 
                 y = self.model.concat_and_reshape(
                     batch["y"],
@@ -123,11 +150,27 @@ class Trainer:
                         k += 1
 
                         if history_len > 1:
-                            x_detach = x[:, :, 1:].detach()
-                            x = torch.cat([x_detach, y_pred.detach()], dim=2).detach()
-                            del x_detach
+                            x_detach = x.detach()[:, :, 1:]
+                            if "static" in batch:
+                                y_pred = torch.cat((y_pred, static[:, :, 0:1].clone()), dim=1)
+                            if "TOA" in batch:  # update the TOA based on doy and hod
+                                elapsed_time = pd.Timedelta(hours=k)
+                                current_times = [pd.to_datetime(_t, unit="ns") + elapsed_time for _t in batch["datetime"]]
+                                toa = torch.cat([self.toa(_t).unsqueeze(0) for _t in current_times], dim=0).to(self.device)
+                                y_pred = torch.cat([y_pred, toa], dim=1)
+                            x = torch.cat([x_detach, y_pred], dim=2).detach()
                         else:
-                            x = y_pred.detach()
+                            if "static" in batch or "TOA" in batch:
+                                x = y_pred.detach()
+                                if "static" in batch:
+                                    x = torch.cat((x, static[:, :, 0:1].clone()), dim=1)
+                                if "TOA" in batch:  # update the TOA based on doy and hod
+                                    elapsed_time = pd.Timedelta(hours=k)
+                                    current_times = [pd.to_datetime(_t, unit="ns") + elapsed_time for _t in batch["datetime"]]
+                                    toa = torch.cat([self.toa(_t).unsqueeze(0) for _t in current_times], dim=0).to(self.device)
+                                    x = torch.cat([x, toa], dim=1)
+                            else:
+                                x = y_pred.detach()
 
                 y = y.to(device=self.device, dtype=y_pred.dtype)
                 loss = criterion(y, y_pred)
@@ -229,6 +272,8 @@ class Trainer:
             disable=True if self.rank > 0 else False
         )
 
+        static = None
+
         for i, batch in batch_group_generator:
 
             with torch.no_grad():
@@ -239,6 +284,15 @@ class Trainer:
                     batch["x"],
                     batch["x_surf"]
                 ).to(self.device)
+
+                if "static" in batch:
+                    if static is None:
+                        static = batch["static"].to(self.device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float()
+                    x = torch.cat((x, static.clone()), dim=1)
+
+                if "TOA" in batch:
+                    toa = batch["TOA"].to(self.device)
+                    x = torch.cat([x, toa.unsqueeze(1)], dim=1)
 
                 y = self.model.concat_and_reshape(
                     batch["y"],
@@ -259,11 +313,27 @@ class Trainer:
                     k += 1
 
                     if history_len > 1:
-                        x_detach = x[:, :, 1:].detach()
-                        x = torch.cat([x_detach, y_pred.detach()], dim=2).detach()
-                        del x_detach
+                        x_detach = x.detach()[:, :, 1:]
+                        if "static" in batch:
+                            y_pred = torch.cat((y_pred, static[:, :, 0:1].clone()), dim=1)
+                        if "TOA" in batch:  # update the TOA based on doy and hod
+                            elapsed_time = pd.Timedelta(hours=k)
+                            current_times = [pd.to_datetime(_t, unit="ns") + elapsed_time for _t in batch["datetime"]]
+                            toa = torch.cat([self.toa(_t).unsqueeze(0) for _t in current_times], dim=0).to(self.device)
+                            y_pred = torch.cat([y_pred, toa], dim=1)
+                        x = torch.cat([x_detach, y_pred], dim=2).detach()
                     else:
-                        x = y_pred.detach()
+                        if "static" in batch or "TOA" in batch:
+                            x = y_pred.detach()
+                            if "static" in batch:
+                                x = torch.cat((x, static[:, :, 0:1].clone()), dim=1)
+                            if "TOA" in batch:  # update the TOA based on doy and hod
+                                elapsed_time = pd.Timedelta(hours=k)
+                                current_times = [pd.to_datetime(_t, unit="ns") + elapsed_time for _t in batch["datetime"]]
+                                toa = torch.cat([self.toa(_t).unsqueeze(0) for _t in current_times], dim=0).to(self.device)
+                                x = torch.cat([x, toa], dim=1)
+                        else:
+                            x = y_pred.detach()
 
                 loss = criterion(y.to(y_pred.dtype), y_pred)
 
@@ -323,13 +393,14 @@ class Trainer:
         save_loc = conf['save_loc']
         start_epoch = conf['trainer']['start_epoch']
         epochs = conf['trainer']['epochs']
+        skip_validation = conf['trainer']['skip_validation'] if 'skip_validation' in conf['trainer'] else False
 
         # Reload the results saved in the training csv if continuing to train
         if start_epoch == 0:
             results_dict = defaultdict(list)
         else:
             results_dict = defaultdict(list)
-            saved_results = pd.read_csv(f"{save_loc}/training_log.csv")
+            saved_results = pd.read_csv(os.path.join(save_loc, "training_log.csv"))
             for key in saved_results.columns:
                 if key == "index":
                     continue
@@ -370,13 +441,19 @@ class Trainer:
             #
             ############
 
-            valid_results = self.validate(
-                epoch,
-                conf,
-                valid_loader,
-                valid_criterion,
-                metrics
-            )
+            if skip_validation:
+
+                valid_results = train_results
+
+            else:
+
+                valid_results = self.validate(
+                    epoch,
+                    conf,
+                    valid_loader,
+                    valid_criterion,
+                    metrics
+                )
 
             #################
             #
@@ -486,15 +563,17 @@ class Trainer:
             torch.cuda.empty_cache()
             gc.collect()
 
+            training_metric = "train_loss" if skip_validation else "valid_loss"
+
             # Report result to the trial
             if trial:
-                trial.report(results_dict["valid_loss"][-1], step=epoch)
+                trial.report(results_dict[training_metric][-1], step=epoch)
 
             # Stop training if we have not improved after X epochs (stopping patience)
             best_epoch = [
                 i
-                for i, j in enumerate(results_dict["valid_loss"])
-                if j == min(results_dict["valid_loss"])
+                for i, j in enumerate(results_dict[training_metric])
+                if j == min(results_dict[training_metric])
             ][0]
             offset = epoch - best_epoch
             if offset >= conf['trainer']['stopping_patience']:
@@ -506,8 +585,10 @@ class Trainer:
                 if conf['trainer']['stop_after_epoch']:
                     break
 
+        training_metric = "train_loss" if skip_validation else "valid_loss"
+
         best_epoch = [
-            i for i, j in enumerate(results_dict["valid_loss"]) if j == min(results_dict["valid_loss"])
+            i for i, j in enumerate(results_dict[training_metric]) if j == min(results_dict[training_metric])
         ][0]
 
         result = {k: v[best_epoch] for k, v in results_dict.items()}
