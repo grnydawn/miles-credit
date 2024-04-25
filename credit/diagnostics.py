@@ -9,6 +9,8 @@ import torch
 from credit.data_conversions import dataConverter
 from weatherbench2.derived_variables import ZonalEnergySpectrum
 
+import logging
+logger = logging.getLogger(__name__)
 
 class Diagnostics:
     """
@@ -50,7 +52,7 @@ class Diagnostics:
         y_ds = self.converter.tensor_to_dataset(y, [forecast_datetime])
 
         for diagnostic in self.diagnostics:
-            diagnostic(pred_ds, y_ds)
+            diagnostic(pred_ds, y_ds, forecast_datetime)
 
     def get_weights(self):
         """
@@ -91,15 +93,18 @@ class ZonalSpectrumVis:
                                                              + self.single_level_variables)
         self.ifs_levels = xr.open_dataset('/glade/derecho/scratch/dkimpara/nwp_files/ifs_levels.nc')
         #self.figsize = vis_conf['figsize']
-        print(type(self.figsize))
         if len(self.figsize) == 0:
             self.figsize = self.figsize
         else:
             num_vars = len(self.atmos_variables) * len(self.atmos_levels) + len(self.single_level_variables)
             self.figsize = (5 * num_vars, 5)
-        print(self.figsize)
 
-    def __call__(self, pred_ds, y_ds):
+        if self.summary_plot_fhs:
+            self.summary_fig, self.summary_axs = plt.subplots(
+            ncols=len(self.atmos_variables) * len(self.atmos_levels) + len(self.single_level_variables),
+                      figsize=self.figsize)
+
+    def __call__(self, pred_ds, y_ds, fh):
         '''
         pred, y can be normalized or unnormalized tensors.
         '''
@@ -117,6 +122,26 @@ class ZonalSpectrumVis:
             ncols=len(self.atmos_variables) * len(self.atmos_levels) + len(self.single_level_variables),
                       figsize=self.figsize)
         fig.suptitle(f't={avg_pred_spectrum.datetime.values[0]}')
+        fig, axs = self.plot_avg_spectrum(avg_pred_spectrum, avg_y_spectrum, fig, axs)
+        fig.savefig(join(self.plot_save_loc, 
+                         f'spectra_t{avg_pred_spectrum.datetime.values[0]:03}'))
+        
+        ###################### plot a summary plot ###########################
+        if fh in self.summary_plot_fhs: # plot some fhs onto a single plot
+            fh_idx = self.summary_plot_fhs.index(fh)
+            self.plot_avg_spectrum(avg_pred_spectrum, avg_y_spectrum, 
+                                       self.summary_fig, self.summary_axs, 
+                                       alpha=1 - fh_idx/len(self.summary_plot_fhs),
+                                       label=f'fh={fh}')
+            
+            if fh == self.summary_plot_fhs[-1]:
+                for ax in self.summary_axs:
+                    ax.legend()
+                self.summary_fig.savefig(join(self.plot_save_loc, f'spectra_summary'))
+                logger.info(f"saved summary plot to {join(self.plot_save_loc, f'spectra_summary')}")
+
+    def plot_avg_spectrum(self, avg_pred_spectrum, avg_y_spectrum, 
+                          fig, axs, alpha=1, label=None):
         for ax in axs:
             ax.set_yscale('log')
             ax.set_xscale('log')
@@ -124,7 +149,11 @@ class ZonalSpectrumVis:
         curr_ax = 0
         for level in self.atmos_levels:
             for variable in self.atmos_variables:
-                avg_pred_spectrum[variable].sel(level=level).plot(x='wavelength', ax=axs[curr_ax], color='r')
+                avg_pred_spectrum[variable].sel(level=level).plot(x='wavelength', 
+                                                                  ax=axs[curr_ax], 
+                                                                  color='r', 
+                                                                  alpha=alpha,
+                                                                  label=label)
                 avg_y_spectrum[variable].sel(level=level).plot(x='wavelength', ax=axs[curr_ax], color='0')
 
                 axs[curr_ax].set_title(f'{variable} {self.ifs_levels.ref_hPa.sel(level=level).values}')
@@ -132,15 +161,18 @@ class ZonalSpectrumVis:
                 curr_ax += 1
 
         for variable in self.single_level_variables:
-            avg_pred_spectrum[variable].plot(x='wavelength', ax=axs[curr_ax], color='r')
+            avg_pred_spectrum[variable].plot(x='wavelength', 
+                                             ax=axs[curr_ax], 
+                                             color='r', 
+                                             alpha=alpha,
+                                             label=label)
             avg_y_spectrum[variable].plot(x='wavelength', ax=axs[curr_ax], color='0')
             axs[curr_ax].set_title(variable)
             axs[curr_ax].set_ylabel('Power')
             curr_ax += 1
 
-        fig.savefig(join(self.plot_save_loc, 
-                         f'spectra_t{avg_pred_spectrum.datetime.values[0]:03}'))
-
+        return fig, axs
+    
     def get_avg_spectrum(self, ds_spectrum):
         ds_spectrum = ds_spectrum.sel(level=self.atmos_levels)
         ds_spectrum = interpolate_spectral_frequencies(ds_spectrum, 'zonal_wavenumber')
