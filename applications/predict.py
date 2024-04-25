@@ -841,7 +841,7 @@ if __name__ == "__main__":
     num_cpus = get_num_cpus()
     logger.info(f"using {num_cpus} cpus for image generation")
     with Pool(processes=num_cpus - 1) as pool, SharedMemoryManager() as smm:
-        if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
+        if conf["trainer"]["mode"] in ["fsdp", "ddp"]: # multi-gpu inference
             (
                 list_darray_upper_air,
                 list_darray_single_level,
@@ -851,7 +851,7 @@ if __name__ == "__main__":
             ) = predict(
                 int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf, pool, smm
             )
-        else:
+        else: # single device inference
             (
                 list_darray_upper_air,
                 list_darray_single_level,
