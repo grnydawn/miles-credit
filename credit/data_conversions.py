@@ -12,14 +12,20 @@ class dataConverter:
     e.g. in train.py, Tensor to Dataset
     e.g. in predict.py DataArray to Dataset
     '''
-    def __init__(self, conf) -> None:
+    def __init__(self, conf, new_levels=None) -> None:
         self.conf = conf
         static_ds = xr.open_dataset(self.conf["loss"]["latitude_weights"])
         self.lat = static_ds.latitude.values
         self.lon = static_ds.longitude.values
+        self.SP = static_ds.SP
+        self.level_info = xr.open_dataset("/glade/derecho/scratch/dkimpara/nwp_files/hy_to_pressure.nc")
+        self.new_levels = new_levels # levels to interpolate to
 
-    def tensor_to_Dataset(self, tensor, forecast_datetimes):
+    def tensor_to_dataset(self, tensor, forecast_datetimes):
         return self.dataArrays_to_dataset(* self.tensor_to_dataArray(tensor, forecast_datetimes))
+
+    def tensor_to_pressure_lev_dataset(self, tensor, forecast_datetimes):
+        return self.dataset_to_pressure_levels(self.tensor_to_Dataset(tensor, forecast_datetimes))
 
     def concat_and_reshape(self, x1, x2): # will be useful for getting back to tensor
         x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
@@ -91,4 +97,48 @@ class dataConverter:
         return ds
 
     def dataset_to_pressure_levels(self, dataset):
-        pass
+        """
+        unless specified in class init,
+        interpolation defaults to the pressure levels (in Pa):
+
+        [100000., 92500., 85000., 70000., 50000., 40000., 
+         30000., 25000., 20000., 15000., 10000., 7000., 5000.,
+         3000., 2000., 1000., 700., 500., 300., 200., 100.],
+
+        """
+        dataset = dataset.assign_coords({'level': self.level_info.ref_Pa.values})  # these levels are from high to low
+        atmos_dataset = dataset[self.conf["data"]["variables"]]
+        SP = self.SP.expand_dims(dim={"datetime": dataset.datetime.values})
+
+        interp_kwargs = {"lev_dim": "level"} # need to build this kwarg dict because interpolation errors when given None
+        if self.new_levels: 
+            interp_kwargs['new_levels'] = self.new_levels
+        
+        # modify atmos slice of dataset, dataset modified in place
+        dataset[self.conf['data']['variables']] = (
+                    atmos_dataset.map(interp_hybrid_to_pressure, 
+                                      args=[SP,
+                                              self.level_info.a_model,
+                                              self.level_info.b_model],
+                                      **interp_kwargs)
+        )
+        return dataset.drop_dims('level') # original dataset with interpolated atmos vars and plev coordinate
+
+if __name__ == '__main__':
+    from os.path import join
+    import yaml
+
+    test_dir = "/glade/work/dkimpara/repos/global/miles-credit/results/test_files_quarter"
+    config = join(test_dir, 'model.yml')
+    with open(config) as cf:
+        conf = yaml.load(cf, Loader=yaml.FullLoader)
+
+    y_pred, y = torch.load(join(test_dir, "pred.pt")), torch.load(join(test_dir, "y.pt"))
+
+    converter = dataConverter(conf)
+    ds = converter.tensor_to_dataset(y_pred, [0])
+    print(ds)
+
+    ##### test hybrid to pressure ###
+    pressure = converter.dataset_to_pressure_levels(ds)
+    print(pressure)

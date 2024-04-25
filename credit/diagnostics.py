@@ -24,10 +24,15 @@ class Diagnostics:
         self.diagnostics = []
         diag_conf = self.conf['diagnostics']
         if diag_conf['use_spectrum_vis']:
-            self.spectrum_vis = ZonalSpectrumVis(self.conf, self.w_lat, self.w_var)
-            self.diagnostics.append(self.spectrum_vis)
             # save directory for spectra plots
-            os.makedirs(join(expandvars(self.conf['save_loc']), 'forecasts/spectra/'), exist_ok=True)
+            plot_save_loc = join(expandvars(self.conf['save_loc']), 
+                             f'forecasts/spectra_{init_datetime}/')
+            os.makedirs(plot_save_loc, exist_ok=True)
+
+            self.spectrum_vis = ZonalSpectrumVis(self.conf, self.w_lat, self.w_var,
+                                                 plot_save_loc)
+            self.diagnostics.append(self.spectrum_vis)
+
 
 
     def __call__(self, pred, y, clim=None, transform=None, forecast_datetime=0):
@@ -41,8 +46,8 @@ class Diagnostics:
             y = y - clim
 
         # convert to xarray:
-        pred_ds = self.converter.tensor_to_Dataset(pred, [forecast_datetime])
-        y_ds = self.converter.tensor_to_Dataset(y, [forecast_datetime])
+        pred_ds = self.converter.tensor_to_dataset(pred, [forecast_datetime])
+        y_ds = self.converter.tensor_to_dataset(y, [forecast_datetime])
 
         for diagnostic in self.diagnostics:
             diagnostic(pred_ds, y_ds)
@@ -67,13 +72,15 @@ class Diagnostics:
 
 
 class ZonalSpectrumVis:
-    def __init__(self, conf, w_lat, w_var):
+    def __init__(self, conf, w_lat, w_var, plot_save_loc):
         '''
         '''
         self.conf = conf
         self.w_lat = w_lat
+        self.plot_save_loc = plot_save_loc
 
-        for k, v in conf['diagnostics']['spectrum_vis']:
+        # this replaces unpacking the dictionary (below)
+        for k, v in conf['diagnostics']['spectrum_vis'].items():
             setattr(self, k, v)
         # vis_conf = conf['diagnostics']['spectrum_vis']
         # self.atmos_variables = vis_conf['atmos_variables']
@@ -84,11 +91,13 @@ class ZonalSpectrumVis:
                                                              + self.single_level_variables)
         self.ifs_levels = xr.open_dataset('/glade/derecho/scratch/dkimpara/nwp_files/ifs_levels.nc')
         #self.figsize = vis_conf['figsize']
-        if self.figsize:
+        print(type(self.figsize))
+        if len(self.figsize) == 0:
             self.figsize = self.figsize
         else:
-            num_vars = len(self.x_variables) * len(self.spectrum_vis_levels) + len(self.single_level_variables)
+            num_vars = len(self.atmos_variables) * len(self.atmos_levels) + len(self.single_level_variables)
             self.figsize = (5 * num_vars, 5)
+        print(self.figsize)
 
     def __call__(self, pred_ds, y_ds):
         '''
@@ -105,7 +114,7 @@ class ZonalSpectrumVis:
 
         # visualize
         fig, axs = plt.subplots(
-            ncols=len(self.x_variables) * len(self.spectrum_vis_levels) + len(self.single_level_variables),
+            ncols=len(self.atmos_variables) * len(self.atmos_levels) + len(self.single_level_variables),
                       figsize=self.figsize)
         fig.suptitle(f't={avg_pred_spectrum.datetime.values[0]}')
         for ax in axs:
@@ -113,8 +122,8 @@ class ZonalSpectrumVis:
             ax.set_xscale('log')
 
         curr_ax = 0
-        for level in self.spectrum_vis_levels:
-            for variable in self.x_variables:
+        for level in self.atmos_levels:
+            for variable in self.atmos_variables:
                 avg_pred_spectrum[variable].sel(level=level).plot(x='wavelength', ax=axs[curr_ax], color='r')
                 avg_y_spectrum[variable].sel(level=level).plot(x='wavelength', ax=axs[curr_ax], color='0')
 
@@ -129,11 +138,11 @@ class ZonalSpectrumVis:
             axs[curr_ax].set_ylabel('Power')
             curr_ax += 1
 
-        fig.savefig(os.path.join(os.path.expandvars(self.conf['save_loc']),
-                                 f'forecasts/spectra/spectra_t{avg_pred_spectrum.datetime.values[0]:03}'))
+        fig.savefig(join(self.plot_save_loc, 
+                         f'spectra_t{avg_pred_spectrum.datetime.values[0]:03}'))
 
     def get_avg_spectrum(self, ds_spectrum):
-        ds_spectrum = ds_spectrum.sel(level=self.spectrum_vis_levels)
+        ds_spectrum = ds_spectrum.sel(level=self.atmos_levels)
         ds_spectrum = interpolate_spectral_frequencies(ds_spectrum, 'zonal_wavenumber')
         ds_spectrum = ds_spectrum.weighted(self.w_lat).mean(dim='latitude')
         return ds_spectrum

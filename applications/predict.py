@@ -52,6 +52,7 @@ from credit.data import PredictForecast
 from credit.loss import VariableTotalLoss2D
 from credit.models import load_model
 from credit.metrics import LatWeightedMetrics
+from credit.diagnostics import Diagnostics
 from credit.transforms import ToTensor, NormalizeState
 from credit.seed import seed_everything
 from credit.pbs import launch_script, launch_script_mpi
@@ -521,19 +522,17 @@ def predict(rank, world_size, conf, pool, smm):
                 toa = batch["TOA"].to(device)
                 x = torch.cat([x, toa.unsqueeze(1)], dim=1)
 
+            # initialize diagnostics
+            diagnostics = Diagnostics(conf, init_time)
+
             y = model.concat_and_reshape(batch["y"], batch["y_surf"]).to(device)
-
-            # Predict
+            # Predict and convert to real space for laplace filter and metrics
             y_pred = model(x)
-
-            # convert to real space for laplace filter and metrics
             y_pred = state_transformer.inverse_transform(y_pred.cpu())
             y = state_transformer.inverse_transform(y.cpu())
 
-            if (
-                "use_laplace_filter" in conf["predict"]
-                and conf["predict"]["use_laplace_filter"]
-            ):
+            if ("use_laplace_filter" in conf["predict"]
+                and conf["predict"]["use_laplace_filter"]):
                 y_pred = (
                     dpf.diff_lap2d_filt(y_pred.to(device).squeeze())
                     .unsqueeze(0)
@@ -546,7 +545,8 @@ def predict(rank, world_size, conf, pool, smm):
             # torch.save(y, os.path.join(save_, 'y.pt'))
             # torch.save(y_pred, os.path.join(save_, 'pred.pt'))
 
-            # Compute metrics
+            ############################# Compute metrics ##############################
+            ############################################################################
             utc_datetime = datetime.datetime.utcfromtimestamp(date_time)
 
             mae = loss_fn(y, y_pred)
@@ -562,8 +562,16 @@ def predict(rank, world_size, conf, pool, smm):
             print_str += f"MAE: {mae.item()} "
             print_str += f"ACC: {metrics_dict['acc']} "
             print_str += f"spectrumMSE: {metrics_dict['spectrum_mse']}"
-
             logger.info(print_str)
+            ############################################################################
+            ############################################################################
+            ############################# Compute Diagnostics ##########################
+            ############################################################################
+            
+            diagnostics(y_pred.float(), y.float(), forecast_datetime=forecast_hour)
+            
+            ############################################################################
+            ############################################################################
 
             # convert the current step result as x-array
             darray_upper_air, darray_single_level = make_xarray(
