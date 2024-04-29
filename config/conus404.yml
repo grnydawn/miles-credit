@@ -2,18 +2,30 @@ save_loc: "/glade/work/mcginnis/ML/GWC/results/conus404"
 seed: 222
 
 data:
-    variables: []
-    surface_variables: ['U850','V850','Q850']
-    # ['PSFC','Q500','Q850','T2','T500','T850','totalVap','U10','U1000','U250','U500','U850','V10','V1000','V250','V500','V850','Z050','Z1000','Z500','Z850']
+    variables: ['PSFC','Q500','Q850','T2','T500','T850','totalVap','U10','U1000','U250','U500','U850','V10','V1000','V250','V500','V850','Z050','Z1000','Z500','Z850'] #['U850','V850','Q850']
     static_variables: []
+    scaler_type: "std"
     save_loc: '/glade/derecho/scratch/mcginnis/???*'
-    mean_path: '/glade/derecho/scratch/mcginnis/STAGING/All_2010_staged.mean.Lev.SLO.nc'
-    std_path: '/glade/derecho/scratch/mcginnis/STAGING/All_2010_staged.std.Lev.SLO.nc'
+    mean_path: '/glade/derecho/scratch/mcginnis/conus404/stats/all.avg.C404.nc'
+    std_path: '/glade/derecho/scratch/mcginnis/conus404/stats/all.std.C404.nc'
     history_len: 2 
-    forecast_len: 2
+    forecast_len: 1
     valid_history_len: 2
-    valid_forecast_len: 2
+    valid_forecast_len: 1
     time_step: 1
+
+
+model:
+    type: "unet"
+    image_height: 512
+    image_width: 512
+    frames: 2
+    levels: 15
+    rk4_integration: False
+    architecture:
+        name: "unet"
+        encoder_name: "resnet34"
+        encoder_weights: "imagenet"
     
 #trainer:
 #    mode: none # none, ddp, fsdp
@@ -40,30 +52,6 @@ data:
 #    # scheduler: {scheduler_type: plateau, mode: min, factor: 0.1, patience: 5, cooldown: 2, min_lr: 1e-6, epsilon: 1e-8, verbose: true, threshold: 1e-4}
 #    scheduler: {'scheduler_type': 'lambda'}
 #  
-#model:
-#    type: "crossformer"
-#    image_height: 640    # Image height (default: 640)
-#    patch_height: 2      # Patch height (default: 2)
-#    image_width: 1280    # Image width (default: 1280)
-#    patch_width: 2       # Patch width (default: 2)
-#    levels: 15           # Number of levels (default: 15)
-#    frames: 2            # Number of frames (default: 2)
-#    frame_patch_size: 2  # Frame patch size (default: 2)
-#    channels: 4          # Channels (default: 4)
-#    surface_channels: 7  # Surface channels (default: 7)
-#    dim: [64, 128, 256, 512]              # Dimensionality of each layer (default: [64, 128, 256, 512])
-#    depth: [2, 2, 8, 2]                    # Depth of each layer (default: [2, 2, 8, 2])
-#    global_window_size: [10, 5, 2, 1]      # Global window size for each layer (default: [10, 5, 2, 1])
-#    local_window_size: 10                  # Local window size (default: 10)
-#    cross_embed_kernel_sizes:             # Kernel sizes for cross-embedding (default: [[4, 8, 16, 32], [2, 4], [2, 4], [2, 4]])
-#    - [4, 8, 16, 32]
-#    - [2, 4]
-#    - [2, 4]
-#    - [2, 4]
-#    cross_embed_strides: [4, 2, 2, 2]     # Strides for cross-embedding (default: [4, 2, 2, 2])
-#    attn_dropout: 0.                      # Dropout probability for attention layers (default: 0.0)
-#    ff_dropout: 0.                        # Dropout probability for feed-forward layers (default: 0.0)
-#
 #    
 #loss: 
 #    training_loss: "mse"
