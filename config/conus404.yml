@@ -5,7 +5,7 @@ data:
     variables: []
     surface_variables: ['U850','V850','Q850']
     # ['PSFC','Q500','Q850','T2','T500','T850','totalVap','U10','U1000','U250','U500','U850','V10','V1000','V250','V500','V850','Z050','Z1000','Z500','Z850']
-
+    static_variables: []
     save_loc: '/glade/derecho/scratch/mcginnis/???*'
     mean_path: '/glade/derecho/scratch/mcginnis/STAGING/All_2010_staged.mean.Lev.SLO.nc'
     std_path: '/glade/derecho/scratch/mcginnis/STAGING/All_2010_staged.std.Lev.SLO.nc'

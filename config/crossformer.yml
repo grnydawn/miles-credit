@@ -1,4 +1,4 @@
-save_loc: "/glade/work/$USER/repos/global/miles-credit/results/crossformer/"
+save_loc: "/glade/work/$USER/repos/global/miles-credit/results/test_quantile/"
 seed: 1000
 
 data:
@@ -8,19 +8,25 @@ data:
     save_loc: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
     mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
     std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
-    quant_path: '/glade/derecho/scratch/dgagne/credit_scalers/era5_quantile_scalers_2024-03-29_00:52.parquet'
-    TOA_forcing_path: '/glade/derecho/scratch/dgagne/credit_scalers/solar_radiation_2024-03-28_2211.nc' 
-    scaler_type: 'std' # 'std'
-    history_len: 2 
+    quant_path: '/glade/derecho/scratch/dgagne/credit_scalers/era5_quantile_scalers_2024-03-30_00:28.parquet'
+    TOA_forcing_path: '/glade/derecho/scratch/dgagne/credit_scalers/solar_radiation_2024-03-29_0204.nc' 
+    scaler_type: 'quantile-cached' #'std', 'quantile'
+    history_len: 2
     forecast_len: 0
     valid_history_len: 2
     valid_forecast_len: 0
     one_shot: True
+    skip_periods: null
+    bs_years_train: ['1979-01-01','2014-01-01'] #only used with bridgescalar developed datasets
+    bs_years_val: ['2014-01-01','2018-01-01'] #only used with bridgescalar developed datasets
+    bs_years_test: ['2018-01-01','2021-01-01'] #only used with bridgescalar developed datasets
+    bs_data_path: '/glade/derecho/scratch/dgagne/era5_quantile/' #only used with bridgescalar developed datasets
+    bs_file_format: 'TOTAL_%Y-%m-%dT%H:%M:%S_quantile.nc' #only used with bridgescalar developed datasets
     
 trainer:
-    mode: none # none, ddp, fsdp
-    train_batch_size: 4
-    valid_batch_size: 4
+    mode: fsdp # none, ddp, fsdp
+    train_batch_size: 1
+    valid_batch_size: 1
     batches_per_epoch: 0 # Set to 0 to use len(dataloader)
     valid_batches_per_epoch: 100
     learning_rate: 5.0e-04
@@ -30,13 +36,14 @@ trainer:
     amp: False
     grad_accum_every: 1
     grad_max_norm: 1.0
-    thread_workers: 0
-    valid_thread_workers: 0
+    thread_workers: 4
+    valid_thread_workers: 4
     stopping_patience: 50
     teacher_forcing_ratio: 0.5 #0.9886539666794065
     stop_rollout: 0.9
-    load_weights: False
-    load_optimizer: False
+    skip_validation: True
+    load_weights: True
+    load_optimizer: True
     use_scheduler: False
     #scheduler: {'scheduler_type': 'cosine-annealing', first_cycle_steps: 500, cycle_mult: 6.0, max_lr: 5.0e-04, min_lr: 5.0e-07, warmup_steps: 499, gamma: 0.7}
     # scheduler: {scheduler_type: plateau, mode: min, factor: 0.1, patience: 5, cooldown: 2, min_lr: 1e-6, epsilon: 1e-8, verbose: true, threshold: 1e-4}
@@ -45,30 +52,30 @@ trainer:
 model:
     type: "crossformer"
     image_height: 640    # Image height (default: 640)
-    patch_height: 1      # Patch height (default: 1)
+    patch_height: 1      # Patch height (default: 2)
     image_width: 1280    # Image width (default: 1280)
-    patch_width: 1       # Patch width (default: 1)
+    patch_width: 1       # Patch width (default: 2)
     levels: 15           # Number of levels (default: 15)
     frames: 2            # Number of frames (default: 2)
-    frame_patch_size: 1  # Frame patch size (default: 1)
+    frame_patch_size: 1  # Frame patch size (default: 2)
     channels: 4          # Channels (default: 4)
     surface_channels: 7  # Surface channels (default: 7)
-    dim: [64, 128, 256, 512]               # Dimensionality of each layer (default: [64, 128, 256, 512])
-    depth: [2, 2, 8, 2]                    # Depth of each layer (default: [2, 2, 8, 2])
-    global_window_size: [10, 5, 2, 1]      # Global window size for each layer (default: [10, 5, 2, 1])
-    local_window_size: 10                  # Local window size (default: 10)
-    cross_embed_kernel_sizes:              # Kernel sizes for cross-embedding (default: [[4, 8, 16, 32], [2, 4], [2, 4], [2, 4]])
+    static_channels: 3   # Static channels (default: 3)
+    dim: [96, 192, 384, 768] #[288, 576, 1152, 2304]           # Dimensionality of each layer (default: [64, 128, 256, 512])
+    depth: [1, 1, 2, 1] #[2, 2, 5, 2]                    # Depth of each layer (default: [2, 2, 8, 2])
+    global_window_size: [2, 2, 2, 1]      # Global window size for each layer (default: [10, 5, 2, 1])
+    local_window_size: 2                  # Local window size (default: 10)
+    cross_embed_kernel_sizes:             # Kernel sizes for cross-embedding (default: [[4, 8, 16, 32], [2, 4], [2, 4], [2, 4]])
     - [4, 8, 16, 32]
     - [2, 4]
     - [2, 4]
     - [2, 4]
-    cross_embed_strides: [4, 2, 2, 2]     # Strides for cross-embedding (default: [4, 2, 2, 2])
+    cross_embed_strides: [2, 2, 2, 2]     # Strides for cross-embedding (default: [4, 2, 2, 2])
     attn_dropout: 0.                      # Dropout probability for attention layers (default: 0.0)
     ff_dropout: 0.                        # Dropout probability for feed-forward layers (default: 0.0)
-    pad_lon: 80                           # Padding on (lon) sides
-    pad_lat: 80                           # Padding on (lat) sides
-    use_spectral_norm: True               # Apply spectral norm to all conv and linear layers
-
+    pad_lon: 80
+    pad_lat: 80
+    use_spectral_norm: True
     
 loss: 
     training_loss: "mse"
@@ -94,10 +101,27 @@ loss:
         Q500: 0.1
 
 predict:
-    forecasts: [
-        #["1989-12-31 00:00:00", "1990-01-02 00:00:00"],
-        ["2018-06-01 00:00:00", "2018-06-01 02:00:00"]
-    ]
+    forecasts: 
+        type: "custom"
+        start_year: 2020
+        start_month: 6
+        start_day: 1
+        days: 10
+        duration: 32
+    # forecasts: [
+    #     ["2020-01-01 00:00:00", "2020-01-10 23:00:00"],
+    #     ["2020-02-01 00:00:00", "2020-02-10 23:00:00"],
+    #     ["2020-03-01 00:00:00", "2020-03-10 23:00:00"],
+    #     ["2020-04-01 00:00:00", "2020-04-10 23:00:00"],
+    #     ["2020-05-01 00:00:00", "2020-05-10 23:00:00"],
+    #     ["2020-06-01 00:00:00", "2020-06-10 23:00:00"],
+    #     ["2020-07-01 00:00:00", "2020-07-10 23:00:00"],
+    #     ["2020-08-01 00:00:00", "2020-08-10 23:00:00"],
+    #     ["2020-09-01 00:00:00", "2020-09-10 23:00:00"],
+    #     ["2020-10-01 00:00:00", "2020-10-10 23:00:00"],
+    #     ["2020-11-01 00:00:00", "2020-11-10 23:00:00"],
+    #     ["2020-12-01 00:00:00", "2020-12-10 23:00:00"]
+    # ]
     use_laplace_filter: True
     save_format: "nc"
 
