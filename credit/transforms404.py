@@ -89,6 +89,10 @@ class ToTensor:
         self.for_len = int(conf["data"]["forecast_len"])
         self.variables = conf["data"]["variables"]
         self.static_variables = conf["data"]["static_variables"]
+        #self.x = 1016
+        #self.y = 1638
+        self.slice_x = slice(120, 632, None)
+        self.slice_y = slice(300, 812, None)
 
     def __call__(self, sample: Sample) -> Sample:
 
@@ -107,43 +111,23 @@ class ToTensor:
                 concatenated_vars = []
                 for vv in self.variables:
                     value_var = value[vv].values
-                    placeholder = torch.zeros((self.hist_len, 1016, 1368))
-                    placeholder[:, :value_var.shape[0], :value_var.shape[1]] = torch.tensor(value_var)
-                    concatenated_vars.append(placeholder)
+                    if len(value_var.shape) == 4: # some seem to have extra single dimensions
+                        value_var = value_var.squeeze(1)
+                    concatenated_vars.append(value_var[:, self.slice_x, self.slice_y])
                 concatenated_vars = np.array(concatenated_vars)
 
             else:
                 value_var = value
 
             if key == 'x':
-                x = torch.as_tensor(np.hstack([np.expand_dims(x, axis=1) for x in concatenated_vars]))
+                x = torch.as_tensor(np.vstack([np.expand_dims(x, axis=0) for x in concatenated_vars]))
                 return_dict['x'] = x
 
             elif key == 'y':
-                y = torch.as_tensor(np.hstack([np.expand_dims(x, axis=1) for x in concatenated_vars]))
+                y = torch.as_tensor(np.vstack([np.expand_dims(x, axis=0) for x in concatenated_vars]))
                 return_dict['y'] = y
 
         if self.static_variables:
             pass
-            # DSD = xr.open_dataset(self.conf["loss"]["latitude_weights"])
-            # arrs = []
-            # for sv in self.static_variables:
-            #     if sv == 'tsi':
-            #         TOA = xr.open_dataset(self.conf["data"]["TOA_forcing_path"])
-            #         times_b = pd.to_datetime(TOA.time.values)
-            #         mask_toa = [any(i == time.dayofyear and j == time.hour for i, j in zip(self.doy, self.hod)) for time in times_b]
-            #         return_dict['TOA'] = torch.tensor(((TOA[sv].sel(time=mask_toa))/2540585.74).to_numpy())
-            #         # Need the datetime at time t(i) (which is the last element) to do multi-step training
-            #         return_dict['datetime'] = pd.to_datetime(self.datetime).astype(int).values[-1]
-
-            #     if sv == 'Z_GDS4_SFC':
-            #         arr = 2*torch.tensor(np.array(((DSD[sv]-DSD[sv].min())/(DSD[sv].max()-DSD[sv].min()))))
-            #     else:
-            #         try:
-            #             arr = DSD[sv].squeeze()
-            #         except:
-            #             continue
-            #     arrs.append(arr)
-            # return_dict['static'] = np.stack(arrs, axis=0)
 
         return return_dict
