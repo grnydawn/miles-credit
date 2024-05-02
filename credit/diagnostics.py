@@ -157,6 +157,10 @@ class ZonalSpectrumVis:
                 avg_y_spectrum[variable].sel(level=level).plot(x='wavelength', ax=axs[curr_ax], color='0')
 
                 axs[curr_ax].set_title(f'{variable} {self.ifs_levels.ref_hPa.sel(level=level).values}')
+                ticks = axs[curr_ax].get_xticks() # rescale x axis to km
+                axs[curr_ax].set_xticks(ticks, ticks/1000)
+                axs[curr_ax].autoscale_view()
+                axs[curr_ax].set_xlabel('Wavelength (km)')
                 axs[curr_ax].set_ylabel('Power')
                 curr_ax += 1
 
@@ -168,6 +172,11 @@ class ZonalSpectrumVis:
                                              label=label)
             avg_y_spectrum[variable].plot(x='wavelength', ax=axs[curr_ax], color='0')
             axs[curr_ax].set_title(variable)
+            
+            ticks = axs[curr_ax].get_xticks() # rescale x axis to km
+            axs[curr_ax].set_xticks(ticks, ticks/1000)
+            axs[curr_ax].autoscale_view()
+            axs[curr_ax].set_xlabel('Wavelength (km)')
             axs[curr_ax].set_ylabel('Power')
             curr_ax += 1
 
