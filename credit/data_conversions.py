@@ -25,7 +25,7 @@ class dataConverter:
         return self.dataArrays_to_dataset(* self.tensor_to_dataArray(tensor, forecast_datetimes))
 
     def tensor_to_pressure_lev_dataset(self, tensor, forecast_datetimes):
-        return self.dataset_to_pressure_levels(self.tensor_to_Dataset(tensor, forecast_datetimes))
+        return self.dataset_to_pressure_levels(self.tensor_to_dataset(tensor, forecast_datetimes))
 
     def concat_and_reshape(self, x1, x2): # will be useful for getting back to tensor
         x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
@@ -110,19 +110,21 @@ class dataConverter:
         atmos_dataset = dataset[self.conf["data"]["variables"]]
         SP = self.SP.expand_dims(dim={"datetime": dataset.datetime.values})
 
-        interp_kwargs = {"lev_dim": "level"} # need to build this kwarg dict because interpolation errors when given None
+        interp_kwargs = {"lev_dim": "level",
+                         "extrapolate": True,
+                         "variable": "other"} # need to build this kwarg dict because interpolation errors when given None
         if self.new_levels: 
             interp_kwargs['new_levels'] = self.new_levels
         
-        # modify atmos slice of dataset, dataset modified in place
-        dataset[self.conf['data']['variables']] = (
-                    atmos_dataset.map(interp_hybrid_to_pressure, 
+        # modify atmos slice of dataset
+        atmos = atmos_dataset.map(interp_hybrid_to_pressure, 
                                       args=[SP,
-                                              self.level_info.a_model,
-                                              self.level_info.b_model],
+                                              self.level_info.a_model / 100000, # IFS a_coeffs are in Pa units. geocat computes pressure as hya * p0 + hyb * psfc
+                                              self.level_info.b_model],         # fix this patch if we ever use coeffs that arent IFS
                                       **interp_kwargs)
-        )
-        return dataset.drop_dims('level') # original dataset with interpolated atmos vars and plev coordinate
+        
+        dataset = xr.merge([atmos, dataset[self.conf['data']['surface_variables']]])
+        return dataset # original dataset with interpolated atmos vars and plev coordinate
 
 if __name__ == '__main__':
     from os.path import join
@@ -133,12 +135,13 @@ if __name__ == '__main__':
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
-    y_pred, y = torch.load(join(test_dir, "pred.pt")), torch.load(join(test_dir, "y.pt"))
+    y_pred= torch.load(join(test_dir, "pred.pt"))
+    #y = torch.load(join(test_dir, "y.pt"))
 
     converter = dataConverter(conf)
     ds = converter.tensor_to_dataset(y_pred, [0])
-    print(ds)
 
     ##### test hybrid to pressure ###
     pressure = converter.dataset_to_pressure_levels(ds)
     print(pressure)
+    print(f'nulls: {pressure.U.isnull().sum().values}')
