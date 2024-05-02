@@ -1,11 +1,10 @@
 import gc
-import logging
 import os
+import logging
 from collections import defaultdict
 
 import numpy as np
 import pandas as pd
-import xarray as xr
 import torch
 import torch.distributed as dist
 import torch.fft
@@ -66,7 +65,7 @@ class Trainer:
         rollout_p = 1.0 if 'stop_rollout' not in conf['trainer'] else conf['trainer']['stop_rollout']
 
         if "static_variables" in conf["data"] and "tsi" in conf["data"]["static_variables"]:
-            self.toa = TOADataLoader(conf)
+            pass  # not implemented yet
 
         # update the learning rate if epoch-by-epoch updates that dont depend on a metric
         if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "lambda":

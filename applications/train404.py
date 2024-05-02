@@ -1,7 +1,6 @@
 import warnings
 import os
 import sys
-import glob
 import yaml
 import wandb
 import optuna
@@ -33,7 +32,6 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
    apply_activation_checkpointing,
 )
 from torchsummary import summary
-from torchvision import transforms
 from credit.models.unet404 import SegmentationModel
 from credit.loss404 import VariableTotalLoss2D
 from credit.data import CONUS404Dataset
@@ -48,7 +46,6 @@ from credit.models.checkpoint import (
     FSDPOptimizerWrapper,
     TorchFSDPCheckpointIO
 )
-from credit.models.unet404 import SegmentationModel
 from credit.mixed_precision import parse_dtype
 
 
@@ -77,8 +74,8 @@ def load_dataset_and_sampler(conf, world_size, rank, is_train, seed=42):
     forecast_len = conf["data"]["forecast_len"]
     valid_history_len = conf["data"]["valid_history_len"]
     valid_forecast_len = conf["data"]["valid_forecast_len"]
-    time_step = None if "time_step" not in conf["data"] else conf["data"]["time_step"]
-    one_shot = None if "one_shot" not in conf["data"] else conf["data"]["one_shot"]
+    # time_step = None if "time_step" not in conf["data"] else conf["data"]["time_step"]
+    # one_shot = None if "one_shot" not in conf["data"] else conf["data"]["one_shot"]
 
     history_len = history_len if is_train else valid_history_len
     forecast_len = forecast_len if is_train else valid_forecast_len
@@ -91,11 +88,11 @@ def load_dataset_and_sampler(conf, world_size, rank, is_train, seed=42):
     ])
 
     dataset = CONUS404Dataset(
-        zarrpath = "/glade/campaign/ral/risc/DATA/conus404/zarr",
-        varnames = conf['data']['variables'],
-        history_len = conf['data']['history_len'],
-        forecast_len = conf['data']['forecast_len'],
-        transform = transforms
+        zarrpath="/glade/campaign/ral/risc/DATA/conus404/zarr",
+        varnames=conf['data']['variables'],
+        history_len=conf['data']['history_len'],
+        forecast_len=conf['data']['forecast_len'],
+        transform=transforms
     )
 
     sampler = DistributedSampler(
@@ -273,7 +270,7 @@ def model_and_memory_summary(conf):
     # model
 
     m = SegmentationModel(conf)
-    #m = load_model(conf)
+    # m = load_model(conf)
 
     # send the module to the correct device first
 

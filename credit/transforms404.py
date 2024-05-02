@@ -89,8 +89,8 @@ class ToTensor:
         self.for_len = int(conf["data"]["forecast_len"])
         self.variables = conf["data"]["variables"]
         self.static_variables = conf["data"]["static_variables"]
-        #self.x = 1016
-        #self.y = 1638
+        # self.x = 1016
+        # self.y = 1638
         self.slice_x = slice(120, 632, None)
         self.slice_y = slice(300, 812, None)
 
@@ -111,7 +111,7 @@ class ToTensor:
                 concatenated_vars = []
                 for vv in self.variables:
                     value_var = value[vv].values
-                    if len(value_var.shape) == 4: # some seem to have extra single dimensions
+                    if len(value_var.shape) == 4:  # some seem to have extra single dimensions
                         value_var = value_var.squeeze(1)
                     concatenated_vars.append(value_var[:, self.slice_x, self.slice_y])
                 concatenated_vars = np.array(concatenated_vars)

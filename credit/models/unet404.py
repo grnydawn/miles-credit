@@ -3,11 +3,7 @@ import torch
 import logging
 import copy
 import os
-import torch.distributed.checkpoint as DCP
-from torch.distributed.fsdp import StateDictType
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 import torch.nn.functional as F
-#from credit.models.base_model import BaseModel
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -64,6 +60,6 @@ class SegmentationModel(torch.nn.Module):
 
     def forward(self, x):
         x = F.avg_pool3d(x, kernel_size=(2, 1, 1)) if x.shape[2] > 1 else x
-        x = x.squeeze(2) # squeeze time dim
+        x = x.squeeze(2)  # squeeze time dim
         x = self.model(x)
         return x.unsqueeze(2)
