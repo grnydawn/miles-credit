@@ -4,6 +4,8 @@ import typing as t
 import numpy as np
 import xarray as xr
 import matplotlib.pyplot as plt
+from matplotlib import colors
+import cartopy.crs as ccrs
 import torch
 
 from credit.data_conversions import dataConverter
@@ -24,6 +26,7 @@ class Diagnostics:
         self.w_lat, self.w_var = self.get_weights()
 
         self.diagnostics = []
+        self.plev_diagnostics = []
         diag_conf = self.conf['diagnostics']
         if diag_conf['use_spectrum_vis']:
             # save directory for spectra plots
@@ -31,11 +34,20 @@ class Diagnostics:
                              f'forecasts/spectra_{init_datetime}/')
             os.makedirs(plot_save_loc, exist_ok=True)
 
-            self.spectrum_vis = ZonalSpectrumVis(self.conf, self.w_lat, self.w_var,
+            spectrum_vis = ZonalSpectrumVis(self.conf, self.w_lat, self.w_var,
                                                  plot_save_loc)
-            self.diagnostics.append(self.spectrum_vis)
+            self.diagnostics.append(spectrum_vis)
+        
+        if diag_conf['use_KE_diagnostics']:
+            plot_save_loc = join(expandvars(self.conf['save_loc']), 
+                             f'forecasts/ke_{init_datetime}/')
+            os.makedirs(plot_save_loc, exist_ok=True)
+            os.makedirs(join(plot_save_loc, 'ke_spectra'), exist_ok=True)
+            os.makedirs(join(plot_save_loc, 'ke_diff'), exist_ok=True)
 
-
+            ke_vis = KE_Diagnostic(self.conf, self.w_lat, self.w_var,
+                                                 plot_save_loc)
+            self.plev_diagnostics.append(ke_vis)
 
     def __call__(self, pred, y, clim=None, transform=None, forecast_datetime=0):
         if transform is not None:
@@ -47,12 +59,21 @@ class Diagnostics:
             pred = pred - clim
             y = y - clim
 
+        metric_dict = {}
         # convert to xarray:
         pred_ds = self.converter.tensor_to_dataset(pred, [forecast_datetime])
         y_ds = self.converter.tensor_to_dataset(y, [forecast_datetime])
 
         for diagnostic in self.diagnostics:
             diagnostic(pred_ds, y_ds, forecast_datetime)
+
+        pred_pressure = self.converter.dataset_to_pressure_levels(pred_ds)
+        y_pressure = self.converter.dataset_to_pressure_levels(y_ds)
+
+        for diagnostic in self.plev_diagnostics:
+            metric_dict = metric_dict | diagnostic(pred_pressure, y_pressure, forecast_datetime)
+
+        return metric_dict
 
     def get_weights(self):
         """
@@ -72,6 +93,117 @@ class Diagnostics:
 
         return w_lat, w_var
 
+def calculate_KE(dataset):
+    wind_squared = (dataset.U ** 2 + dataset.V ** 2)
+    return -1 * 0.5 * wind_squared.integrate('plev') # negative needed because of doing integration 'backwards' could also reverse the plev coord
+class KE_Diagnostic:
+    def __init__(self, conf, w_lat, w_var, plot_save_loc):
+        self.conf = conf
+        self.w_lat = w_lat
+        self.plot_save_loc = plot_save_loc
+        
+        self.summary_plot_fhs = conf['diagnostics']['summary_plot_fhs']
+        for k, v in conf['diagnostics']['ke_vis'].items():
+            setattr(self, k, v)
+
+        if self.use_KE_spectrum_vis:
+            self.zonal_spectrum_calculator = ZonalEnergySpectrum('KE') 
+            if self.summary_plot_fhs:
+                self.KE_fig, self.KE_axs = plt.subplots(ncols=1, figsize=(5,5))
+                self.KE_axs = [self.KE_axs]
+        
+    def __call__(self, pred_ds, y_ds, fh):
+        '''
+        pressure level datasets
+        '''
+        pred_ke = calculate_KE(pred_ds).compute()
+        y_ke = calculate_KE(y_ds).compute()
+
+        if self.use_KE_spectrum_vis:
+            self.KE_spectrum_vis(pred_ke, y_ke, fh)
+        
+        if self.use_KE_difference_vis:
+            self.KE_difference_vis(pred_ke, y_ke)
+
+        metric_dict = self.avg_KE_metric(pred_ke, y_ke)
+        return metric_dict
+
+    def avg_KE_metric(self, pred_ke, y_ke):
+        diff = np.sqrt((pred_ke - y_ke) ** 2)
+        weighted = diff.weighted(self.w_lat).mean()
+        return {"avg_KE_difference": weighted.values}
+
+    def KE_difference_vis(self, pred_ke, y_ke):
+        ke_diff = pred_ke - y_ke
+
+        # Plotting
+        fig = plt.figure(figsize=(10, 6))
+        ax = fig.add_subplot(1, 1, 1, projection=ccrs.EckertIII())
+
+        # Plot data using colormesh
+        divnorm = colors.TwoSlopeNorm(vcenter=0.) #center cmap at 0
+        mesh = ax.pcolormesh(ke_diff.longitude, ke_diff.latitude, ke_diff.isel(datetime=0), 
+                             transform=ccrs.PlateCarree(), cmap='seismic', norm=divnorm)
+        ax.set_title(f"pred_ke - y_ke | fh={pred_ke.datetime.values[0]}")
+        # Add coastlines and gridlines
+        ax.coastlines()
+        ax.gridlines()
+
+        # Add colorbar
+        cbar = plt.colorbar(mesh, ax=ax, orientation='vertical', pad=0.05)
+
+        # save figure
+        filepath = join(self.plot_save_loc, 
+                         f'ke_diff/ke_diff_fh={pred_ke.datetime.values[0]}.pdf')
+        fig.savefig(filepath, format='pdf')
+        
+    def get_avg_spectrum_ke(self, da):
+        ds = xr.Dataset({"KE": da})
+        ds_spectrum = self.zonal_spectrum_calculator.compute(ds)
+        ds_spectrum = interpolate_spectral_frequencies(ds_spectrum, 'zonal_wavenumber')
+        ds_spectrum = ds_spectrum.weighted(self.w_lat).mean(dim='latitude')
+        return ds_spectrum
+    
+    def KE_spectrum_vis(self, pred_ke, y_ke, fh):
+        ###################### plot on summary plot ###########################
+        if fh in self.summary_plot_fhs: # plot some fhs onto a single plot
+            avg_pred_spectrum = self.get_avg_spectrum_ke(pred_ke)
+            avg_y_spectrum = self.get_avg_spectrum_ke(y_ke)
+
+            fh_idx = self.summary_plot_fhs.index(fh)
+            self.plot_avg_spectrum(avg_pred_spectrum, avg_y_spectrum, 
+                                       self.KE_fig, self.KE_axs, 
+                                       alpha=1 - fh_idx/len(self.summary_plot_fhs),
+                                       label=f'fh={fh}')
+            
+            if fh == self.summary_plot_fhs[-1]:
+                for ax in self.KE_axs:
+                    ax.legend()
+                self.KE_fig.savefig(join(self.plot_save_loc, f'spectra_summary'))
+                logger.info(f"saved summary plot to {join(self.plot_save_loc, f'spectra_summary')}")
+
+    def plot_avg_spectrum(self, avg_pred_spectrum, avg_y_spectrum, 
+                          fig, axs, alpha=1, label=None):
+        # copied from spectrum diagnostic function
+        for ax in axs:
+            ax.set_yscale('log')
+            ax.set_xscale('log')
+        curr_ax = 0
+        avg_pred_spectrum.plot(x='wavelength', 
+                                ax=axs[curr_ax], 
+                                color='r', 
+                                alpha=alpha,
+                                label=label)
+        avg_y_spectrum.plot(x='wavelength', ax=axs[curr_ax], color='0')
+
+        axs[curr_ax].set_title(f'KE Spectrum')
+        ticks = axs[curr_ax].get_xticks() # rescale x axis to km
+        axs[curr_ax].set_xticks(ticks, ticks/1000)
+        axs[curr_ax].autoscale_view()
+        axs[curr_ax].set_xlabel('Wavelength (km)')
+        axs[curr_ax].set_ylabel('Power')
+
+        return fig, axs
 
 class ZonalSpectrumVis:
     def __init__(self, conf, w_lat, w_var, plot_save_loc):
@@ -80,6 +212,7 @@ class ZonalSpectrumVis:
         self.conf = conf
         self.w_lat = w_lat
         self.plot_save_loc = plot_save_loc
+        self.summary_plot_fhs = conf['diagnostics']['summary_plot_fhs']
 
         # this replaces unpacking the dictionary (below)
         for k, v in conf['diagnostics']['spectrum_vis'].items():
@@ -126,7 +259,7 @@ class ZonalSpectrumVis:
         fig.savefig(join(self.plot_save_loc, 
                          f'spectra_t{avg_pred_spectrum.datetime.values[0]:03}'))
         
-        ###################### plot a summary plot ###########################
+        ###################### plot on summary plot ###########################
         if fh in self.summary_plot_fhs: # plot some fhs onto a single plot
             fh_idx = self.summary_plot_fhs.index(fh)
             self.plot_avg_spectrum(avg_pred_spectrum, avg_y_spectrum, 
@@ -279,3 +412,22 @@ def anomaly_correlation_coefficient(pred, true):
     acc = acc_numerator / (acc_denominator + epsilon)
 
     return acc.item()
+
+
+if __name__ == '__main__':
+    from os.path import join
+    import yaml
+
+    test_dir = "/glade/work/dkimpara/repos/global/miles-credit/results/test_files_quarter"
+    config = join(test_dir, 'model.yml')
+    with open(config) as cf:
+        conf = yaml.load(cf, Loader=yaml.FullLoader)
+
+    y_pred= torch.load(join(test_dir, "pred.pt"))
+    y = torch.load(join(test_dir, "y.pt"))
+
+    diagnostic = Diagnostics(conf, 0)
+
+    metrics = diagnostic(y_pred, y, forecast_datetime=1)
+    for k,v in metrics.items():
+        print(v)

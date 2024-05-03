@@ -562,14 +562,19 @@ def predict(rank, world_size, conf, pool, smm):
             print_str += f"MAE: {mae.item()} "
             print_str += f"ACC: {metrics_dict['acc']} "
             print_str += f"spectrumMSE: {metrics_dict['spectrum_mse']}"
-            logger.info(print_str)
+
             ############################################################################
             ############################################################################
             ############################# Compute Diagnostics ##########################
             ############################################################################
             
-            diagnostics(y_pred.float(), y.float(), forecast_datetime=forecast_hour)
+            diag_metrics = diagnostics(y_pred.float(), y.float(), forecast_datetime=forecast_hour)
+            metrics_dict = metrics_dict | diag_metrics
+            for key,value in diag_metrics.items(): # add metrics to the print str
+                print_str += f"{key}: {value}"
             
+            logger.info(print_str)
+
             ############################################################################
             ############################################################################
 
