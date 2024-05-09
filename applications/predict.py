@@ -63,6 +63,7 @@ from credit.models.checkpoint import (
     TorchFSDPCheckpointIO
 )
 from credit.mixed_precision import parse_dtype
+from credit.data_conversions import dataConverter
 
 # ---------- #
 from credit.visualization_tools import shared_mem_draw_wrapper
@@ -115,39 +116,6 @@ def split_and_reshape(tensor, conf):
     # return x, surf for B, c, lat, lon output
     return tensor_upper_air, tensor_single_level
 
-
-def make_xarray(pred, forecast_datetime, lat, lon, conf):
-
-    # subset upper air and surface variables
-    tensor_upper_air, tensor_single_level = split_and_reshape(pred, conf)
-
-    # save upper air variables
-    darray_upper_air = xr.DataArray(
-        tensor_upper_air,
-        dims=["datetime", "vars", "level", "lat", "lon"],
-        coords=dict(
-            vars=conf["data"]["variables"],
-            datetime=[forecast_datetime],
-            level=range(conf["model"]["levels"]),
-            lat=lat,
-            lon=lon,
-        ),
-    )
-
-    # save diagnostics and surface variables
-    darray_single_level = xr.DataArray(
-        tensor_single_level.squeeze(2),
-        dims=["datetime", "vars", "lat", "lon"],
-        coords=dict(
-            vars=conf["data"]["surface_variables"],
-            datetime=[forecast_datetime],
-            lat=lat,
-            lon=lon,
-        ),
-    )
-
-    # return x-arrays as outputs
-    return darray_upper_air, darray_single_level
 
 
 def save_netcdf(list_darray_upper_air, list_darray_single_level, conf):
@@ -445,6 +413,9 @@ def predict(rank, world_size, conf, pool, smm):
     metrics_results = defaultdict(list)
     loss_fn = VariableTotalLoss2D(conf, validation=True)
 
+    # set up data converter to convert to xarray
+    data_converter = dataConverter(conf)
+
     # get lat/lons from x-array
     latlons = xr.open_dataset(conf["loss"]["latitude_weights"])
 
@@ -501,6 +472,7 @@ def predict(rank, world_size, conf, pool, smm):
                 x = model.concat_and_reshape(batch["x"], batch["x_surf"]).to(device)
 
                 # setup save directory for images
+                # !!! not actually the init time, it is the first FORECAST time
                 init_time = datetime.datetime.utcfromtimestamp(date_time).strftime(
                     "%Y-%m-%dT%HZ"
                 )
@@ -508,8 +480,17 @@ def predict(rank, world_size, conf, pool, smm):
                     os.path.expandvars(conf["save_loc"]),
                     f"forecasts/images_{init_time}",
                 )
+                dataset_save_loc = os.path.join(
+                    os.path.expandvars(conf["save_loc"]),
+                    f"forecasts/xarray_{init_time}",
+                )
+                os.makedirs(dataset_save_loc, exist_ok=True)
                 if N_vars > 0:
                     os.makedirs(img_save_loc, exist_ok=True)
+                
+                # initialize diagnostics
+                diagnostics = Diagnostics(conf, init_time, data_converter)
+
 
             # Add statics
             if "static" in batch:
@@ -522,8 +503,6 @@ def predict(rank, world_size, conf, pool, smm):
                 toa = batch["TOA"].to(device)
                 x = torch.cat([x, toa.unsqueeze(1)], dim=1)
 
-            # initialize diagnostics
-            diagnostics = Diagnostics(conf, init_time)
 
             y = model.concat_and_reshape(batch["y"], batch["y_surf"]).to(device)
             # Predict and convert to real space for laplace filter and metrics
@@ -565,31 +544,37 @@ def predict(rank, world_size, conf, pool, smm):
 
             ############################################################################
             ############################################################################
+
+            # convert the current step result as x-array
+            darray_upper_air, darray_single_level = (
+                data_converter.tensor_to_dataArray(y_pred.float(), [utc_datetime]))
+            # collect x-arrays for upper air and surface variables
+            list_darray_upper_air.append(darray_upper_air)
+            list_darray_single_level.append(darray_single_level)
+            
+            # convert to datasets and save out
+            pred_ds = data_converter.dataArrays_to_dataset(darray_upper_air, darray_single_level)
+            y_ds = data_converter.tensor_to_dataset(y.float(), [utc_datetime])
+
+            if conf["predict"]["save_format"]:
+                pred_ds.to_netcdf(
+                                path=os.path.join(dataset_save_loc, f"pred_{utc_datetime.strftime('%Y-%m-%d %H:%M:%S')}.nc"),
+                                format="NETCDF4",
+                                engine="netcdf4",
+                                encoding={variable: {"zlib": True, "complevel": 1} for variable in pred_ds.data_vars}
+                )
+
+            ############################################################################
+            ############################################################################
             ############################# Compute Diagnostics ##########################
             ############################################################################
-            
-            diag_metrics = diagnostics(y_pred.float(), y.float(), forecast_datetime=forecast_hour)
+            diag_metrics = diagnostics(pred_ds, y_ds, 
+                                       forecast_datetime=forecast_hour)
             metrics_dict = metrics_dict | diag_metrics
             for key,value in diag_metrics.items(): # add metrics to the print str
                 print_str += f"{key}: {value}"
             
             logger.info(print_str)
-
-            ############################################################################
-            ############################################################################
-
-            # convert the current step result as x-array
-            darray_upper_air, darray_single_level = make_xarray(
-                y_pred,
-                utc_datetime,
-                latlons.latitude.values,
-                latlons.longitude.values,
-                conf,
-            )
-
-            # collect x-arrays for upper air and surface variables
-            list_darray_upper_air.append(darray_upper_air)
-            list_darray_single_level.append(darray_single_level)
 
             # ---------------------------------------------------------------------------------- #
             # Draw upper air variables
@@ -873,7 +858,7 @@ if __name__ == "__main__":
                 filename_bundle,
             ) = predict(0, 1, conf, pool, smm)
 
-        # # save forecast results to file
+        # # save forecast results to file DEPRECATED - saving in predict loop now
         # if "save_format" in conf["predict"] and conf["predict"]["save_format"] == "nc" and not no_data:
         #     logger.info("Save forecasts as netCDF format")
         #     filename_netcdf = save_netcdf(

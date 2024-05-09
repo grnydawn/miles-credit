@@ -8,7 +8,6 @@ from matplotlib import colors
 import cartopy.crs as ccrs
 import torch
 
-from credit.data_conversions import dataConverter
 from weatherbench2.derived_variables import ZonalEnergySpectrum
 
 import logging
@@ -18,17 +17,17 @@ class Diagnostics:
     """
     program flow: this class, sets up necessary pipeline, converts to xarray and/or pressure levels, calls diagnostics
     """
-    def __init__(self, conf, init_datetime):
+    def __init__(self, conf, init_datetime, data_converter):
+        '''data_converter is a dataConverter object'''
         self.conf = conf
-        # setup data converter
-        self.converter = dataConverter(self.conf)
-
+        self.converter = data_converter
         self.w_lat, self.w_var = self.get_weights()
 
         self.diagnostics = []
         self.plev_diagnostics = []
         diag_conf = self.conf['diagnostics']
         if diag_conf['use_spectrum_vis']:
+            logger.info("computing spectrum visualizations")
             # save directory for spectra plots
             plot_save_loc = join(expandvars(self.conf['save_loc']), 
                              f'forecasts/spectra_{init_datetime}/')
@@ -39,6 +38,7 @@ class Diagnostics:
             self.diagnostics.append(spectrum_vis)
         
         if diag_conf['use_KE_diagnostics']:
+            logger.info("computing KE visualizations")
             plot_save_loc = join(expandvars(self.conf['save_loc']), 
                              f'forecasts/ke_{init_datetime}/')
             os.makedirs(plot_save_loc, exist_ok=True)
@@ -49,21 +49,11 @@ class Diagnostics:
                                                  plot_save_loc)
             self.plev_diagnostics.append(ke_vis)
 
-    def __call__(self, pred, y, clim=None, transform=None, forecast_datetime=0):
-        if transform is not None:
-            pred = transform(pred)
-            y = transform(y)
-
-        if clim is not None:
-            clim = clim.to(device=y.device).unsqueeze(0)
-            pred = pred - clim
-            y = y - clim
-
+    def __call__(self, pred_ds, y_ds,forecast_datetime=0):
         metric_dict = {}
         # convert to xarray: # move out of these classes, have classes take in datasets only
-        # have classes take in a converter object to init?
-        pred_ds = self.converter.tensor_to_dataset(pred, [forecast_datetime])
-        y_ds = self.converter.tensor_to_dataset(y, [forecast_datetime])
+        # pred_ds = self.converter.tensor_to_dataset(pred, [forecast_datetime])
+        # y_ds = self.converter.tensor_to_dataset(y, [forecast_datetime])
 
         for diagnostic in self.diagnostics:
             diagnostic(pred_ds, y_ds, forecast_datetime)
@@ -167,7 +157,6 @@ class KE_Diagnostic:
     
     def KE_spectrum_vis(self, pred_ke, y_ke, fh):
         ###################### plot on summary plot ###########################
-        logger.info(f'{type(fh)}')
         if int(fh) in self.summary_plot_fhs: # plot some fhs onto a single plot
             avg_pred_spectrum = self.get_avg_spectrum_ke(pred_ke)
             avg_y_spectrum = self.get_avg_spectrum_ke(y_ke)
@@ -177,12 +166,11 @@ class KE_Diagnostic:
                                                             self.KE_fig, self.KE_axs, 
                                                             alpha=1 - fh_idx/len(self.summary_plot_fhs),
                                                             label=f'fh={fh}')
-            
-            if fh == self.summary_plot_fhs[-1]:
-                for ax in self.KE_axs:
-                    ax.legend()
-                self.KE_fig.savefig(join(self.plot_save_loc, f'spectra_summary'))
-                logger.info(f"saved summary plot to {join(self.plot_save_loc, f'spectra_summary')}")
+            #if fh == self.summary_plot_fhs[-1]:
+            for ax in self.KE_axs: # overwrite every time in case of crash
+                ax.legend()
+            self.KE_fig.savefig(join(self.plot_save_loc, f'ke_spectra_summary{fh}'))
+            logger.info(f"saved summary plot to {join(self.plot_save_loc, f'ke_spectra_summary')}")
 
     def plot_avg_spectrum(self, avg_pred_spectrum, avg_y_spectrum, 
                           fig, axs, alpha=1, label=None):
@@ -268,9 +256,8 @@ class ZonalSpectrumVis:
                                        self.summary_fig, self.summary_axs, 
                                        alpha=1 - fh_idx/len(self.summary_plot_fhs),
                                        label=f'fh={fh}')
-            
             if fh == self.summary_plot_fhs[-1]:
-                for ax in self.summary_axs:
+                for ax in self.summary_axs: # overwrite every time in case of crash
                     ax.legend()
                 self.summary_fig.savefig(join(self.plot_save_loc, f'spectra_summary'))
                 logger.info(f"saved summary plot to {join(self.plot_save_loc, f'spectra_summary')}")
@@ -419,6 +406,8 @@ def anomaly_correlation_coefficient(pred, true):
 if __name__ == '__main__':
     from os.path import join
     import yaml
+    from credit.data_conversions import dataConverter
+
 
     test_dir = "/glade/work/dkimpara/repos/global/miles-credit/results/test_files_quarter"
     config = join(test_dir, 'model.yml')
@@ -428,9 +417,12 @@ if __name__ == '__main__':
     y_pred= torch.load(join(test_dir, "pred.pt"))
     y = torch.load(join(test_dir, "y.pt"))
 
-    diagnostic = Diagnostics(conf, 0)
-
-    metrics = diagnostic(y_pred, y, forecast_datetime=1)
-    metrics = diagnostic(y, y_pred, forecast_datetime=2)
+    data_converter = dataConverter(conf)
+    diagnostic = Diagnostics(conf, 0, data_converter = dataConverter(conf))
+    
+    pred_ds = data_converter.tensor_to_dataset(y_pred.float(), [0])
+    y_ds = data_converter.tensor_to_dataset(y.float(), [0])
+    metrics = diagnostic(pred_ds, y_ds, forecast_datetime=1)
+    metrics = diagnostic(y_ds, pred_ds, forecast_datetime=2)
     for k,v in metrics.items():
         print(v)

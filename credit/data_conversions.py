@@ -89,6 +89,7 @@ class dataConverter:
         return darray_upper_air, darray_single_level
 
     def dataArrays_to_dataset(self, darray_upper_air, darray_single_level):
+        #dArrays need to have a time dim
         ds_x = darray_upper_air.to_dataset(dim="vars")
         ds_surf = darray_single_level.to_dataset(dim="vars")
         ds = xr.merge([ds_x, ds_surf])
