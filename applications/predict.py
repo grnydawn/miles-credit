@@ -685,7 +685,7 @@ def predict(rank, world_size, conf, pool, smm):
             else:
                 # use multiple past forecast steps as inputs
                 static_dim_size = abs(x.shape[1] - y_pred.shape[1])  # static channels will get updated on next pass
-                x_detach = x[:, :-static_dim_size, 1:].detach()
+                x_detach = x[:, :-static_dim_size, 1:].detach() if static_dim_size else x[:,:,1:].detach() # if static_dim_size=0 then :0 gives empty range
                 x = torch.cat([x_detach, y_pred.detach()], dim=2)
 
             # Explicitly release GPU memory

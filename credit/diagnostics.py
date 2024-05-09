@@ -60,16 +60,17 @@ class Diagnostics:
             y = y - clim
 
         metric_dict = {}
-        # convert to xarray:
+        # convert to xarray: # move out of these classes, have classes take in datasets only
+        # have classes take in a converter object to init?
         pred_ds = self.converter.tensor_to_dataset(pred, [forecast_datetime])
         y_ds = self.converter.tensor_to_dataset(y, [forecast_datetime])
 
         for diagnostic in self.diagnostics:
             diagnostic(pred_ds, y_ds, forecast_datetime)
 
-        pred_pressure = self.converter.dataset_to_pressure_levels(pred_ds)
-        y_pressure = self.converter.dataset_to_pressure_levels(y_ds)
-
+        if self.plev_diagnostics:
+            pred_pressure = self.converter.dataset_to_pressure_levels(pred_ds).compute()
+            y_pressure = self.converter.dataset_to_pressure_levels(y_ds).compute()
         for diagnostic in self.plev_diagnostics:
             metric_dict = metric_dict | diagnostic(pred_pressure, y_pressure, forecast_datetime)
 
@@ -154,7 +155,7 @@ class KE_Diagnostic:
 
         # save figure
         filepath = join(self.plot_save_loc, 
-                         f'ke_diff/ke_diff_fh={pred_ke.datetime.values[0]}.pdf')
+                         f'ke_diff/ke_diff_fh={pred_ke.datetime.values[0]:03}.pdf')
         fig.savefig(filepath, format='pdf')
         
     def get_avg_spectrum_ke(self, da):
@@ -166,15 +167,16 @@ class KE_Diagnostic:
     
     def KE_spectrum_vis(self, pred_ke, y_ke, fh):
         ###################### plot on summary plot ###########################
-        if fh in self.summary_plot_fhs: # plot some fhs onto a single plot
+        logger.info(f'{type(fh)}')
+        if int(fh) in self.summary_plot_fhs: # plot some fhs onto a single plot
             avg_pred_spectrum = self.get_avg_spectrum_ke(pred_ke)
             avg_y_spectrum = self.get_avg_spectrum_ke(y_ke)
 
             fh_idx = self.summary_plot_fhs.index(fh)
-            self.plot_avg_spectrum(avg_pred_spectrum, avg_y_spectrum, 
-                                       self.KE_fig, self.KE_axs, 
-                                       alpha=1 - fh_idx/len(self.summary_plot_fhs),
-                                       label=f'fh={fh}')
+            self.KE_fig, self.KE_axs = self.plot_avg_spectrum(avg_pred_spectrum, avg_y_spectrum, 
+                                                            self.KE_fig, self.KE_axs, 
+                                                            alpha=1 - fh_idx/len(self.summary_plot_fhs),
+                                                            label=f'fh={fh}')
             
             if fh == self.summary_plot_fhs[-1]:
                 for ax in self.KE_axs:
@@ -262,7 +264,7 @@ class ZonalSpectrumVis:
         ###################### plot on summary plot ###########################
         if fh in self.summary_plot_fhs: # plot some fhs onto a single plot
             fh_idx = self.summary_plot_fhs.index(fh)
-            self.plot_avg_spectrum(avg_pred_spectrum, avg_y_spectrum, 
+            self.summary_fig, self.summary_axs = self.plot_avg_spectrum(avg_pred_spectrum, avg_y_spectrum, 
                                        self.summary_fig, self.summary_axs, 
                                        alpha=1 - fh_idx/len(self.summary_plot_fhs),
                                        label=f'fh={fh}')
@@ -429,5 +431,6 @@ if __name__ == '__main__':
     diagnostic = Diagnostics(conf, 0)
 
     metrics = diagnostic(y_pred, y, forecast_datetime=1)
+    metrics = diagnostic(y, y_pred, forecast_datetime=2)
     for k,v in metrics.items():
         print(v)
