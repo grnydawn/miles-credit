@@ -471,10 +471,11 @@ def predict(rank, world_size, conf, pool, smm):
                 # Initialize x and x_surf with the first time step
                 x = model.concat_and_reshape(batch["x"], batch["x_surf"]).to(device)
 
+                list_datasets = []
                 # setup save directory for images
                 # !!! not actually the init time, it is the first FORECAST time
                 init_time = datetime.datetime.utcfromtimestamp(date_time).strftime(
-                    "%Y-%m-%dT%HZ"
+                    "%Y-%m-%d %H:%M:%S"
                 )
                 img_save_loc = os.path.join(
                     os.path.expandvars(conf["save_loc"]),
@@ -482,7 +483,7 @@ def predict(rank, world_size, conf, pool, smm):
                 )
                 dataset_save_loc = os.path.join(
                     os.path.expandvars(conf["save_loc"]),
-                    f"forecasts/xarray_{init_time}",
+                    f"forecasts/netcdf",
                 )
                 os.makedirs(dataset_save_loc, exist_ok=True)
                 if N_vars > 0:
@@ -556,17 +557,11 @@ def predict(rank, world_size, conf, pool, smm):
             pred_ds = data_converter.dataArrays_to_dataset(darray_upper_air, darray_single_level)
             y_ds = data_converter.tensor_to_dataset(y.float(), [utc_datetime])
 
-            if conf["predict"]["save_format"]:
-                pred_ds.to_netcdf(
-                                path=os.path.join(dataset_save_loc, f"pred_{utc_datetime.strftime('%Y-%m-%d %H:%M:%S')}.nc"),
-                                format="NETCDF4",
-                                engine="netcdf4",
-                                encoding={variable: {"zlib": True, "complevel": 1} for variable in pred_ds.data_vars}
-                )
+            list_datasets.append(pred_ds)
 
             ############################################################################
             ############################################################################
-            ############################# Compute Diagnostics ##########################
+            ############################# Compute KE/spectra Diagnostics ###############
             ############################################################################
             diag_metrics = diagnostics(pred_ds, y_ds, 
                                        forecast_datetime=forecast_hour)
@@ -687,9 +682,12 @@ def predict(rank, world_size, conf, pool, smm):
                 # save forecast results to file
                 if "save_format" in conf["predict"] and conf["predict"]["save_format"] == "nc":
                     logger.info("Save forecasts as netCDF format")
-                    filename_netcdf = save_netcdf(
-                        list_darray_upper_air, list_darray_single_level, conf
-                    )
+                    xr.merge(list_datasets).to_netcdf(
+                                path=os.path.join(dataset_save_loc, f"pred_{init_time}-{utc_datetime.strftime('%Y-%m-%d %H:%M:%S')}.nc"),
+                                format="NETCDF4",
+                                engine="netcdf4",
+                                encoding={variable: {"zlib": True, "complevel": 1} for variable in pred_ds.data_vars}
+                        )
                 else:
                     logger.info("Warning: forecast results will not be saved")
 

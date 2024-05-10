@@ -37,12 +37,11 @@ class Diagnostics:
                                                  plot_save_loc)
             self.diagnostics.append(spectrum_vis)
         
-        if diag_conf['use_KE_diagnostics']:
+        if diag_conf['use_KE_diagnostics']: # only plotting summary spectra for KE
             logger.info("computing KE visualizations")
             plot_save_loc = join(expandvars(self.conf['save_loc']), 
                              f'forecasts/ke_{init_datetime}/')
             os.makedirs(plot_save_loc, exist_ok=True)
-            os.makedirs(join(plot_save_loc, 'ke_spectra'), exist_ok=True)
             os.makedirs(join(plot_save_loc, 'ke_diff'), exist_ok=True)
 
             ke_vis = KE_Diagnostic(self.conf, self.w_lat, self.w_var,
@@ -135,7 +134,8 @@ class KE_Diagnostic:
         divnorm = colors.TwoSlopeNorm(vcenter=0.) #center cmap at 0
         mesh = ax.pcolormesh(ke_diff.longitude, ke_diff.latitude, ke_diff.isel(datetime=0), 
                              transform=ccrs.PlateCarree(), cmap='seismic', norm=divnorm)
-        ax.set_title(f"pred_ke - y_ke | fh={pred_ke.datetime.values[0]}")
+        datetime_str = np.datetime_as_string(pred_ke.datetime.values[0], unit='h', timezone='UTC')
+        ax.set_title(f"pred_ke - y_ke | {datetime_str}")
         # Add coastlines and gridlines
         ax.coastlines()
         ax.gridlines()
@@ -145,7 +145,7 @@ class KE_Diagnostic:
 
         # save figure
         filepath = join(self.plot_save_loc, 
-                         f'ke_diff/ke_diff_fh={pred_ke.datetime.values[0]:03}.pdf')
+                         f'ke_diff/ke_diff_{datetime_str}.pdf')
         fig.savefig(filepath, format='pdf')
         
     def get_avg_spectrum_ke(self, da):
@@ -244,10 +244,12 @@ class ZonalSpectrumVis:
         fig, axs = plt.subplots(
             ncols=len(self.atmos_variables) * len(self.atmos_levels) + len(self.single_level_variables),
                       figsize=self.figsize)
-        fig.suptitle(f't={avg_pred_spectrum.datetime.values[0]}')
+        datetime_str = np.datetime_as_string(pred_ds.datetime.values[0], unit='h', timezone='UTC')
+
+        fig.suptitle(f't={datetime_str}')
         fig, axs = self.plot_avg_spectrum(avg_pred_spectrum, avg_y_spectrum, fig, axs)
         fig.savefig(join(self.plot_save_loc, 
-                         f'spectra_t{avg_pred_spectrum.datetime.values[0]:03}'))
+                         f'spectra_{datetime_str}'))
         
         ###################### plot on summary plot ###########################
         if fh in self.summary_plot_fhs: # plot some fhs onto a single plot
@@ -256,11 +258,10 @@ class ZonalSpectrumVis:
                                        self.summary_fig, self.summary_axs, 
                                        alpha=1 - fh_idx/len(self.summary_plot_fhs),
                                        label=f'fh={fh}')
-            if fh == self.summary_plot_fhs[-1]:
-                for ax in self.summary_axs: # overwrite every time in case of crash
-                    ax.legend()
-                self.summary_fig.savefig(join(self.plot_save_loc, f'spectra_summary'))
-                logger.info(f"saved summary plot to {join(self.plot_save_loc, f'spectra_summary')}")
+            for ax in self.summary_axs: # overwrite every time in case of crash
+                ax.legend()
+            self.summary_fig.savefig(join(self.plot_save_loc, f'spectra_summary'))
+            logger.info(f"saved summary plot to {join(self.plot_save_loc, f'spectra_summary')}")
 
     def plot_avg_spectrum(self, avg_pred_spectrum, avg_y_spectrum, 
                           fig, axs, alpha=1, label=None):
@@ -407,6 +408,7 @@ if __name__ == '__main__':
     from os.path import join
     import yaml
     from credit.data_conversions import dataConverter
+    import datetime
 
 
     test_dir = "/glade/work/dkimpara/repos/global/miles-credit/results/test_files_quarter"
@@ -420,9 +422,11 @@ if __name__ == '__main__':
     data_converter = dataConverter(conf)
     diagnostic = Diagnostics(conf, 0, data_converter = dataConverter(conf))
     
-    pred_ds = data_converter.tensor_to_dataset(y_pred.float(), [0])
-    y_ds = data_converter.tensor_to_dataset(y.float(), [0])
+    time = datetime.datetime.now()
+    pred_ds = data_converter.tensor_to_dataset(y_pred.float(), [time])
+    y_ds = data_converter.tensor_to_dataset(y.float(), [time])
     metrics = diagnostic(pred_ds, y_ds, forecast_datetime=1)
-    metrics = diagnostic(y_ds, pred_ds, forecast_datetime=2)
+    metrics = diagnostic(pred_ds, y_ds + 1, forecast_datetime=2)
+    metrics = diagnostic(y_ds, pred_ds, forecast_datetime=3)
     for k,v in metrics.items():
         print(v)
