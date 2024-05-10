@@ -132,13 +132,14 @@ visualization:
     video_format: 'mp4' # gif, mp4, none
 
 diagnostics:
-    summary_plot_fhs: [1, 3, 5, 7] # what forecast hours to plot as a summary plot
+    summary_plot_fhs: [1, 20, 60, 120] # what forecast hours to plot as a summary plot
     use_spectrum_vis: False
     spectrum_vis:
         atmos_variables: ["U", "V", "T", "Q"]
         atmos_levels: [8, 10]
         single_level_variables: ["SP", "t2m", "Z500"]
         figsize: () # empty tuple for auto
+    plev_summary_only: True  # pressure level conversion is really slow, use this option to compute pressure level diagnostics only at summary fhs (above)
     use_KE_diagnostics: True
     ke_vis:
         use_KE_spectrum_vis: True

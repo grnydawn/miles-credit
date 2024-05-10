@@ -491,8 +491,7 @@ def predict(rank, world_size, conf, pool, smm):
             ############################################################################
             ############################# Compute KE/spectra Diagnostics ###############
             ############################################################################
-            diag_metrics = diagnostics(pred_ds, y_ds, 
-                                       forecast_datetime=forecast_hour)
+            diag_metrics = diagnostics(pred_ds, y_ds, forecast_hour)
             metrics_dict = metrics_dict | diag_metrics
             for key,value in diag_metrics.items(): # add metrics to the print str
                 print_str += f"{key}: {value}"
