@@ -131,7 +131,7 @@ class KE_Diagnostic:
             self.KE_spectrum_vis(pred_ke, y_ke, fh)
 
         if self.use_KE_difference_vis:
-            self.KE_difference_vis(pred_ke, y_ke)
+            self.KE_difference_vis(pred_ke, y_ke, fh)
 
         metric_dict = self.avg_KE_metric(pred_ke, y_ke)
         return metric_dict
@@ -141,7 +141,7 @@ class KE_Diagnostic:
         weighted = diff.weighted(self.w_lat).mean()
         return {"avg_KE_difference": weighted.values}
 
-    def KE_difference_vis(self, pred_ke, y_ke):
+    def KE_difference_vis(self, pred_ke, y_ke, fh):
         ke_diff = pred_ke - y_ke
 
         # Plotting
@@ -161,7 +161,7 @@ class KE_Diagnostic:
         datetime_str = np.datetime_as_string(
             pred_ke.datetime.values[0], unit="h", timezone="UTC"
         )
-        ax.set_title(f"pred_ke - y_ke | {datetime_str}")
+        ax.set_title(f"pred_ke - y_ke | fh={fh} {datetime_str}")
         # Add coastlines and gridlines
         ax.coastlines()
         ax.gridlines()
@@ -302,7 +302,7 @@ class ZonalSpectrumVis:
             pred_ds.datetime.values[0], unit="h", timezone="UTC"
         )
 
-        fig.suptitle(f"t={datetime_str}")
+        fig.suptitle(f"t={datetime_str}, fh={fh}")
         fig, axs = self.plot_avg_spectrum(avg_pred_spectrum, avg_y_spectrum, fig, axs)
         fig.savefig(join(self.plot_save_loc, f"spectra_{datetime_str}"))
 

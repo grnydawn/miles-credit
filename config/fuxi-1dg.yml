@@ -139,8 +139,8 @@ diagnostics:
         atmos_levels: [8, 10]
         single_level_variables: ["SP", "t2m", "Z500"]
         figsize: () # empty tuple for auto
-    plev_summary_only: True  # pressure level conversion is really slow, use this option to compute pressure level diagnostics only at summary fhs (above)
-    use_KE_diagnostics: True
+    plev_summary_only: True  # pressure level conversion is really slow, use this option to compute pressure level diagnostics only at summary fhs (above), will disable KE metrics output
+    use_KE_diagnostics: True # disable all KE diagnostics including KE metrics
     ke_vis:
         use_KE_spectrum_vis: True
         use_KE_difference_vis: True
