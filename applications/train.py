@@ -75,7 +75,7 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
     forecast_len = conf["data"]["forecast_len"]
     valid_history_len = conf["data"]["valid_history_len"]
     valid_forecast_len = conf["data"]["valid_forecast_len"]
-    time_step = None if "time_step" not in conf["data"] else conf["data"]["time_step"]
+    skip_periods = None if "skip_periods" not in conf["data"] else conf["data"]["skip_periods"]
     one_shot = None if "one_shot" not in conf["data"] else conf["data"]["one_shot"]
 
     history_len = history_len if is_train else valid_history_len
@@ -96,7 +96,7 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
             filenames=files,
             history_len=history_len,
             forecast_len=forecast_len,
-            skip_periods=time_step,
+            skip_periods=skip_periods,
             one_shot=one_shot,
             transform=transforms
         )
