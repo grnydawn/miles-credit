@@ -1,3 +1,5 @@
+import os
+import copy
 import torch
 import logging
 import torch.nn.functional as F
@@ -11,7 +13,6 @@ from credit.models.base_model import BaseModel
 logger = logging.getLogger(__name__)
 
 # helpers
-
 
 def cast_tuple(val, length=1):
     return val if isinstance(val, tuple) else ((val,) * length)
@@ -109,25 +110,20 @@ class CrossEmbedLayer(nn.Module):
 
 # dynamic positional bias
 
-class DynamicPositionBias(nn.Module):
-    def __init__(self, dim):
-        super(DynamicPositionBias, self).__init__()
-        self.layers = nn.Sequential(
-            nn.Linear(2, dim),
-            nn.LayerNorm(dim),
-            nn.ReLU(),
-            nn.Linear(dim, dim),
-            nn.LayerNorm(dim),
-            nn.ReLU(),
-            nn.Linear(dim, dim),
-            nn.LayerNorm(dim),
-            nn.ReLU(),
-            nn.Linear(dim, 1),
-            Rearrange('... () -> ...')
-        )
-
-    def forward(self, x):
-        return self.layers(x)
+def DynamicPositionBias(dim):
+    return nn.Sequential(
+        nn.Linear(2, dim),
+        nn.LayerNorm(dim),
+        nn.ReLU(),
+        nn.Linear(dim, dim),
+        nn.LayerNorm(dim),
+        nn.ReLU(),
+        nn.Linear(dim, dim),
+        nn.LayerNorm(dim),
+        nn.ReLU(),
+        nn.Linear(dim, 1),
+        Rearrange('... () -> ...')
+    )
 
 
 # transformer classes
@@ -145,19 +141,14 @@ class LayerNorm(nn.Module):
         return (x - mean) / (var + self.eps).sqrt() * self.g + self.b
 
 
-class FeedForward(nn.Module):
-    def __init__(self, dim, mult=4, dropout=0.):
-        super(FeedForward, self).__init__()
-        self.layers = nn.Sequential(
-            LayerNorm(dim),
-            nn.Conv2d(dim, dim * mult, 1),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Conv2d(dim * mult, dim, 1)
-        )
-
-    def forward(self, x):
-        return self.layers(x)
+def FeedForward(dim, mult=4, dropout=0.):
+    return nn.Sequential(
+        LayerNorm(dim),
+        nn.Conv2d(dim, dim * mult, 1),
+        nn.GELU(),
+        nn.Dropout(dropout),
+        nn.Conv2d(dim * mult, dim, 1)
+    )
 
 
 class Attention(nn.Module):
@@ -453,6 +444,7 @@ class CrossFormer(BaseModel):
         k4 = integrate_step(x, k3, 1.0)  # State at i + 1
 
         return (k1 + 2 * k2 + 2 * k3 + k4) / 6
+
 
 
 if __name__ == "__main__":

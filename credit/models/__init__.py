@@ -5,6 +5,7 @@ from importlib.metadata import version
 
 # Import model classes
 from credit.models.crossformer import CrossFormer
+from credit.models.crossformer_may1 import CrossFormer as CrossFormerDep
 from credit.models.simple_vit import SimpleViT
 from credit.models.cube_vit import CubeViT
 from credit.models.vit2d import ViT2D
@@ -23,6 +24,7 @@ model_types = {
     "simple-vit": (SimpleViT, "Loading a simplified vit rotary transformer architecture ..."),
     "cube-vit": (CubeViT, "Loading a simplified vit rotary transformer architecture with a 3D conv tokenizer ..."),
     "crossformer": (CrossFormer, "Loading the CrossFormer model with a conv decoder head and skip connections ..."),
+    "crossformer-deprecated": (CrossFormerDep, "Loading the CrossFormer model with a conv decoder head and skip connections ..."),
     "unet": (SegmentationModel, "Loading a unet model"),
     "fuxi": (Fuxi, "Loading Fuxi Model")
 } 

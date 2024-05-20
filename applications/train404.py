@@ -1,7 +1,6 @@
 import warnings
 import os
 import sys
-import glob
 import yaml
 import wandb
 import optuna
@@ -33,14 +32,13 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
    apply_activation_checkpointing,
 )
 from torchsummary import summary
-
-from credit.models import load_model
-from credit.loss import VariableTotalLoss2D
-from credit.data import ERA5Dataset, Dataset_BridgeScaler
-from credit.transforms import load_transforms
+from credit.models.unet404 import SegmentationModel
+from credit.loss404 import VariableTotalLoss2D
+from credit.data import CONUS404Dataset
+from credit.transforms404 import NormalizeState, ToTensor
 from credit.scheduler import load_scheduler, annealed_probability
-from credit.trainer import Trainer
-from credit.metrics import LatWeightedMetrics
+from credit.trainer404 import Trainer
+from credit.metrics404 import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything
 from credit.models.checkpoint import (
@@ -70,36 +68,32 @@ def setup(rank, world_size, mode):
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
 
-def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
+def load_dataset_and_sampler(conf, world_size, rank, is_train, seed=42):
+    from torchvision import transforms
     history_len = conf["data"]["history_len"]
     forecast_len = conf["data"]["forecast_len"]
     valid_history_len = conf["data"]["valid_history_len"]
     valid_forecast_len = conf["data"]["valid_forecast_len"]
-    time_step = None if "time_step" not in conf["data"] else conf["data"]["time_step"]
-    one_shot = None if "one_shot" not in conf["data"] else conf["data"]["one_shot"]
+    # time_step = None if "time_step" not in conf["data"] else conf["data"]["time_step"]
+    # one_shot = None if "one_shot" not in conf["data"] else conf["data"]["one_shot"]
 
     history_len = history_len if is_train else valid_history_len
     forecast_len = forecast_len if is_train else valid_forecast_len
     shuffle = is_train
     name = "Train" if is_train else "Valid"
 
-    transforms = load_transforms(conf)
+    transforms = transforms.Compose([
+        NormalizeState(conf),
+        ToTensor(conf)
+    ])
 
-    if conf["data"]["scaler_type"] == "quantile-cached":
-        dataset = Dataset_BridgeScaler(
-            conf,
-            conf_dataset='bs_years_train' if is_train else 'bs_years_val',
-            transform=transforms
-        )
-    else:
-        dataset = ERA5Dataset(
-            filenames=files,
-            history_len=history_len,
-            forecast_len=forecast_len,
-            skip_periods=time_step,
-            one_shot=one_shot,
-            transform=transforms
-        )
+    dataset = CONUS404Dataset(
+        zarrpath="/glade/campaign/ral/risc/DATA/conus404/zarr",
+        varnames=conf['data']['variables'],
+        history_len=conf['data']['history_len'],
+        forecast_len=conf['data']['forecast_len'],
+        transform=transforms
+    )
 
     sampler = DistributedSampler(
         dataset,
@@ -109,7 +103,7 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
         shuffle=shuffle,
         drop_last=True
     )
-    logging.info(f" Loaded a {name} ERA dataset, and a distributed sampler (forecast length = {forecast_len + 1})")
+    logging.info(f" Loaded a {name} ERA dataset, and a distributed sampler (forecast length = {forecast_len})")
 
     return dataset, sampler
 
@@ -121,19 +115,15 @@ def distributed_model_wrapper(conf, neural_network, device):
         # Define the sharding policies
 
         if "crossformer" in conf["model"]["type"]:
-            from credit.models.crossformer import (
-                Attention, DynamicPositionBias, FeedForward, CrossEmbedLayer
-            )
-            transformer_layers_cls = {Attention, DynamicPositionBias, FeedForward, CrossEmbedLayer}
+            from credit.models.crossformer_skip import Attention as Attend
         elif "fuxi" in conf["model"]["type"]:
-            from timm.models.swin_transformer_v2 import SwinTransformerV2Stage
-            transformer_layers_cls = {SwinTransformerV2Stage}
+            from credit.models.fuxi import UTransformer as Attend
         else:
             raise OSError("You asked for FSDP but only crossformer and fuxi are currently supported.")
 
         auto_wrap_policy1 = functools.partial(
             transformer_auto_wrap_policy,
-            transformer_layer_cls=transformer_layers_cls
+            transformer_layer_cls={Attend}
         )
 
         auto_wrap_policy2 = functools.partial(
@@ -190,7 +180,7 @@ def distributed_model_wrapper(conf, neural_network, device):
                 checkpoint_impl=CheckpointImpl.NO_REENTRANT,
             )
 
-            check_fn = lambda submodule: any(isinstance(submodule, cls) for cls in transformer_layers_cls)
+            check_fn = lambda submodule: isinstance(submodule, Attend)
 
             apply_activation_checkpointing(
                 model,
@@ -266,7 +256,7 @@ def load_model_states_and_optimizer(conf, model, device):
 def model_and_memory_summary(conf):
     # Config settings
 
-    channels = conf["model"]["levels"] * len(conf["data"]["variables"]) + len(conf["data"]["surface_variables"])
+    channels = len(conf["data"]["variables"]) + len(conf["data"]["static_variables"])
     frames = conf["model"]["frames"]
     height = conf["model"]["image_height"]
     width = conf["model"]["image_width"]
@@ -279,7 +269,8 @@ def model_and_memory_summary(conf):
 
     # model
 
-    m = load_model(conf)
+    m = SegmentationModel(conf)
+    # m = load_model(conf)
 
     # send the module to the correct device first
 
@@ -315,34 +306,34 @@ def main(rank, world_size, conf, trial=False):
 
     # datasets (zarr reader)
 
-    all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
-    #filenames = list(map(os.path.basename, all_ERA_files))
-    #all_years = sorted([re.findall(r'(?:_)(\d{4})', fn)[0] for fn in filenames])
+    # all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
+    # #filenames = list(map(os.path.basename, all_ERA_files))
+    # #all_years = sorted([re.findall(r'(?:_)(\d{4})', fn)[0] for fn in filenames])
 
-    # Specify the years for each set
-    #if conf["data"][train_test_split]:
-    #    normalized_split = conf["data"][train_test_split] / sum(conf["data"][train_test_split])
-    #    n_years = len(all_years)
-    #    train_years, sklearn.model_selection.train_test_split¶
+    # # Specify the years for each set
+    # #if conf["data"][train_test_split]:
+    # #    normalized_split = conf["data"][train_test_split] / sum(conf["data"][train_test_split])
+    # #    n_years = len(all_years)
+    # #    train_years, sklearn.model_selection.train_test_split¶
 
-    train_years = [str(year) for year in range(1979, 2014)]
-    valid_years = [str(year) for year in range(2014, 2018)]  # can make CV splits if we want to later on
-    test_years = [str(year) for year in range(2018, 2022)]  # same as graphcast -- always hold out
+    # train_years = [str(year) for year in range(1979, 2014)]
+    # valid_years = [str(year) for year in range(2014, 2018)]  # can make CV splits if we want to later on
+    # test_years = [str(year) for year in range(2018, 2022)]  # same as graphcast -- always hold out
 
-    # train_years = [str(year) for year in range(1995, 2013) if year != 2007]
-    # valid_years = [str(year) for year in range(2014, 2015)]  # can make CV splits if we want to later on
-    # test_years = [str(year) for year in range(2015, 2016)]  # same as graphcast -- always hold out
+    # # train_years = [str(year) for year in range(1995, 2013) if year != 2007]
+    # # valid_years = [str(year) for year in range(2014, 2015)]  # can make CV splits if we want to later on
+    # # test_years = [str(year) for year in range(2015, 2016)]  # same as graphcast -- always hold out
 
-    # Filter the files for each set
+    # # Filter the files for each set
 
-    train_files = [file for file in all_ERA_files if any(year in file for year in train_years)]
-    valid_files = [file for file in all_ERA_files if any(year in file for year in valid_years)]
-    test_files = [file for file in all_ERA_files if any(year in file for year in test_years)]
+    # train_files = [file for file in all_ERA_files if any(year in file for year in train_years)]
+    # valid_files = [file for file in all_ERA_files if any(year in file for year in valid_years)]
+    # test_files = [file for file in all_ERA_files if any(year in file for year in test_years)]
 
     # load dataset and sampler
 
-    train_dataset, train_sampler = load_dataset_and_sampler(conf, train_files, world_size, rank, is_train=True)
-    valid_dataset, valid_sampler = load_dataset_and_sampler(conf, valid_files, world_size, rank, is_train=False)
+    train_dataset, train_sampler = load_dataset_and_sampler(conf, world_size, rank, is_train=True)
+    valid_dataset, valid_sampler = load_dataset_and_sampler(conf, world_size, rank, is_train=False)
 
     # setup the dataloder for this process
 
@@ -369,7 +360,8 @@ def main(rank, world_size, conf, trial=False):
 
     # model
 
-    m = load_model(conf)
+    m = SegmentationModel(conf)
+    #m = load_model(conf)
 
     # have to send the module to the correct device first
 
