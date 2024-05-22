@@ -77,6 +77,7 @@ class Trainer:
         amp = conf['trainer']['amp']
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
         rollout_p = 1.0 if 'stop_rollout' not in conf['trainer'] else conf['trainer']['stop_rollout']
+        total_time_steps = conf["data"]["total_time_steps"] if "total_time_steps" in conf["data"] else forecast_len
 
         if "static_variables" in conf["data"] and "tsi" in conf["data"]["static_variables"]:
             self.toa = TOADataLoader(conf)
@@ -134,9 +135,9 @@ class Trainer:
                 k = 0
                 while True:
 
-                    with torch.no_grad() if k != forecast_len else torch.enable_grad():
+                    with torch.no_grad() if k != total_time_steps else torch.enable_grad():
 
-                        self.model.eval() if k != forecast_len else self.model.train()
+                        self.model.eval() if k != total_time_steps else self.model.train()
 
                         if getattr(self.model, 'use_codebook', False):
                             y_pred, cm_loss = self.model(x)
@@ -144,7 +145,7 @@ class Trainer:
                         else:
                             y_pred = self.model(x)
 
-                        if k == forecast_len:
+                        if k == total_time_steps:
                             break
 
                         k += 1
@@ -254,6 +255,7 @@ class Trainer:
         history_len = conf["data"]["valid_history_len"] if "valid_history_len" in conf["data"] else conf["history_len"]
         forecast_len = conf["data"]["valid_forecast_len"] if "valid_forecast_len" in conf["data"] else conf["forecast_len"]
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
+        total_time_steps = conf["data"]["total_time_steps"] if "total_time_steps" in conf["data"] else forecast_len
 
         results_dict = defaultdict(list)
 
@@ -307,7 +309,7 @@ class Trainer:
                     else:
                         y_pred = self.model(x)
 
-                    if k == forecast_len:
+                    if k == total_time_steps:
                         break
 
                     k += 1
