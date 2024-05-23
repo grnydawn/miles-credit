@@ -52,7 +52,7 @@ from credit.data import PredictForecast
 from credit.loss import VariableTotalLoss2D
 from credit.models import load_model
 from credit.metrics import LatWeightedMetrics
-from credit.transforms import ToTensor, NormalizeState
+from credit.transforms import ToTensor, NormalizeState, NormalizeState_Quantile
 from credit.seed import seed_everything
 from credit.pbs import launch_script, launch_script_mpi
 from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
@@ -396,7 +396,10 @@ def predict(rank, world_size, conf, pool, smm):
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
 
     # Preprocessing transformations
-    state_transformer = NormalizeState(conf)
+    if conf["data"]["scaler_type"] == "std":
+        state_transformer = NormalizeState(conf)
+    else:
+        state_transformer = NormalizeState_Quantile(conf)
     transform = transforms.Compose(
         [
             state_transformer,
