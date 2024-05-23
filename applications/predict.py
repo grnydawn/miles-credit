@@ -55,7 +55,7 @@ from credit.models import load_model
 from credit.models.crossformer_may1 import CrossFormer
 from credit.metrics import LatWeightedMetrics
 from credit.diagnostics import Diagnostics
-from credit.transforms import ToTensor, NormalizeState
+from credit.transforms import ToTensor, NormalizeState, NormalizeState_Quantile
 from credit.seed import seed_everything
 from credit.pbs import launch_script, launch_script_mpi
 from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
