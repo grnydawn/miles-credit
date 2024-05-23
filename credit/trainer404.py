@@ -1,11 +1,10 @@
 import gc
-import logging
 import os
+import logging
 from collections import defaultdict
 
 import numpy as np
 import pandas as pd
-import xarray as xr
 import torch
 import torch.distributed as dist
 import torch.fft
@@ -31,19 +30,6 @@ def accum_log(log, new_logs):
         old_value = log.get(key, 0.)
         log[key] = old_value + new_value
     return log
-
-
-class TOADataLoader:
-    # This should get moved to solar.py at some point
-    def __init__(self, conf):
-        self.TOA = xr.open_dataset(conf["data"]["TOA_forcing_path"])
-        self.times_b = pd.to_datetime(self.TOA.time.values)
-
-    def __call__(self, datetime_input):
-        doy = datetime_input.dayofyear
-        hod = datetime_input.hour
-        mask_toa = [doy == time.dayofyear and hod == time.hour for time in self.times_b]
-        return torch.tensor(((self.TOA['tsi'].sel(time=mask_toa))/2540585.74).to_numpy()).unsqueeze(0)
 
 
 class Trainer:
@@ -77,10 +63,9 @@ class Trainer:
         amp = conf['trainer']['amp']
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
         rollout_p = 1.0 if 'stop_rollout' not in conf['trainer'] else conf['trainer']['stop_rollout']
-        total_time_steps = conf["data"]["total_time_steps"] if "total_time_steps" in conf["data"] else forecast_len
 
         if "static_variables" in conf["data"] and "tsi" in conf["data"]["static_variables"]:
-            self.toa = TOADataLoader(conf)
+            pass  # not implemented yet
 
         # update the learning rate if epoch-by-epoch updates that dont depend on a metric
         if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "lambda":
@@ -113,71 +98,46 @@ class Trainer:
 
             with autocast(enabled=amp):
 
-                x = self.model.concat_and_reshape(
-                    batch["x"],
-                    batch["x_surf"]
-                ).to(self.device)
+                x = batch["x"].to(self.device)
+                y = batch["y"].squeeze(2)
 
                 if "static" in batch:
                     if static is None:
                         static = batch["static"].to(self.device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float()
                     x = torch.cat((x, static.clone()), dim=1)
 
-                if "TOA" in batch:
-                    toa = batch["TOA"].to(self.device)
-                    x = torch.cat([x, toa.unsqueeze(1)], dim=1)
-
-                y = self.model.concat_and_reshape(
-                    batch["y"],
-                    batch["y_surf"]
-                )
-
                 k = 0
                 while True:
 
-                    with torch.no_grad() if k != total_time_steps else torch.enable_grad():
+                    with torch.no_grad() if k != forecast_len else torch.enable_grad():
 
-                        self.model.eval() if k != total_time_steps else self.model.train()
+                        self.model.eval() if k != forecast_len else self.model.train()
 
-                        if getattr(self.model, 'use_codebook', False):
-                            y_pred, cm_loss = self.model(x)
-                            commit_loss += cm_loss
-                        else:
-                            y_pred = self.model(x)
+                        y_pred = self.model(x)
 
-                        if k == total_time_steps:
+                        if k == forecast_len:
                             break
 
                         k += 1
 
-                        if history_len > 1:
+                        if history_len > 2:
                             x_detach = x.detach()[:, :, 1:]
                             if "static" in batch:
                                 y_pred = torch.cat((y_pred, static[:, :, 0:1].clone()), dim=1)
-                            if "TOA" in batch:  # update the TOA based on doy and hod
-                                elapsed_time = pd.Timedelta(hours=k)
-                                current_times = [pd.to_datetime(_t, unit="ns") + elapsed_time for _t in batch["datetime"]]
-                                toa = torch.cat([self.toa(_t).unsqueeze(0) for _t in current_times], dim=0).to(self.device)
-                                y_pred = torch.cat([y_pred, toa], dim=1)
                             x = torch.cat([x_detach, y_pred], dim=2).detach()
                         else:
                             if "static" in batch or "TOA" in batch:
                                 x = y_pred.detach()
                                 if "static" in batch:
                                     x = torch.cat((x, static[:, :, 0:1].clone()), dim=1)
-                                if "TOA" in batch:  # update the TOA based on doy and hod
-                                    elapsed_time = pd.Timedelta(hours=k)
-                                    current_times = [pd.to_datetime(_t, unit="ns") + elapsed_time for _t in batch["datetime"]]
-                                    toa = torch.cat([self.toa(_t).unsqueeze(0) for _t in current_times], dim=0).to(self.device)
-                                    x = torch.cat([x, toa], dim=1)
                             else:
                                 x = y_pred.detach()
 
                 y = y.to(device=self.device, dtype=y_pred.dtype)
-                loss = criterion(y, y_pred)
+                loss = criterion(y, y_pred.squeeze(2))
 
                 # Metrics
-                metrics_dict = metrics(y_pred.float(), y.float())
+                metrics_dict = metrics(y_pred.float().squeeze(2), y.float())
                 for name, value in metrics_dict.items():
                     value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
                     if distributed:
@@ -203,9 +163,9 @@ class Trainer:
             results_dict["train_loss"].append(batch_loss[0].item())
             if 'forecast_hour' in batch:
                 forecast_hour_stop = batch['forecast_hour'][-1].item()
-                results_dict["train_forecast_len"].append(forecast_hour_stop+1)
+                results_dict["train_forecast_len"].append(forecast_hour_stop)
             else:
-                results_dict["train_forecast_len"].append(forecast_len+1)
+                results_dict["train_forecast_len"].append(forecast_len)
 
             if not np.isfinite(np.mean(results_dict["train_loss"])):
                 try:
@@ -255,7 +215,6 @@ class Trainer:
         history_len = conf["data"]["valid_history_len"] if "valid_history_len" in conf["data"] else conf["history_len"]
         forecast_len = conf["data"]["valid_forecast_len"] if "valid_forecast_len" in conf["data"] else conf["forecast_len"]
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
-        total_time_steps = conf["data"]["total_time_steps"] if "total_time_steps" in conf["data"] else forecast_len
 
         results_dict = defaultdict(list)
 
@@ -282,24 +241,14 @@ class Trainer:
 
                 commit_loss = 0.0
 
-                x = self.model.concat_and_reshape(
-                    batch["x"],
-                    batch["x_surf"]
-                ).to(self.device)
+                x = batch["x"].to(self.device)
 
                 if "static" in batch:
                     if static is None:
                         static = batch["static"].to(self.device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float()
                     x = torch.cat((x, static.clone()), dim=1)
 
-                if "TOA" in batch:
-                    toa = batch["TOA"].to(self.device)
-                    x = torch.cat([x, toa.unsqueeze(1)], dim=1)
-
-                y = self.model.concat_and_reshape(
-                    batch["y"],
-                    batch["y_surf"]
-                ).to(self.device)
+                y = batch["y"].to(self.device).squeeze(2)
 
                 k = 0
                 while True:
@@ -309,38 +258,28 @@ class Trainer:
                     else:
                         y_pred = self.model(x)
 
-                    if k == total_time_steps:
+                    if k == forecast_len:
                         break
 
                     k += 1
 
-                    if history_len > 1:
+                    if history_len > 2:
                         x_detach = x.detach()[:, :, 1:]
                         if "static" in batch:
                             y_pred = torch.cat((y_pred, static[:, :, 0:1].clone()), dim=1)
-                        if "TOA" in batch:  # update the TOA based on doy and hod
-                            elapsed_time = pd.Timedelta(hours=k)
-                            current_times = [pd.to_datetime(_t, unit="ns") + elapsed_time for _t in batch["datetime"]]
-                            toa = torch.cat([self.toa(_t).unsqueeze(0) for _t in current_times], dim=0).to(self.device)
-                            y_pred = torch.cat([y_pred, toa], dim=1)
                         x = torch.cat([x_detach, y_pred], dim=2).detach()
                     else:
                         if "static" in batch or "TOA" in batch:
                             x = y_pred.detach()
                             if "static" in batch:
                                 x = torch.cat((x, static[:, :, 0:1].clone()), dim=1)
-                            if "TOA" in batch:  # update the TOA based on doy and hod
-                                elapsed_time = pd.Timedelta(hours=k)
-                                current_times = [pd.to_datetime(_t, unit="ns") + elapsed_time for _t in batch["datetime"]]
-                                toa = torch.cat([self.toa(_t).unsqueeze(0) for _t in current_times], dim=0).to(self.device)
-                                x = torch.cat([x, toa], dim=1)
                         else:
                             x = y_pred.detach()
 
-                loss = criterion(y.to(y_pred.dtype), y_pred)
+                loss = criterion(y.to(y_pred.dtype), y_pred.squeeze(2))
 
                 # Metrics
-                metrics_dict = metrics(y_pred.float(), y.float())
+                metrics_dict = metrics(y_pred.float().squeeze(2), y.float())
                 for name, value in metrics_dict.items():
                     value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
                     if distributed:

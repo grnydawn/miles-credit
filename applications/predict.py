@@ -5,6 +5,7 @@ import os
 import sys
 import yaml
 import glob
+import copy
 import logging
 import warnings
 import functools
@@ -51,6 +52,7 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 from credit.data import PredictForecast
 from credit.loss import VariableTotalLoss2D
 from credit.models import load_model
+from credit.models.crossformer_may1 import CrossFormer
 from credit.metrics import LatWeightedMetrics
 from credit.transforms import ToTensor, NormalizeState, NormalizeState_Quantile
 from credit.seed import seed_everything
