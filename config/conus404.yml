@@ -1,12 +1,13 @@
-save_loc: "/glade/derecho/scratch/schreck/repos/miles-credit/results/conus404"
-seed: 222
+save_loc: '/glade/work/mcginnis/ML/GWC/results/unet-03-winds'
+seed: 2222
 
 data:
-    variables: ['PSFC','Q500','Q850','T2','T500','T850','totalVap','U10','U1000','U250','U500','U850','V10','V1000','V250','V500','V850','Z050','Z1000','Z500','Z850']
+    variables: ['U10','U1000','U250','U500','U850','V10','V1000','V250','V500','V850']
+    #variables: ['PSFC','Q500','Q850','T2','T500','T850','totalVap','U10','U1000','U250','U500','U850','V10','V1000','V250','V500','V850','Z050','Z1000','Z500','Z850']
     #variables: ['U850','V850','Q850']
     static_variables: []
     scaler_type: "std"
-    save_loc: '/glade/derecho/scratch/mcginnis/???*'
+#    save_loc: '/glade/work/mcginnis/ML/GWC/results/dummy'
     mean_path: '/glade/derecho/scratch/mcginnis/conus404/stats/all.avg.C404.nc'
     std_path: '/glade/derecho/scratch/mcginnis/conus404/stats/all.std.C404.nc'
     history_len: 2 
@@ -34,7 +35,7 @@ trainer:
     learning_rate: 1.0e-04
     weight_decay: 1.0e-05
     start_epoch: 0
-    epochs: 10
+    epochs: 1000
     amp: False
     grad_accum_every: 1
     grad_max_norm: 1.0
@@ -73,15 +74,15 @@ loss:
 #    mem: '480GB'
 #    queue: 'preempt'
     
-# pbs: # casper
-#     conda: "/glade/work/schreck/miniconda3/envs/evidential"
-#     job_name: 'latlon'
-#     nodes: 1
-#     ncpus: 8
-#     ngpus: 1
-#     mem: '128GB'
-#     walltime: '12:00:00'
-#     gpu_type: 'a100'
-#     cpu_type: 'milan'
-#     project: 'NAML0001'
-#     queue: 'casper'
+pbs: # casper
+    conda: "credit"
+    job_name: 'unet-winds'
+    nodes: 1
+    ncpus: 8
+    ngpus: 1
+    mem: '128GB'
+    walltime: '24:00:00'
+    gpu_type: 'a100'
+#    cpu_type: 'milan'
+    project: 'NRIS0001'
+    queue: 'casper'

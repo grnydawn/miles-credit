@@ -5,7 +5,7 @@ data:
     variables: ['U','V','T','Q']
     surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
     static_variables: ['Z_GDS4_SFC','LSM','tsi'] # []
-    save_loc: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
+    save_loc: '/glade/derecho/scratch/dgagne/STAGING/TOTAL_*'
     mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
     std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
     quant_path: '/glade/derecho/scratch/dgagne/credit_scalers/era5_quantile_scalers_2024-03-30_00:28.parquet'

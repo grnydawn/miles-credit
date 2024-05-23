@@ -1,9 +1,10 @@
 name: credit
 channels:
-  - nvidia
   - pytorch
+  - nvidia
   - pyg
   - conda-forge
+
 dependencies:
   - python=3.11
   - pip
@@ -11,7 +12,6 @@ dependencies:
   - pandas
   - matplotlib
   - cartopy
-  - ffmpeg
   - scikit-learn
   - pyarrow
   - pytest
@@ -28,7 +28,6 @@ dependencies:
   - dask-jobqueue
   - zarr
   - jupyter
-  - geocat-comp
   - pyg
   - pip:
     - einops
@@ -36,9 +35,8 @@ dependencies:
     - bridgescaler
     - rotary-embedding-torch
     - segmentation-models-pytorch
-    - torchsummary
     - vector_quantize_pytorch
     - haversine
-    - timm>=0.9.2
-    - torch-harmonics
+    - timm>=0.9.12
     - .
+

@@ -57,6 +57,10 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 
+os.environ['NCCL_SHM_DISABLE'] = '1'
+os.environ['NCCL_IB_DISABLE'] = '1'
+
+
 # https://stackoverflow.com/questions/59129812/how-to-avoid-cuda-out-of-memory-in-pytorch
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
@@ -71,7 +75,7 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
     forecast_len = conf["data"]["forecast_len"]
     valid_history_len = conf["data"]["valid_history_len"]
     valid_forecast_len = conf["data"]["valid_forecast_len"]
-    time_step = None if "time_step" not in conf["data"] else conf["data"]["time_step"]
+    skip_periods = None if "skip_periods" not in conf["data"] else conf["data"]["skip_periods"]
     one_shot = None if "one_shot" not in conf["data"] else conf["data"]["one_shot"]
 
     history_len = history_len if is_train else valid_history_len
@@ -92,7 +96,7 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
             filenames=files,
             history_len=history_len,
             forecast_len=forecast_len,
-            skip_periods=time_step,
+            skip_periods=skip_periods,
             one_shot=one_shot,
             transform=transforms
         )
@@ -117,19 +121,23 @@ def distributed_model_wrapper(conf, neural_network, device):
         # Define the sharding policies
 
         if "crossformer" in conf["model"]["type"]:
-            from credit.models.crossformer_skip import Attention as Attend
+            from credit.models.crossformer import (
+                Attention, DynamicPositionBias, FeedForward, CrossEmbedLayer
+            )
+            transformer_layers_cls = {Attention, DynamicPositionBias, FeedForward, CrossEmbedLayer}
         elif "fuxi" in conf["model"]["type"]:
-            from credit.models.fuxi import UTransformer as Attend
+            from timm.models.swin_transformer_v2 import SwinTransformerV2Stage
+            transformer_layers_cls = {SwinTransformerV2Stage}
         else:
             raise OSError("You asked for FSDP but only crossformer and fuxi are currently supported.")
 
         auto_wrap_policy1 = functools.partial(
             transformer_auto_wrap_policy,
-            transformer_layer_cls={Attend}
+            transformer_layer_cls=transformer_layers_cls
         )
 
         auto_wrap_policy2 = functools.partial(
-            size_based_auto_wrap_policy, min_num_params=1_000
+            size_based_auto_wrap_policy, min_num_params=100_000
         )
 
         def combined_auto_wrap_policy(module, recurse, nonwrapped_numel):
@@ -182,13 +190,16 @@ def distributed_model_wrapper(conf, neural_network, device):
                 checkpoint_impl=CheckpointImpl.NO_REENTRANT,
             )
 
-            check_fn = lambda submodule: isinstance(submodule, Attend)
+            check_fn = lambda submodule: any(isinstance(submodule, cls) for cls in transformer_layers_cls)
 
             apply_activation_checkpointing(
                 model,
                 checkpoint_wrapper_fn=non_reentrant_wrapper,
                 check_fn=check_fn
             )
+
+        # attempting to get around the launch issue we are having
+        torch.distributed.barrier()
 
     elif conf["trainer"]["mode"] == "ddp":
         model = DDP(neural_network, device_ids=[device])

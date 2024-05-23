@@ -5,6 +5,7 @@ import os
 import sys
 import yaml
 import glob
+import copy
 import logging
 import warnings
 import functools
@@ -51,6 +52,7 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 from credit.data import PredictForecast
 from credit.loss import VariableTotalLoss2D
 from credit.models import load_model
+from credit.models.crossformer_may1 import CrossFormer
 from credit.metrics import LatWeightedMetrics
 from credit.diagnostics import Diagnostics
 from credit.transforms import ToTensor, NormalizeState
@@ -293,7 +295,10 @@ def predict(rank, world_size, conf, pool, smm):
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
 
     # Preprocessing transformations
-    state_transformer = NormalizeState(conf)
+    if conf["data"]["scaler_type"] == "std":
+        state_transformer = NormalizeState(conf)
+    else:
+        state_transformer = NormalizeState_Quantile(conf)
     transform = transforms.Compose(
         [
             state_transformer,
