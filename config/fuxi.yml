@@ -131,7 +131,19 @@ visualization:
                    'format':'png'}
     video_format: 'mp4' # gif, mp4, none
 
-
+diagnostics:
+    summary_plot_fhs: [1, 20, 60, 120] # what forecast hours to plot as a summary plot
+    use_spectrum_vis: False
+    spectrum_vis:
+        atmos_variables: ["U", "V", "T", "Q"]
+        atmos_levels: [8, 10]
+        single_level_variables: ["SP", "t2m", "Z500"]
+        figsize: () # empty tuple for auto
+    plev_summary_only: True  # pressure level conversion is really slow, use this option to compute pressure level diagnostics only at summary fhs (above), will disable KE metrics output
+    use_KE_diagnostics: True # disable all KE diagnostics including KE metrics
+    ke_vis:
+        use_KE_spectrum_vis: True
+        use_KE_difference_vis: True
 pbs: #derecho
     conda: "holodec"
     project: "NAML0001"

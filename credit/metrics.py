@@ -1,11 +1,20 @@
-import torch
+import os
+from os.path import join, expandvars
+import typing as t
 import numpy as np
 import xarray as xr
+import matplotlib.pyplot as plt
+import torch
+
+from credit.data_conversions import dataConverter
+from weatherbench2.derived_variables import ZonalEnergySpectrum
 
 
 class LatWeightedMetrics:
 
-    def __init__(self, conf):
+    def __init__(self, conf, predict_mode=False):
+        self.conf = conf
+        self.predict_mode = predict_mode
         lat_file = conf['loss']['latitude_weights']
         atmos_vars = conf['data']['variables']
         surface_vars = conf['data']['surface_variables']
@@ -23,11 +32,15 @@ class LatWeightedMetrics:
 
         self.w_var = None
         if conf["loss"]["use_variable_weights"]:
-            var_weights = [value if isinstance(value, list) else [value] for value in conf["loss"]["variable_weights"].values()]
+            var_weights = [value if isinstance(value, list) else [value] for value in
+                           conf["loss"]["variable_weights"].values()]
             var_weights = [item for sublist in var_weights for item in sublist]
             self.w_var = torch.from_numpy(var_weights).unsqueeze(0).unsqueeze(-1)
+        
+        if self.predict_mode:
+            self.zonal_metrics = ZonalSpectrumMetric(self.conf)
 
-    def __call__(self, pred, y, clim=None, transform=None):
+    def __call__(self, pred, y, clim=None, transform=None, forecast_datetime=0):
         if transform is not None:
             pred = transform(pred)
             y = transform(y)
@@ -52,7 +65,7 @@ class LatWeightedMetrics:
                 epsilon = 1e-7
 
                 denominator = torch.sqrt(
-                    torch.sum(w_var * w_lat * pred_prime**2) * torch.sum(w_var * w_lat * y_prime**2)
+                    torch.sum(w_var * w_lat * pred_prime ** 2) * torch.sum(w_var * w_lat * y_prime ** 2)
                 ) + epsilon
 
                 loss_dict[f"acc_{var}"] = torch.sum(w_var * w_lat * pred_prime * y_prime) / denominator
@@ -68,41 +81,76 @@ class LatWeightedMetrics:
         loss_dict["mse"] = np.mean([loss_dict[k].cpu() for k in loss_dict.keys() if "mse_" in k and "rmse_" not in k])
         loss_dict["mae"] = np.mean([loss_dict[k].cpu() for k in loss_dict.keys() if "mae_" in k])
 
+        # additional metrics where xarray computations are needed
+        # put metric configs here
+        # convert to xarray:
+        if self.predict_mode:
+            self.converter = dataConverter(self.conf)
+            pred_ds = self.converter.tensor_to_dataset(pred, [forecast_datetime])
+            y_ds = self.converter.tensor_to_dataset(y, [forecast_datetime])
+            loss_dict = loss_dict | self.zonal_metrics(pred_ds, y_ds)  # merge two dictionaries
+
         return loss_dict
 
 
-def anomaly_correlation_coefficient(pred, true):
+class ZonalSpectrumMetric:
+    def __init__(self, conf):
+        '''
+        _variables arguments determine which data vars to compute spectra metric
+        '''
+        self.conf = conf
+        self.x_variables =  self.conf['data']['variables']
+        self.single_level_variables = self.conf['data']['static_variables']
+        self.variables = self.x_variables + self.single_level_variables
+        self.zonal_spectrum_calculator = ZonalEnergySpectrum(self.variables)
+        if conf["loss"]["use_latitude_weights"]:
+            lat = xr.open_dataset(conf['loss']['latitude_weights'])["latitude"]
+            w_lat = np.cos(np.deg2rad(lat))
+            self.w_lat = w_lat / w_lat.mean()
+    
+    def __call__(self, pred_ds, y_ds):
+        '''
+        pred, y can be normalized or unnormalized tensors.
+        trying to achieve minimal interface with LatWeightedMetrics 
+        '''
+        # first dim is the batch dim
+        loss_dict = {}
 
-    pred = pred.float()
-    true = true.float()
+        # compute spectrum and add epsilon to avoid division by zero
+        epsilon = 1e-7
+        pred_spectrum = self.zonal_spectrum_calculator.compute(pred_ds) + epsilon
+        y_spectrum = self.zonal_spectrum_calculator.compute(y_ds) + epsilon
+        loss = self.lat_weighted_spectrum_diff(pred_spectrum, y_spectrum)
+        loss_dict = self.store_loss(loss, loss_dict, 'spectrum_mse')
+        return loss_dict
 
-    B, C, H, W = pred.size()
+    def store_loss(self, loss, loss_dict, metric_header_str):
+        '''
+        loss: dataset
+            w/ each variable dim must include level if atmos var, 
+            ow no need for single level vars
+        sums over remaining dimensions, and writes to loss_dict
+        '''
+        keys = []
+        for v in self.x_variables:
+            for k in range(self.conf['model']['levels']):
+                label = f"{metric_header_str}_{v}_{k}"
+                keys.append(label)
+                loss_dict[label] = loss[v].sel(level=k).sum()  #latitudes already weighted
 
-    # Flatten the spatial dimensions
-    pred_flat = pred.view(B, C, -1)
-    true_flat = true.view(B, C, -1)
+        for v in self.single_level_variables:
+            label = f"{metric_header_str}_{v}"
+            keys.append(label)
+            loss_dict[label] = loss[v].sum()  #latitudes already weighted
 
-    # Mean over spatial dimensions
-    pred_mean = torch.mean(pred_flat, dim=-1, keepdim=True)
-    true_mean = torch.mean(true_flat, dim=-1, keepdim=True)
+        loss_dict[f"{metric_header_str}"] = np.mean([loss_dict[k] for k in keys])
+        return loss_dict
 
-    # Anomaly calculation
-    pred_anomaly = pred_flat - pred_mean
-    true_anomaly = true_flat - true_mean
+    def lat_weighted_spectrum_diff(self, pred_spectrum, y_spectrum):
+        # using squared distance
+        # variables to compute spectra on determined by class init
+        sq_diff = np.square(np.log10(pred_spectrum) - np.log10(y_spectrum))
+        sq_diff = sq_diff.sum(dim=['datetime', 'zonal_wavenumber'])
+        return sq_diff * self.w_lat
 
-    # Covariance matrix
-    covariance_matrix = torch.bmm(pred_anomaly, true_anomaly.transpose(1, 2)) / (H * W - 1)
 
-    # Variance terms
-    pred_var = torch.bmm(pred_anomaly, pred_anomaly.transpose(1, 2)) / (H * W - 1)
-    true_var = torch.bmm(true_anomaly, true_anomaly.transpose(1, 2)) / (H * W - 1)
-
-    # Anomaly Correlation Coefficient
-    acc_numerator = torch.einsum('bii->b', covariance_matrix).sum()
-    acc_denominator = torch.sqrt(torch.einsum('bii->b', pred_var).sum() * torch.einsum('bii->b', true_var).sum())
-
-    # Avoid division by zero
-    epsilon = 1e-8
-    acc = acc_numerator / (acc_denominator + epsilon)
-
-    return acc.item()
