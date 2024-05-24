@@ -333,6 +333,9 @@ class ERA5Dataset(torch.utils.data.Dataset):
 
         if self.transform:
             sample = self.transform(sample)
+
+        sample["index"] = index
+
         return sample
 
 
@@ -774,18 +777,19 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
             if true_ind > (len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+1)):
                 true_ind = len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+3)
 
-            indices = list(range(true_ind, true_ind+self.history_len+self.forecast_len+1))
-            self.seq_len = self.history_len
-            indices = indices[:self.seq_len]
+            indices = list(range(true_ind, true_ind+self.history_len+self.forecast_len))
+            #self.seq_len = self.history_len
+            #indices = indices[:self.seq_len]
 
             stop_forecast = False
+            
             for k, ind in enumerate(indices):
 
-                concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
-                sliced = xr.open_zarr(self.filenames[int(result_key)], consolidated=True).isel(time=slice(ind, ind+self.history_len+1, self.skip_periods))
+                concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': [], "static": [], "TOA": []}
+                sliced = xr.open_zarr(self.filenames[int(result_key)], consolidated=True).isel(time=slice(ind, ind+self.history_len+self.forecast_len+1, self.skip_periods))
                 sample = {
-                    'x': sliced.isel(time=slice(0, 1, 1)),
-                    'y': sliced.isel(time=slice(1, 2, 1)),
+                    'x': sliced.isel(time=slice(k, k+self.history_len, 1)),
+                    'y': sliced.isel(time=slice(k+self.history_len, k+self.history_len+1, 1)),
                     't': sliced.time.values.astype('datetime64[s]').astype(int),
                 }
 
@@ -796,6 +800,7 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
                     concatenated_samples[key] = sample[key].squeeze()
 
                 stop_forecast = (torch.rand(1).item() < self.rollout_p)
+                stop_forecast = stop_forecast or (k == self.forecast_len)
 
                 concatenated_samples['forecast_hour'] = k
                 concatenated_samples['index'] = index
@@ -806,7 +811,7 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
                 if stop_forecast:
                     break
 
-                if (k == self.history_len):
+                if (k == self.forecast_len):
                     break
 
 
