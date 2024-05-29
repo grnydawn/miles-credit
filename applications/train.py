@@ -73,6 +73,7 @@ def setup(rank, world_size, mode):
 def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
     history_len = conf["data"]["history_len"]
     forecast_len = conf["data"]["forecast_len"]
+    max_forecast_len = None if "max_forecast_len" not in conf["data"] else conf["data"]["max_forecast_len"]
     valid_history_len = conf["data"]["valid_history_len"]
     valid_forecast_len = conf["data"]["valid_forecast_len"]
     skip_periods = None if "skip_periods" not in conf["data"] else conf["data"]["skip_periods"]
@@ -98,6 +99,7 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
             forecast_len=forecast_len,
             skip_periods=skip_periods,
             one_shot=one_shot,
+            max_forecast_len=max_forecast_len,
             transform=transforms
         )
 

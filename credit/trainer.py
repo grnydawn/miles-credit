@@ -197,15 +197,23 @@ class Trainer:
             scaler.update()
             optimizer.zero_grad()
 
+            # Handle batch_loss
             batch_loss = torch.Tensor([logs["loss"]]).cuda(self.device)
             if distributed:
                 dist.all_reduce(batch_loss, dist.ReduceOp.AVG, async_op=False)
             results_dict["train_loss"].append(batch_loss[0].item())
+
             if 'forecast_hour' in batch:
-                forecast_hour_stop = batch['forecast_hour'][-1].item()
-                results_dict["train_forecast_len"].append(forecast_hour_stop+1)
+                forecast_hour_tensor = batch['forecast_hour'].to(self.device)
+                if distributed:
+                    dist.all_reduce(forecast_hour_tensor, dist.ReduceOp.AVG, async_op=False)
+                    forecast_hour_avg = forecast_hour_tensor[-1].item()
+                else:
+                    forecast_hour_avg = batch['forecast_hour'][-1].item()
+
+                results_dict["train_forecast_len"].append(forecast_hour_avg + 1)
             else:
-                results_dict["train_forecast_len"].append(forecast_len+1)
+                results_dict["train_forecast_len"].append(forecast_len + 1)
 
             if not np.isfinite(np.mean(results_dict["train_loss"])):
                 try:
@@ -403,6 +411,13 @@ class Trainer:
         else:
             results_dict = defaultdict(list)
             saved_results = pd.read_csv(os.path.join(save_loc, "training_log.csv"))
+
+            # Set start_epoch to the length of the training log and train for one epoch
+            # This is a manual override, you must use train_one_epoch = True
+            if "train_one_epoch" in conf["trainer"] and conf["trainer"]["train_one_epoch"]:
+                start_epoch = len(saved_results)
+                epochs = start_epoch + 1
+
             for key in saved_results.columns:
                 if key == "index":
                     continue
@@ -487,7 +502,10 @@ class Trainer:
                     index=False,
                 )
             else:
-                df.to_csv(os.path.join(f"{save_loc}", "training_log.csv"), index=False)
+                try:
+                    df.to_csv(os.path.join(f"{save_loc}", "training_log.csv"), index=False)
+                except:
+                    print("HERE", results_dict)
 
             ############
             #
@@ -566,10 +584,6 @@ class Trainer:
             gc.collect()
 
             training_metric = "train_loss" if skip_validation else "valid_loss"
-
-            # Report result to the trial
-            if trial:
-                trial.report(results_dict[training_metric][-1], step=epoch)
 
             # Stop training if we have not improved after X epochs (stopping patience)
             best_epoch = [
