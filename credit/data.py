@@ -13,7 +13,6 @@ from functools import reduce
 from glob import glob
 from itertools import repeat
 from timeit import timeit
-import random
 
 
 def get_forward_data(filename) -> xr.DataArray:
@@ -294,7 +293,7 @@ class ERA5Dataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         # find the result key:
         result_key = find_key_for_number(index, self.meta_data_dict)
-        
+
         # get the data selection:
         true_ind = index-self.meta_data_dict[result_key][1]
 
@@ -900,11 +899,8 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
                 true_ind = len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+3)
 
             indices = list(range(true_ind, true_ind+self.history_len+self.forecast_len))
-            #self.seq_len = self.history_len
-            #indices = indices[:self.seq_len]
-
             stop_forecast = False
-            
+
             for k, ind in enumerate(indices):
 
                 concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': [], "static": [], "TOA": []}

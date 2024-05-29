@@ -502,10 +502,7 @@ class Trainer:
                     index=False,
                 )
             else:
-                try:
-                    df.to_csv(os.path.join(f"{save_loc}", "training_log.csv"), index=False)
-                except:
-                    print("HERE", results_dict)
+                df.to_csv(os.path.join(f"{save_loc}", "training_log.csv"), index=False)
 
             ############
             #
