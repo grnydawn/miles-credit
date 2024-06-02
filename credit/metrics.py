@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 import torch
 
 from credit.data_conversions import dataConverter
-from weatherbench2.derived_variables import ZonalEnergySpectrum
-
+#from weatherbench2.derived_variables import ZonalEnergySpectrum
+#WEC limiting spectrum shit cause weather bench2 not installed. 
 
 class LatWeightedMetrics:
 
@@ -37,8 +37,9 @@ class LatWeightedMetrics:
             var_weights = [item for sublist in var_weights for item in sublist]
             self.w_var = torch.from_numpy(var_weights).unsqueeze(0).unsqueeze(-1)
         
-        if self.predict_mode:
-            self.zonal_metrics = ZonalSpectrumMetric(self.conf)
+        #if self.predict_mode:
+        #    self.zonal_metrics = ZonalSpectrumMetric(self.conf)
+        #WEC limiting spectrum shit cause weather bench2 not installed. 
 
     def __call__(self, pred, y, clim=None, transform=None, forecast_datetime=0):
         if transform is not None:
@@ -88,7 +89,7 @@ class LatWeightedMetrics:
             self.converter = dataConverter(self.conf)
             pred_ds = self.converter.tensor_to_dataset(pred, [forecast_datetime])
             y_ds = self.converter.tensor_to_dataset(y, [forecast_datetime])
-            loss_dict = loss_dict | self.zonal_metrics(pred_ds, y_ds)  # merge two dictionaries
+            #loss_dict = loss_dict | self.zonal_metrics(pred_ds, y_ds)  # merge two dictionaries
 
         return loss_dict
 

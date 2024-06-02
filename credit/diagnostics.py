@@ -8,7 +8,8 @@ from matplotlib import colors
 import cartopy.crs as ccrs
 import torch
 
-from weatherbench2.derived_variables import ZonalEnergySpectrum
+#from weatherbench2.derived_variables import ZonalEnergySpectrum
+#WEC limiting spectrum shit cause weather bench2 not installed. 
 
 import logging
 

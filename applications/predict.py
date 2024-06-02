@@ -77,6 +77,25 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 
+class TOADataLoader:
+    def __init__(self, conf):
+        self.TOA = xr.open_dataset(conf["data"]["TOA_forcing_path"]).load()
+        self.times_b = pd.to_datetime(self.TOA.time.values)
+
+        # Precompute day of year and hour arrays
+        self.days_of_year = self.times_b.dayofyear
+        self.hours_of_day = self.times_b.hour
+
+    def __call__(self, datetime_input):
+        doy = datetime_input.dayofyear
+        hod = datetime_input.hour
+
+        # Use vectorized comparison for masking
+        mask_toa = (self.days_of_year == doy) & (self.hours_of_day == hod)
+        selected_tsi = self.TOA['tsi'].sel(time=mask_toa) / 2540585.74
+
+        # Convert to tensor and add dimension
+        return torch.tensor(selected_tsi.to_numpy()).unsqueeze(0)
 
 def get_num_cpus():
     num_cpus = len(os.sched_getaffinity(0))
@@ -393,7 +412,7 @@ def predict(rank, world_size, conf, pool, smm):
         static = None
 
         # model inference loop
-        for batch in data_loader:
+        for k, batch in enumerate(data_loader):
 
             # get the datetime and forecasted hours
             date_time = batch["datetime"].item()
@@ -410,9 +429,13 @@ def predict(rank, world_size, conf, pool, smm):
                 init_time = datetime.datetime.utcfromtimestamp(date_time).strftime(
                     "%Y-%m-%d %H:%M:%S"
                 )
+                svloc_init_time = datetime.datetime.utcfromtimestamp(date_time).strftime(
+                    "%Y-%m-%dT%HZ"
+                )
+                
                 img_save_loc = os.path.join(
                     os.path.expandvars(conf["save_loc"]),
-                    f"forecasts/images_{init_time}",
+                    f"forecasts/images_{svloc_init_time}",
                 )
                 dataset_save_loc = os.path.join(
                     os.path.expandvars(conf["save_loc"]),
@@ -423,7 +446,7 @@ def predict(rank, world_size, conf, pool, smm):
                     os.makedirs(img_save_loc, exist_ok=True)
                 
                 # initialize diagnostics
-                diagnostics = Diagnostics(conf, init_time, data_converter)
+                #diagnostics = Diagnostics(conf, init_time, data_converter)
 
 
             # Add statics
@@ -433,9 +456,20 @@ def predict(rank, world_size, conf, pool, smm):
                 x = torch.cat((x, static.clone()), dim=1)
 
             # Add solar "statics"
-            if "TOA" in batch:
-                toa = batch["TOA"].to(device)
-                x = torch.cat([x, toa.unsqueeze(1)], dim=1)
+            if "static_variables" in conf["data"] and "tsi" in conf["data"]["static_variables"]:
+                if k==0:
+                    toaDL = TOADataLoader(conf)
+                elapsed_time = pd.Timedelta(hours=k)
+                tnow = pd.to_datetime(datetime.datetime.utcfromtimestamp(batch["datetime"]))
+                tnow = tnow + elapsed_time
+                if history_len == 1:
+                    current_times = [pd.to_datetime(datetime.datetime.utcfromtimestamp(_t)) + elapsed_time for _t in tnow]
+                else:
+                    current_times = [tnow if hl == 0 else tnow - pd.Timedelta(hours=hl) for hl in range(history_len)]
+                
+                toa = torch.cat([toaDL(_t) for _t in current_times], dim=0).to(device)
+                toa = toa.squeeze().unsqueeze(0)
+                x = torch.cat([x, toa.unsqueeze(1).to(device).float()], dim=1)
 
 
             y = model.concat_and_reshape(batch["y"], batch["y_surf"]).to(device)
@@ -474,7 +508,7 @@ def predict(rank, world_size, conf, pool, smm):
             print_str += f"Hour: {batch['forecast_hour'].item()} "
             print_str += f"MAE: {mae.item()} "
             print_str += f"ACC: {metrics_dict['acc']} "
-            print_str += f"spectrumMSE: {metrics_dict['spectrum_mse']}"
+            #print_str += f"spectrumMSE: {metrics_dict['spectrum_mse']}" #WEC limiting spectrum shit cause weather bench2 not installed. 
 
             ############################################################################
             ############################################################################
@@ -496,10 +530,10 @@ def predict(rank, world_size, conf, pool, smm):
             ############################################################################
             ############################# Compute KE/spectra Diagnostics ###############
             ############################################################################
-            diag_metrics = diagnostics(pred_ds, y_ds, forecast_hour)
-            metrics_dict = metrics_dict | diag_metrics
-            for key,value in diag_metrics.items(): # add metrics to the print str
-                print_str += f"{key}: {value}"
+            #diag_metrics = diagnostics(pred_ds, y_ds, forecast_hour) #WEC limiting spectrum shit cause weather bench2 not installed. 
+            #metrics_dict = metrics_dict | diag_metrics #WEC limiting spectrum shit cause weather bench2 not installed. 
+            # for key,value in diag_metrics.items(): # add metrics to the print str #WEC limiting spectrum shit cause weather bench2 not installed. 
+            #     print_str += f"{key}: {value}"
             
             logger.info(print_str)
 
