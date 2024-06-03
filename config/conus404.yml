@@ -32,7 +32,8 @@ data:
 #    - Z1000
     static_variables: []
     scaler_type: "std"
-#   save_loc: '/glade/derecho/scratch/mcginnis/conus404/zarr'
+    zarrpath: '/glade/campaign/ral/risc/DATA/conus404/zarr'
+    save_loc: './'
     mean_path: '/glade/derecho/scratch/mcginnis/conus404/stats/all.avg.C404.nc'
     std_path: '/glade/derecho/scratch/mcginnis/conus404/stats/all.std.C404.nc'
     history_len: 2 
