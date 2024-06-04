@@ -4,40 +4,36 @@ from torchvision.transforms import *
 
 #import sys
 #sys.path.append("../credit")
-from credit.data import CONUS404Dataset
+from credit.data404 import CONUS404Dataset
 #from data import CONUS404Dataset
-from credit.transforms import ToTensor
+from credit.transforms404 import ToTensor
 
-config = "../config/conus404.yml"
+config = "/glade/work/mcginnis/ML/GWC/miles-credit/config/conus404.yml"
 
 with open(config) as cf:
     conf = yaml.load(cf, Loader=yaml.FullLoader)
 
-print(conf)
-
-#varlist = ["U850", "V850", "Q850", "U250", "U500", "V250", "V500"]
-varlist = ["U850", "V850", "U500"]
+print("\nconf:\n", conf)
 
 transform = Compose([
     #NormalizeState(conf["data"]["mean_path"],conf["data"]["std_path"]),
-    ToTensor(history_len=conf['data']['history_len'], forecast_len=conf['data']['forecast_len'], variables=[], surface_variables=varlist)
+    ToTensor(conf)
 ])
 
-#todo: transform = Compose([ToTensor(conf)])
 
-print(transform)
+print("\ntransform:\n", transform)
 
 
 dataset = CONUS404Dataset(
-    zarrpath="/glade/campaign/ral/risc/DATA/conus404/zarr",
-    varnames = varlist,
+    zarrpath=conf['data']['zarrpath'], #"/glade/campaign/ral/risc/DATA/conus404/zarr",
+    varnames = conf['data']['variables'],
     history_len=conf['data']['history_len'],
     forecast_len=conf['data']['forecast_len'],
     transform = transform
 )
 
-print(dataset)
-#print(dataset.__getitem__(0))
+print("\ndataset\n", dataset)
+print("\ndataset[0]\n", dataset.__getitem__(0))
 
 
 
@@ -52,12 +48,12 @@ train_loader = torch.utils.data.DataLoader(
         #sampler=train_sampler,
         pin_memory=True,
         #persistent_workers=True if thread_workers > 0 else False,
-        num_workers=8,
+        num_workers=1,
         drop_last=True
     )
 
-print(train_loader)
+print("\ntrain_loader:\n", train_loader)
 
 #for batch in train_loader:
-#    print(batch)
+#    print("\nbatch:\n", batch)
 #    raise

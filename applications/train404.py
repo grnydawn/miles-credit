@@ -34,7 +34,7 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
 from torchsummary import summary
 from credit.models.unet404 import SegmentationModel
 from credit.loss404 import VariableTotalLoss2D
-from credit.data import CONUS404Dataset
+from credit.data404 import CONUS404Dataset
 from credit.transforms404 import NormalizeState, ToTensor
 from credit.scheduler import load_scheduler, annealed_probability
 from credit.trainer404 import Trainer
