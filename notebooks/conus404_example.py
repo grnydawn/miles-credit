@@ -29,11 +29,14 @@ dataset = CONUS404Dataset(
     varnames = conf['data']['variables'],
     history_len=conf['data']['history_len'],
     forecast_len=conf['data']['forecast_len'],
+    start = "2000-01-01",
+    finish = "2001-01-01",
     transform = transform
 )
 
 print("\ndataset\n", dataset)
-print("\ndataset[0]\n", dataset.__getitem__(0))
+print("\nlen(dataset)\n", len(dataset))
+#print("\ndataset[0]\n", dataset.__getitem__(0))
 
 
 

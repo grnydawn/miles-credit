@@ -16,7 +16,7 @@ from timeit import timeit
 
 
 def get_forward_data(filename) -> xr.DataArray:
-    """Lazily opens the Zarr store on gladefilesystem.
+    """Lazily opens a Zarr store
     """
     dataset = xr.open_zarr(filename, consolidated=True)
     return dataset
@@ -45,27 +45,28 @@ class Sample(TypedDict):
     # METADATA
     datetime_index: Array
 
-
-@dataclass
-class Reshape_Data():
-    size: int = 128  #: Size of the cropped image.
-
-    def __call__(self, sample: Sample) -> Sample:
-        for attr_name in IMAGE_ATTR_NAMES:
-            image = sample[attr_name]
-            # TODO: Random crop!
-            cropped_image = image[..., :self.size, :self.size]
-            sample[attr_name] = cropped_image
-        return sample
-
-
-class CheckForBadData():
-    def __call__(self, sample: Sample) -> Sample:
-        for attr_name in IMAGE_ATTR_NAMES:
-            image = sample[attr_name]
-            if np.any(image < 0):
-                raise ValueError(f'\n{attr_name} has negative values at {image.time.values}')
-        return sample
+    
+## I don't think either of these are used anywhere
+#@dataclass
+#class Reshape_Data():
+#    size: int = 128  #: Size of the cropped image.
+#
+#    def __call__(self, sample: Sample) -> Sample:
+#        for attr_name in IMAGE_ATTR_NAMES:
+#            image = sample[attr_name]
+#            # TODO: Random crop!
+#            cropped_image = image[..., :self.size, :self.size]
+#            sample[attr_name] = cropped_image
+#        return sample
+#
+#
+#class CheckForBadData():
+#    def __call__(self, sample: Sample) -> Sample:
+#        for attr_name in IMAGE_ATTR_NAMES:
+#            image = sample[attr_name]
+#            if np.any(image < 0):
+#                raise ValueError(f'\n{attr_name} has negative values at {image.time.values}')
+#        return sample
 
 # flatten list-of-list
 def flatten(array):
@@ -80,7 +81,7 @@ def lazymerge(zlist, rename=None):
     return xr.merge(zarrs)
 
 
-# dataclass decorator avoids lots of self.x=x and gets us free __repr__
+# using dataclass decorator avoids lots of self.x=x and gets us free __repr__
 @dataclass
 class CONUS404Dataset(torch.utils.data.Dataset):
     """Each Zarr store for the CONUS-404 data contains one year of
@@ -116,6 +117,8 @@ class CONUS404Dataset(torch.utils.data.Dataset):
     seed:         int = 22
     skip_periods: int = None
     one_shot:     bool = False
+    start:        str = None
+    finish:       str = None
 
     def __post_init__(self):
         super().__init__()
@@ -131,42 +134,54 @@ class CONUS404Dataset(torch.utils.data.Dataset):
             self.varnames = os.listdir(self.zarrpath)
         self.varnames = sorted(self.varnames)
 
-        # get file paths
+        ## get file paths
         zdict = {}
         for v in self.varnames:
             zdict[v] = sorted(glob(os.path.join(self.zarrpath, v, v+".*.zarr")))
 
-        # check that lists align
+        ## check that lists align
         zlen = [len(z) for z in zdict.values()]
         assert all([zlen[i] == zlen[0] for i in range(len(zlen))])
 
-        # transpose list-of-lists; sort by key to ensure var order constant
+        ## transpose list-of-lists; sort by key to ensure var order constant
         zlol = list(zip(*sorted(zdict.values())))
 
-        # lazy-load & merge zarr stores
+        ## lazy-load & merge zarr stores
         self.zarrs = [lazymerge(z, self.varnames) for z in zlol]
 
-        # Name of time dimension may vary by dataset.  ERA5 is "time"
-        # but C404 is "Time".  If dataset is CF-compliant, we
-        # can/should look for a coordinate with the attribute
-        # 'axis="T"', but C404 isn't CF, so instead we look for a dim
-        # named "time" (any capitalization), and defer checking the
-        # axis attribute until it actually comes up in practice.
+        ## Name of time dimension may vary by dataset.  ERA5 is "time"
+        ## but C404 is "Time".  If dataset is CF-compliant, we
+        ## can/should look for a coordinate with the attribute
+        ## 'axis="T"', but C404 isn't CF, so instead we look for a dim
+        ## named "time" (any capitalization), and defer checking the
+        ## axis attribute until it actually comes up in practice.
         dnames = list(self.zarrs[0].dims)
         self.tdimname = dnames[[d.lower() for d in dnames].index("time")]
 
-        # construct indexing arrays
+        ## subset zarrs to constrain data to period defined by start
+        ## and finish.  Note that xarray subsetting includes finish.
+        start, finish = self.start, self.finish
+        if start is not None or finish is not None:
+            if start is None:
+                start = self.zarrs[0].coords[self.tdimname][0]
+            if finish is None:
+                start = self.zarrs[-1].coords[self.tdimname][-1]
+
+            selection = {self.tdimname: slice(start, finish)}
+            self.zarrs = [z.sel(selection) for z in self.zarrs]
+        
+        ## construct indexing arrays
         zarrlen = [z.sizes[self.tdimname] for z in self.zarrs]
         whichseg = [list(repeat(s, z)) for s, z in zip(range(len(zarrlen)), zarrlen)]
         segindex = [list(range(z)) for z in zarrlen]
 
-        # subset to samples that don't overlap a segment boundary
-        # (sample size N = can't use last N-1 samples)
+        ## subset to samples that don't overlap a segment boundary
+        ## (sample size N = can't use last N-1 samples)
         N = self.sample_len - 1
         self.segments = flatten([s[:-N] for s in whichseg])
         self.zindex = flatten([i[:-N] for i in segindex])
 
-        # precompute mask arrays for subsetting data for samples
+        ## precompute mask arrays for subsetting data for samples
         self.histmask = list(range(0, self.history_len, self.stride))
         foreind = list(range(self.sample_len))
         if self.one_shot:
@@ -194,8 +209,8 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         return sample
 
 
-# Test load speed of different number of vars & storage locs.  Full
-# load for C404 takes about 4 sec on campaign, 5 sec on scratch
+## Test load speed of different number of vars & storage locs.  Full
+## load for C404 takes about 4 sec on campaign, 5 sec on scratch
 def testC4loader():
     zdirs = {
         "worktest": "/glade/work/mcginnis/ML/GWC/testdata/zarr",
@@ -213,74 +228,74 @@ def testC4loader():
             print(cmd+"\t"+str(timeit(cmd, globals=globals(), number=1)))
 
 
-class PredictForecast404(torch.utils.data.IterableDataset):
-    def __init__(self,
-#                 filenames,
-                 dataconfig,
-                 forecasts,
-#                 history_len,
-#                 forecast_len,
-                 skip_periods,
-                 rank,
-                 world_size,
-                 shuffle=False,
-                 transform=None,
-                 rollout_p=0.0,
-                 start_time=None,
-                 stop_time=None):
-
-        self.dataset = CONUS404Dataset(
-            zarrpath=dataconfig["zarrpath"],
-            varnames=dataconfig["surface_variables"],
-            history_len=dataconfig["history_len"],
-            forecast_len=dataconfig["forecast_len"],
-            skip_periods=skip_periods, 
-            transform=transform
-        )
-        self.dataconfig = dataconfig
-#        self.meta_data_dict = self.dataset.meta_data_dict
-#        self.all_files = self.dataset.all_fils
-        self.history_len = history_len    ## redundant
-        self.forecast_len = forecast_len  ## redundtant
-#        self.filenames = filenames
-        self.transform = transform
-        self.rank = rank
-        self.world_size = world_size
-        self.shuffle = shuffle
-        self.skip_periods = skip_periods
-        self.current_epoch = 0
-        self.rollout_p = rollout_p
-        self.forecasts = forecasts
-        self.skip_periods = skip_periods if skip_periods is not None else 1
-
-    # def find_start_stop_indices(self, index):
-    ## This figures out which indexes are in which zarr store using
-    ## ERA5Dataset's mapping from datetimes to indexes; don't need it
-    ## since we're not doing things that way
-    
-    def __len__(self):
-        return len(self.forecasts)
-
-    def __iter__(self):
-        worker_info = get_worker_info()
-        num_workers = worker_info.num_workers if worker_info is not None else 1
-        worker_id = worker_info.id if worker_info is not None else 0
-        sampler = DistributedSampler(self, num_replicas=num_workers*self.world_size, rank=self.rank*num_workers+worker_id, shuffle=self.shuffle)
-
-        ## find start and end indexes
-        
-        # loop on indexes
-        
-        concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
-        ## gets both predictor & predictand so you can calculate metrics
-        ## can leave y empty if not calculating metrics now
-        
-        ## yield = return from loop but method stays in memory
-        ## given start date, look up starting timestep
-
-        ## look at new predict method on Will's branch climate_branch
-        ## in applications / predict_climate, predict() in main()
-
-        ## can re-use CONUS404 dataset class, if we just turn shuffle
-        ## off and give it a start and end index.
+# class PredictForecast404(torch.utils.data.IterableDataset):
+#     def __init__(self,
+# #                 filenames,
+#                  dataconfig,
+#                  forecasts,
+# #                 history_len,
+# #                 forecast_len,
+#                  skip_periods,
+#                  rank,
+#                  world_size,
+#                  shuffle=False,
+#                  transform=None,
+#                  rollout_p=0.0,
+#                  start_time=None,
+#                  stop_time=None):
+# 
+#         self.dataset = CONUS404Dataset(
+#             zarrpath=dataconfig["zarrpath"],
+#             varnames=dataconfig["surface_variables"],
+#             history_len=dataconfig["history_len"],
+#             forecast_len=dataconfig["forecast_len"],
+#             skip_periods=skip_periods, 
+#             transform=transform
+#         )
+#         self.dataconfig = dataconfig
+# #        self.meta_data_dict = self.dataset.meta_data_dict
+# #        self.all_files = self.dataset.all_fils
+#         self.history_len = history_len    ## redundant
+#         self.forecast_len = forecast_len  ## redundtant
+# #        self.filenames = filenames
+#         self.transform = transform
+#         self.rank = rank
+#         self.world_size = world_size
+#         self.shuffle = shuffle
+#         self.skip_periods = skip_periods
+#         self.current_epoch = 0
+#         self.rollout_p = rollout_p
+#         self.forecasts = forecasts
+#         self.skip_periods = skip_periods if skip_periods is not None else 1
+# 
+#     # def find_start_stop_indices(self, index):
+#     ## This figures out which indexes are in which zarr store using
+#     ## ERA5Dataset's mapping from datetimes to indexes; don't need it
+#     ## since we're not doing things that way
+#     
+#     def __len__(self):
+#         return len(self.forecasts)
+# 
+#     def __iter__(self):
+#         worker_info = get_worker_info()
+#         num_workers = worker_info.num_workers if worker_info is not None else 1
+#         worker_id = worker_info.id if worker_info is not None else 0
+#         sampler = DistributedSampler(self, num_replicas=num_workers*self.world_size, rank=self.rank*num_workers+worker_id, shuffle=self.shuffle)
+# 
+#         ## find start and end indexes
+#         
+#         # loop on indexes
+#         
+#         concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
+#         ## gets both predictor & predictand so you can calculate metrics
+#         ## can leave y empty if not calculating metrics now
+#         
+#         ## yield = return from loop but method stays in memory
+#         ## given start date, look up starting timestep
+# 
+#         ## look at new predict method on Will's branch climate_branch
+#         ## in applications / predict_climate, predict() in main()
+# 
+#         ## can re-use CONUS404 dataset class, if we just turn shuffle
+#         ## off and give it a start and end index.
         
