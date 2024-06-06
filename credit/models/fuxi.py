@@ -3,11 +3,6 @@ from torch import nn
 from torch.nn import functional as F
 from timm.layers.helpers import to_2tuple
 from timm.models.swin_transformer_v2 import SwinTransformerV2Stage
-import os
-
-import torch.distributed.checkpoint as DCP
-from torch.distributed.fsdp import StateDictType
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 import logging
 
 from credit.models.base_model import BaseModel
@@ -16,10 +11,20 @@ from credit.models.base_model import BaseModel
 logger = logging.getLogger(__name__)
 
 
+def apply_spectral_norm(model):
+    for module in model.modules():
+        if isinstance(module, (nn.Conv2d, nn.Linear, nn.ConvTranspose2d)):
+            nn.utils.spectral_norm(module)
+
+
+def circular_pad1d(x, pad):
+    return torch.cat((x[..., -pad:], x, x[..., :pad]), dim=-1)
+
+
 def get_pad3d(input_resolution, window_size):
     """
     Estimate the size of padding based on the given window size and the original input size.
-    
+
     Args:
         input_resolution (tuple[int]): (Pl, Lat, Lon)
         window_size (tuple[int]): (Pl, Lat, Lon)
@@ -64,7 +69,8 @@ def get_pad2d(input_resolution, window_size):
     window_size = [2] + list(window_size)
     padding = get_pad3d(input_resolution, window_size)
     return padding[: 4]
-    
+
+
 class CubeEmbedding(nn.Module):
     """
     Args:
@@ -73,10 +79,10 @@ class CubeEmbedding(nn.Module):
     """
     def __init__(self, img_size, patch_size, in_chans, embed_dim, norm_layer=nn.LayerNorm):
         super().__init__()
-        
+
         # input size
         self.img_size = img_size
-        
+
         # number of patches after embedding (T_num, Lat_num, Lon_num)
         patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1], img_size[2] // patch_size[2]]
         self.patches_resolution = patches_resolution
@@ -91,10 +97,10 @@ class CubeEmbedding(nn.Module):
         if norm_layer is not None:
             self.norm = norm_layer(embed_dim)
         else:
-            self.norm = None   
-        
+            self.norm = None
+
     def forward(self, x: torch.Tensor):
-        
+
         # example size: [Batch, 67, 2, 640, 1280]
         B, T, C, Lat, Lon = x.shape
 
@@ -108,12 +114,12 @@ class CubeEmbedding(nn.Module):
 
         # switch to channel-last for normalization
         # output size: [B, 3200, 1024]
-        x = x.transpose(1, 2)  # B T*Lat*Lon C 
+        x = x.transpose(1, 2)  # B T*Lat*Lon C
 
         # Layer norm (channel last)
         if self.norm is not None:
             x = self.norm(x)
-            
+
         # switch back to channel first
         # output size: [B, 1024, 3200]
         x = x.transpose(1, 2)
@@ -121,7 +127,7 @@ class CubeEmbedding(nn.Module):
         # recover T, Lat, Lon dimensions
         # output size: [B, 1024, 1, 40, 80]
         x = x.reshape(B, self.embed_dim, *self.patches_resolution)
-        
+
         return x
 
 
@@ -147,10 +153,10 @@ class DownBlock(nn.Module):
 
         # skip-connection
         shortcut = x
-        
+
         # residual path
         x = self.b(x)
-        
+
         # additive residual connection
         return x + shortcut
 
@@ -161,7 +167,7 @@ class UpBlock(nn.Module):
 
         # down-sampling with Transpose Conv
         self.conv = nn.ConvTranspose2d(in_chans, out_chans, kernel_size=2, stride=2)
-        
+
         # blocks of residual path
         blk = []
         for i in range(num_residuals):
@@ -197,28 +203,28 @@ class UTransformer(nn.Module):
     def __init__(self, embed_dim, num_groups, input_resolution, num_heads, window_size, depth):
         super().__init__()
         num_groups = to_2tuple(num_groups)
-        window_size = to_2tuple(window_size) # convert window_size[int] to tuple
+        window_size = to_2tuple(window_size)  # convert window_size[int] to tuple
 
-        # padding input tensors so they are divided by the window size 
-        padding = get_pad2d(input_resolution, window_size) # <--- Accepts tuple only
+        # padding input tensors so they are divided by the window size
+        padding = get_pad2d(input_resolution, window_size)  # <--- Accepts tuple only
         padding_left, padding_right, padding_top, padding_bottom = padding
         self.padding = padding
         self.pad = nn.ZeroPad2d(padding)
-        
+
         # input resolution after padding
         input_resolution = list(input_resolution)
         input_resolution[0] = input_resolution[0] + padding_top + padding_bottom
         input_resolution[1] = input_resolution[1] + padding_left + padding_right
 
-        # down-sampling block 
+        # down-sampling block
         self.down = DownBlock(embed_dim, embed_dim, num_groups[0])
 
         # SwinT block
-        self.layer = SwinTransformerV2Stage(embed_dim, 
-                                            embed_dim, 
-                                            input_resolution, 
-                                            depth, num_heads, 
-                                            window_size[0]) #<--- window_size[0] get window_size[int] from tuple
+        self.layer = SwinTransformerV2Stage(embed_dim,
+                                            embed_dim,
+                                            input_resolution,
+                                            depth, num_heads,
+                                            window_size[0])  # <--- window_size[0] get window_size[int] from tuple
 
         # up-sampling block
         self.up = UpBlock(embed_dim * 2, embed_dim, num_groups[1])
@@ -272,11 +278,14 @@ class Fuxi(BaseModel):
                  surface_channels=7,
                  num_heads=8,
                  depth=48,
-                 window_size=7):
+                 window_size=7,
+                 pad_lon=0,
+                 pad_lat=0,
+                 use_spectral_norm=False):
 
         super().__init__()
         # input tensor size (time, lat, lon)
-        img_size = (frames, image_height, image_width)
+        img_size = (frames, image_height + 2 * pad_lat, image_width + 2 * pad_lon)
 
         # the size of embedded patches
         patch_size = (frame_patch_size, patch_height, patch_width)
@@ -308,7 +317,39 @@ class Fuxi(BaseModel):
         self.surface_channels = surface_channels
         self.levels = levels
 
+        self.pad_lon = pad_lon
+        self.pad_lat = pad_lat
+        self.use_spectral_norm = use_spectral_norm
+
+        if self.use_spectral_norm:
+            logger.info("Adding spectral norm to all conv and linear layers")
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            # Move the model to the device
+            self.to(device)
+            apply_spectral_norm(self)
+
+        if self.pad_lon > 0:
+            logger.info(f"Padding each longitudinal boundary with {self.pad_lon} pixels from the other side")
+        if self.pad_lat > 0:
+            logger.info(f"Padding each pole using a reflection with {self.pad_lat} pixels")
+
     def forward(self, x: torch.Tensor):
+
+        if self.pad_lon > 0:
+            x = circular_pad1d(x, pad=self.pad_lon)
+
+        if self.pad_lat > 0:
+            x_shape = x.shape
+
+            # Reshape the tensor to (B, C*2, lat, lon) using the values from x_shape
+            x = torch.reshape(x, (x_shape[0], x_shape[1] * x_shape[2], x_shape[3], x_shape[4]))
+
+            # Pad the tensor with reflect mode
+            x = F.pad(x, (0, 0, self.pad_lat, self.pad_lat), mode='reflect')
+
+            # Reshape the tensor back to (B, C, 2, new lat, lon) using the values from x_shape
+            x = torch.reshape(x, (x_shape[0], x_shape[1], x_shape[2], x_shape[3] + 2 * self.pad_lat, x_shape[4]))
+
         # Tensor dims: Batch, Variables, Time, Lat grids, Lon grids
         B, _, _, _, _ = x.shape
 
@@ -320,7 +361,7 @@ class Fuxi(BaseModel):
 
         # Cube Embedding and squeese the time dimension
         # (the model produce single forecast lead time only)
-        
+
         # x: input size = (Batch, Variables, Time, Lat grids, Lon grids)
         x = self.cube_embedding(x).squeeze(2)  # B C Lat Lon
         # x: output size = (Batch, Embedded dimension, time, number of patches, number of patches)
@@ -336,10 +377,21 @@ class Fuxi(BaseModel):
         x = x.reshape(B, Lat * patch_lat, Lon * patch_lon, self.out_chans)
         x = x.permute(0, 3, 1, 2)  # B C Lat Lon
 
+        img_size = list(self.img_size)
+        if self.pad_lon > 0:
+            # Slice to original size
+            x = x[..., self.pad_lon:-self.pad_lon]
+            img_size[2] -= 2 * self.pad_lon
+
+        if self.pad_lat > 0:
+            # Slice to original size
+            x = x[..., self.pad_lat:-self.pad_lat, :]
+            img_size[1] -= 2 * self.pad_lat
+
         # bilinear interpolation
         # if lat/lon grids (i.e., img_size) cannot be divided by the patche size completely
         # this will preserve the output size
-        x = F.interpolate(x, size=self.img_size[1:], mode="bilinear")
+        x = F.interpolate(x, size=img_size[1:], mode="bilinear")
 
         # unfold the time dimension
         return x.unsqueeze(2)
@@ -357,10 +409,14 @@ if __name__ == "__main__":
     channels = 4
     surface_channels = 7
 
+    pad_lon = 80
+    pad_lat = 80
+
     img_size = (2, image_height, image_width)
     patch_size = (2, patch_height, patch_width)
     in_chans = 67
     dim = 1024
+    use_spectral_norm = True
 
     input_tensor = torch.randn(2, channels * levels + surface_channels, frames, image_height, image_width).to("cuda")
 
@@ -374,7 +430,10 @@ if __name__ == "__main__":
         patch_height=patch_height,
         patch_width=patch_width,
         frame_patch_size=frame_patch_size,
-        dim=dim
+        dim=dim,
+        pad_lat=pad_lat,
+        pad_lon=pad_lon,
+        use_spectral_norm=use_spectral_norm
     ).to("cuda")
 
     y_pred = model(input_tensor.to("cuda"))
