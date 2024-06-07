@@ -42,21 +42,23 @@ print("\nlen(dataset)\n", len(dataset))
 
 # Dataloader
 
-train_batch_size = 2
-
-train_loader = torch.utils.data.DataLoader(
+data_loader = torch.utils.data.DataLoader(
         dataset,
-        batch_size=train_batch_size,
+        batch_size=2,
         shuffle=False,
-        #sampler=train_sampler,
+        #sampler=data_sampler,
         pin_memory=True,
         #persistent_workers=True if thread_workers > 0 else False,
         num_workers=1,
         drop_last=True
     )
 
-print("\ntrain_loader:\n", train_loader)
+print("\ndata_loader:\n", data_loader)
 
-#for batch in train_loader:
-#    print("\nbatch:\n", batch)
-#    raise
+i = 0
+for batch in data_loader:
+    print("\nbatch:\n", i, dir(batch))
+    i = i +1
+    if 1 > 10:
+        break
+
