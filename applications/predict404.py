@@ -55,7 +55,7 @@ from credit.loss import VariableTotalLoss2D
 from credit.models import load_model
 #from credit.models.crossformer_may1 import CrossFormer
 #from credit.metrics import LatWeightedMetrics
-from credit.transforms import ToTensor, NormalizeState, NormalizeState_Quantile
+from credit.transforms404 import ToTensor, NormalizeState #, NormalizeState_Quantile
 from credit.seed import seed_everything
 from credit.pbs import launch_script, launch_script_mpi
 #from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
@@ -117,6 +117,12 @@ os.environ["MKL_NUM_THREADS"] = "1"
 #   # return x, surf for B, c, lat, lon output
 #   return tensor_upper_air, tensor_single_level
 
+
+
+#def tensor_to_xarray(tensor, template, x0=120, xsize=512, y0=300, ysize=512):
+#    result = xr.DataArray(
+#        tensor,
+#        ...
 
 def make_xarray(pred, forecast_datetime, lat, lon, conf):
 
@@ -397,7 +403,7 @@ def predict(rank, world_size, conf):
     #time_step = conf["data"]["time_step"] if "time_step" in conf["data"] else None
 
     # Load paths to all ERA5 data available
-    all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
+    #all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
 
     # Preprocessing transformations
     if conf["data"]["scaler_type"] == "std":
@@ -505,14 +511,15 @@ def predict(rank, world_size, conf):
         # model inference loop
         for batch in data_loader:
 
-            #### HERE!
 
             xin = batch["x"].to(device)
             yout = model(xin)
-            result = state_transformer.inverse_transform(y.cpu())
+            y = state_transformer.inverse_transform(yout.cpu())
 
-            
-            # make_xarray(result)
+            #### HERE!
+
+            # result = state_transformer.inverse_transform(yout.cpu())
+            # make_xarray(y)
             # append to list
             
             # end loop: save_netcdf()
