@@ -276,6 +276,7 @@ class Fuxi(BaseModel):
                  num_groups=32,
                  channels=4,
                  surface_channels=7,
+                 static_channels=0,
                  num_heads=8,
                  depth=48,
                  window_size=7,
@@ -291,8 +292,11 @@ class Fuxi(BaseModel):
         patch_size = (frame_patch_size, patch_height, patch_width)
 
         # number of channels = levels * varibales per level + surface variables
-        in_chans = out_chans = levels * channels + surface_channels
-
+        #in_chans = out_chans = levels * channels + surface_channels
+        
+        in_chans = channels * levels + surface_channels + static_channels
+        out_chans = channels * levels + surface_channels
+        
         # input resolution = number of embedded patches / 2
         # divide by two because "u_trasnformer" has a down-sampling block
         input_resolution = int(img_size[1] / patch_size[1] / 2), int(img_size[2] / patch_size[2] / 2)
@@ -398,31 +402,45 @@ class Fuxi(BaseModel):
 
 
 if __name__ == "__main__":
-    image_height = 640  # 640
-    patch_height = 16
-    image_width = 1280  # 1280
-    patch_width = 16
-    levels = 15
-    frames = 2
-    frame_patch_size = 2
 
-    channels = 4
-    surface_channels = 7
+    image_height = 640    # Image height (default: 640)
+    patch_height = 4     # Patch height (default: 16)
+    image_width = 1280    # Image width (default: 1280)
+    patch_width = 4      # Patch width (default: 16)
+    levels = 15           # Number of levels (default: 15)
+    frames = 2            # Number of frames (default: 2)
+    frame_patch_size = 2  # Frame patch size (default: 2)
+    dim = 1024            # Dimension (default: 1536)
+    num_groups = 32       # Number of groups (default: 32)
+    channels = 4          # Channels (default: 4)
+    surface_channels = 7  # Surface channels (default: 7)
+    static_channels = 2
+    num_heads = 8         # Number of heads (default: 8)
+    window_size = 7       # Window size (default: 7)
+    depth = 8            # Depth of the swin transformer (default: 48)
+    use_spectral_norm = True
+    
+    # image_height = 640  # 640
+    # patch_height = 16
+    # image_width = 1280  # 1280
+    # patch_width = 16
+    # levels = 15
+    # frames = 2
+    # frame_patch_size = 2
 
     pad_lon = 80
     pad_lat = 80
-
+    
     img_size = (2, image_height, image_width)
     patch_size = (2, patch_height, patch_width)
-    in_chans = 67
-    dim = 1024
-    use_spectral_norm = True
-
-    input_tensor = torch.randn(2, channels * levels + surface_channels, frames, image_height, image_width).to("cuda")
+    
+    input_tensor = torch.randn(2, channels * levels + surface_channels + static_channels, 
+                               frames, image_height, image_width).to("cuda")
 
     model = Fuxi(
         channels=channels,
         surface_channels=surface_channels,
+        static_channels=static_channels,
         levels=levels,
         image_height=image_height,
         image_width=image_width,
