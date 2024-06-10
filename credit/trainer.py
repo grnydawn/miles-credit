@@ -34,17 +34,24 @@ def accum_log(log, new_logs):
 
 
 class TOADataLoader:
-    # This should get moved to solar.py at some point
     def __init__(self, conf):
-        self.TOA = xr.open_dataset(conf["data"]["TOA_forcing_path"])
+        self.TOA = xr.open_dataset(conf["data"]["TOA_forcing_path"]).load()
         self.times_b = pd.to_datetime(self.TOA.time.values)
+
+        # Precompute day of year and hour arrays
+        self.days_of_year = self.times_b.dayofyear
+        self.hours_of_day = self.times_b.hour
 
     def __call__(self, datetime_input):
         doy = datetime_input.dayofyear
         hod = datetime_input.hour
-        mask_toa = [doy == time.dayofyear and hod == time.hour for time in self.times_b]
-        return torch.tensor(((self.TOA['tsi'].sel(time=mask_toa))/2540585.74).to_numpy()).unsqueeze(0)
 
+        # Use vectorized comparison for masking
+        mask_toa = (self.days_of_year == doy) & (self.hours_of_day == hod)
+        selected_tsi = self.TOA['tsi'].sel(time=mask_toa) / 2540585.74
+
+        # Convert to tensor and add dimension
+        return torch.tensor(selected_tsi.to_numpy()).unsqueeze(0)
 
 class Trainer:
 

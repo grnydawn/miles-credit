@@ -1,13 +1,10 @@
-import os
-from os.path import join, expandvars
-import typing as t
 import numpy as np
 import xarray as xr
-import matplotlib.pyplot as plt
 import torch
 
 from credit.data_conversions import dataConverter
-from weatherbench2.derived_variables import ZonalEnergySpectrum
+# from weatherbench2.derived_variables import ZonalEnergySpectrum
+# WEC limiting spectrum shit cause weather bench2 not installed.
 
 
 class LatWeightedMetrics:
@@ -36,9 +33,10 @@ class LatWeightedMetrics:
                            conf["loss"]["variable_weights"].values()]
             var_weights = [item for sublist in var_weights for item in sublist]
             self.w_var = torch.from_numpy(var_weights).unsqueeze(0).unsqueeze(-1)
-        
-        if self.predict_mode:
-            self.zonal_metrics = ZonalSpectrumMetric(self.conf)
+
+        # if self.predict_mode:
+        #    self.zonal_metrics = ZonalSpectrumMetric(self.conf)
+        # WEC limiting spectrum shit cause weather bench2 not installed.
 
     def __call__(self, pred, y, clim=None, transform=None, forecast_datetime=0):
         if transform is not None:
@@ -88,69 +86,67 @@ class LatWeightedMetrics:
             self.converter = dataConverter(self.conf)
             pred_ds = self.converter.tensor_to_dataset(pred, [forecast_datetime])
             y_ds = self.converter.tensor_to_dataset(y, [forecast_datetime])
-            loss_dict = loss_dict | self.zonal_metrics(pred_ds, y_ds)  # merge two dictionaries
+            # loss_dict = loss_dict | self.zonal_metrics(pred_ds, y_ds)  # merge two dictionaries
 
         return loss_dict
 
 
-class ZonalSpectrumMetric:
-    def __init__(self, conf):
-        '''
-        _variables arguments determine which data vars to compute spectra metric
-        '''
-        self.conf = conf
-        self.x_variables =  self.conf['data']['variables']
-        self.single_level_variables = self.conf['data']['static_variables']
-        self.variables = self.x_variables + self.single_level_variables
-        self.zonal_spectrum_calculator = ZonalEnergySpectrum(self.variables)
-        if conf["loss"]["use_latitude_weights"]:
-            lat = xr.open_dataset(conf['loss']['latitude_weights'])["latitude"]
-            w_lat = np.cos(np.deg2rad(lat))
-            self.w_lat = w_lat / w_lat.mean()
-    
-    def __call__(self, pred_ds, y_ds):
-        '''
-        pred, y can be normalized or unnormalized tensors.
-        trying to achieve minimal interface with LatWeightedMetrics 
-        '''
-        # first dim is the batch dim
-        loss_dict = {}
+# class ZonalSpectrumMetric:
+#     def __init__(self, conf):
+#         '''
+#         _variables arguments determine which data vars to compute spectra metric
+#         '''
+#         self.conf = conf
+#         self.x_variables =  self.conf['data']['variables']
+#         self.single_level_variables = self.conf['data']['static_variables']
+#         self.variables = self.x_variables + self.single_level_variables
+#         self.zonal_spectrum_calculator = ZonalEnergySpectrum(self.variables)
+#         if conf["loss"]["use_latitude_weights"]:
+#             lat = xr.open_dataset(conf['loss']['latitude_weights'])["latitude"]
+#             w_lat = np.cos(np.deg2rad(lat))
+#             self.w_lat = w_lat / w_lat.mean()
 
-        # compute spectrum and add epsilon to avoid division by zero
-        epsilon = 1e-7
-        pred_spectrum = self.zonal_spectrum_calculator.compute(pred_ds) + epsilon
-        y_spectrum = self.zonal_spectrum_calculator.compute(y_ds) + epsilon
-        loss = self.lat_weighted_spectrum_diff(pred_spectrum, y_spectrum)
-        loss_dict = self.store_loss(loss, loss_dict, 'spectrum_mse')
-        return loss_dict
+#     def __call__(self, pred_ds, y_ds):
+#         '''
+#         pred, y can be normalized or unnormalized tensors.
+#         trying to achieve minimal interface with LatWeightedMetrics
+#         '''
+#         # first dim is the batch dim
+#         loss_dict = {}
 
-    def store_loss(self, loss, loss_dict, metric_header_str):
-        '''
-        loss: dataset
-            w/ each variable dim must include level if atmos var, 
-            ow no need for single level vars
-        sums over remaining dimensions, and writes to loss_dict
-        '''
-        keys = []
-        for v in self.x_variables:
-            for k in range(self.conf['model']['levels']):
-                label = f"{metric_header_str}_{v}_{k}"
-                keys.append(label)
-                loss_dict[label] = loss[v].sel(level=k).sum()  #latitudes already weighted
+#         # compute spectrum and add epsilon to avoid division by zero
+#         epsilon = 1e-7
+#         pred_spectrum = self.zonal_spectrum_calculator.compute(pred_ds) + epsilon
+#         y_spectrum = self.zonal_spectrum_calculator.compute(y_ds) + epsilon
+#         loss = self.lat_weighted_spectrum_diff(pred_spectrum, y_spectrum)
+#         loss_dict = self.store_loss(loss, loss_dict, 'spectrum_mse')
+#         return loss_dict
 
-        for v in self.single_level_variables:
-            label = f"{metric_header_str}_{v}"
-            keys.append(label)
-            loss_dict[label] = loss[v].sum()  #latitudes already weighted
+#     def store_loss(self, loss, loss_dict, metric_header_str):
+#         '''
+#         loss: dataset
+#             w/ each variable dim must include level if atmos var,
+#             ow no need for single level vars
+#         sums over remaining dimensions, and writes to loss_dict
+#         '''
+#         keys = []
+#         for v in self.x_variables:
+#             for k in range(self.conf['model']['levels']):
+#                 label = f"{metric_header_str}_{v}_{k}"
+#                 keys.append(label)
+#                 loss_dict[label] = loss[v].sel(level=k).sum()  #latitudes already weighted
 
-        loss_dict[f"{metric_header_str}"] = np.mean([loss_dict[k] for k in keys])
-        return loss_dict
+#         for v in self.single_level_variables:
+#             label = f"{metric_header_str}_{v}"
+#             keys.append(label)
+#             loss_dict[label] = loss[v].sum()  #latitudes already weighted
 
-    def lat_weighted_spectrum_diff(self, pred_spectrum, y_spectrum):
-        # using squared distance
-        # variables to compute spectra on determined by class init
-        sq_diff = np.square(np.log10(pred_spectrum) - np.log10(y_spectrum))
-        sq_diff = sq_diff.sum(dim=['datetime', 'zonal_wavenumber'])
-        return sq_diff * self.w_lat
+#         loss_dict[f"{metric_header_str}"] = np.mean([loss_dict[k] for k in keys])
+#         return loss_dict
 
-
+#     def lat_weighted_spectrum_diff(self, pred_spectrum, y_spectrum):
+#         # using squared distance
+#         # variables to compute spectra on determined by class init
+#         sq_diff = np.square(np.log10(pred_spectrum) - np.log10(y_spectrum))
+#         sq_diff = sq_diff.sum(dim=['datetime', 'zonal_wavenumber'])
+#         return sq_diff * self.w_lat

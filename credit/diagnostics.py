@@ -8,7 +8,8 @@ from matplotlib import colors
 import cartopy.crs as ccrs
 import torch
 
-from weatherbench2.derived_variables import ZonalEnergySpectrum
+# from weatherbench2.derived_variables import ZonalEnergySpectrum
+# WEC limiting spectrum shit cause weather bench2 not installed.
 
 import logging
 
@@ -114,11 +115,11 @@ class KE_Diagnostic:
         for k, v in conf["diagnostics"]["ke_vis"].items():
             setattr(self, k, v)
 
-        if self.use_KE_spectrum_vis:
-            self.zonal_spectrum_calculator = ZonalEnergySpectrum("KE")
-            if self.summary_plot_fhs:
-                self.KE_fig, self.KE_axs = plt.subplots(ncols=1, figsize=(5, 5))
-                self.KE_axs = [self.KE_axs]
+        # if self.use_KE_spectrum_vis:
+        #     self.zonal_spectrum_calculator = ZonalEnergySpectrum("KE")
+        #     if self.summary_plot_fhs:
+        #         self.KE_fig, self.KE_axs = plt.subplots(ncols=1, figsize=(5, 5))
+        #         self.KE_axs = [self.KE_axs]
 
     def __call__(self, pred_ds, y_ds, fh):
         """
@@ -199,7 +200,7 @@ class KE_Diagnostic:
         return ds_spectrum
 
     def KE_spectrum_vis(self, pred_ke, y_ke, fh):
-        ###################### plot on summary plot ###########################
+        # plot on summary plot ###########################
         if int(fh) in self.summary_plot_fhs:  # plot some fhs onto a single plot
             avg_pred_spectrum = self.get_avg_spectrum_ke(pred_ke)
             avg_y_spectrum = self.get_avg_spectrum_ke(y_ke)
@@ -219,7 +220,7 @@ class KE_Diagnostic:
             self.KE_fig.savefig(join(self.plot_save_loc, f"ke_spectra_summary{fh}"))
             logger.info(f"saved summary plot to {join(self.plot_save_loc, f'ke_spectra_summary')}")
 
-    def plot_avg_spectrum(self, avg_pred_spectrum, avg_y_spectrum, 
+    def plot_avg_spectrum(self, avg_pred_spectrum, avg_y_spectrum,
                           fig, axs, alpha=1, label=None):
         # copied from spectrum diagnostic function
         for ax in axs:
@@ -231,7 +232,7 @@ class KE_Diagnostic:
         )
         avg_y_spectrum.plot(x="wavelength", ax=axs[curr_ax], color="0")
 
-        axs[curr_ax].set_title(f"KE Spectrum")
+        axs[curr_ax].set_title("KE Spectrum")
         ticks = axs[curr_ax].get_xticks()  # rescale x axis to km
         axs[curr_ax].set_xticks(ticks, ticks / 1000)
         axs[curr_ax].autoscale_view()
@@ -257,9 +258,10 @@ class ZonalSpectrumVis:
         # self.atmos_levels= vis_conf['atmos_levels']
         # self.single_level_variables = vis_conf['single_level_variables']
 
-        self.zonal_spectrum_calculator = ZonalEnergySpectrum(
-            self.atmos_variables + self.single_level_variables
-        )
+        # self.zonal_spectrum_calculator = ZonalEnergySpectrum(
+        #     self.atmos_variables + self.single_level_variables
+        # )
+        self.zonal_spectrum_calculator = None
         self.ifs_levels = xr.open_dataset(
             "/glade/derecho/scratch/dkimpara/nwp_files/ifs_levels.nc"
         )
@@ -306,7 +308,7 @@ class ZonalSpectrumVis:
         fig, axs = self.plot_avg_spectrum(avg_pred_spectrum, avg_y_spectrum, fig, axs)
         fig.savefig(join(self.plot_save_loc, f"spectra_{datetime_str}"))
 
-        ###################### plot on summary plot ###########################
+        # plot on summary plot ###########################
         if fh in self.summary_plot_fhs:  # plot some fhs onto a single plot
             fh_idx = self.summary_plot_fhs.index(fh)
             self.summary_fig, self.summary_axs = self.plot_avg_spectrum(
@@ -319,7 +321,7 @@ class ZonalSpectrumVis:
             )
             for ax in self.summary_axs:  # overwrite every time in case of crash
                 ax.legend()
-            self.summary_fig.savefig(join(self.plot_save_loc, f"spectra_summary"))
+            self.summary_fig.savefig(join(self.plot_save_loc, "spectra_summary"))
             logger.info(
                 f"saved summary plot to {join(self.plot_save_loc, f'spectra_summary')}"
             )
@@ -418,7 +420,7 @@ def interpolate_spectral_frequencies(
         if len(da.latitude.values.shape) > 0:  # latitude weirdly not squeezed out by groupby sometimes
             da = da.squeeze("latitude")
         da = (
-            da.swap_dims({wavenumber_dim: "frequency"}) 
+            da.swap_dims({wavenumber_dim: "frequency"})
             .drop_vars(wavenumber_dim)
             .interp(frequency=frequencies, method=method, **interp_kwargs)
         )
@@ -471,7 +473,6 @@ def anomaly_correlation_coefficient(pred, true):
 
 
 if __name__ == "__main__":
-    from os.path import join
     import yaml
     from credit.data_conversions import dataConverter
     import datetime
