@@ -407,7 +407,10 @@ class Trainer:
         rollout_scheduler=None,
         trial=False
     ):
-        save_loc = conf['save_loc']
+        # convert $USER to the actual user name
+        conf['save_loc'] = save_loc = os.path.expandvars(conf['save_loc'])
+        
+        # training hyperparameters
         start_epoch = conf['trainer']['start_epoch']
         epochs = conf['trainer']['epochs']
         skip_validation = conf['trainer']['skip_validation'] if 'skip_validation' in conf['trainer'] else False
