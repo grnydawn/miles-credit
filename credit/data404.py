@@ -29,6 +29,9 @@ IMAGE_ATTR_NAMES = ('historical_ERA5_images', 'target_ERA5_images')
 class Sample(TypedDict):
     """Simple class for structuring data for the ML model.
 
+    x = input (predictor) data (i.e, C404dataset[historical mask]
+    y = target (predictand) data (i.e, C404dataset[forecast mask]
+    
     Using typing.TypedDict gives us several advantages:
       1. Single 'source of truth' for the type and documentation of each example.
       2. A static type checker can check the types are correct.
@@ -37,13 +40,8 @@ class Sample(TypedDict):
     which would provide runtime checks, but the deal-breaker with Tuples is that they're immutable
     so we cannot change the values in the transforms.
     """
-    # IMAGES
-    # Shape: batch_size, seq_length, lat, lon, lev
-    historical_ERA5_images: Array
-    target_ERA5_images: Array
-
-    # METADATA
-    datetime_index: Array
+    x: Array
+    y: Array
 
     
 ## I don't think either of these are used anywhere
@@ -193,6 +191,9 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         return len(self.zindex)
 
     def __getitem__(self, index):
+        return self.get_data(index)
+            
+    def get_data(self, index, do_transform=True):
         time = self.tdimname
         first = self.zindex[index]
         last = first + self.sample_len
@@ -200,15 +201,29 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         subset = self.zarrs[seg].isel({time: slice(first, last)}).load()
         sample = Sample(
             x=subset.isel({time: self.histmask}),
-            y=subset.isel({time: self.foremask}),
-            datetime_index=subset[time])
+            y=subset.isel({time: self.foremask}))
 
-        if self.transform:
-            sample = self.transform(sample)
+        if do_transform:
+            if self.transform:
+                sample = self.transform(sample)
 
         return sample
 
+    
+#    def get_time(self, index):
+#        time = self.tdimname
+#        first = self.zindex[index]
+#        last = first + self.sample_len
+#        seg = self.segments[index]
+#        subset = self.zarrs[seg].isel({time: slice(first, last)}).load()
+#        result = {}
+#        result["x"] =subset.isel({time: self.histmask})
+#        result["y"] =subset.isel({time: self.foremask})
+#        return result
+        
 
+
+    
 ## Test load speed of different number of vars & storage locs.  Full
 ## load for C404 takes about 4 sec on campaign, 5 sec on scratch
 def testC4loader():

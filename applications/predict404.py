@@ -509,16 +509,18 @@ def predict(rank, world_size, conf):
         # static = None
 
         # model inference loop
-        for batch in data_loader:
+        for index, batch in enumerate(data_loader):
 
 
             xin = batch["x"].to(device)
             yout = model(xin)
             y = state_transformer.inverse_transform(yout.cpu())
 
+            rawdata = dataset.get_data(index, do_transform=False)            
+            t = rawdata["y"].coords[dataset.tdimname]
+            
             #### HERE!
 
-            # result = state_transformer.inverse_transform(yout.cpu())
             # make_xarray(y)
             # append to list
             
@@ -533,9 +535,9 @@ def predict(rank, world_size, conf):
             #### end HERE
 
             
-            # get the datetime and forecasted hours
-            date_time = batch["datetime"].item()
-            forecast_hour = batch["forecast_hour"].item()
+            # # get the datetime and forecasted hours
+            # date_time = batch["datetime"].item()
+            # forecast_hour = batch["forecast_hour"].item()
 
             ## initialization on the first forecast hour
             #if forecast_hour == 1:

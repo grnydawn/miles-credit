@@ -10,19 +10,20 @@ from torchvision import transforms as tforms
 logger = logging.getLogger(__name__)
 
 
-def load_transforms(conf):
-    if conf["data"]["scaler_type"] == 'std':
-        transform_scaler = NormalizeState(conf)
-    else:
-        logger.log('scaler type not supported check data: scaler_type in config file')
-        raise
-
-    to_tensor_scaler = ToTensor(conf=conf)
-
-    return tforms.Compose([
-            transform_scaler,
-            to_tensor_scaler,
-        ])
+## Not currently used
+#def load_transforms(conf):
+#    if conf["data"]["scaler_type"] == 'std':
+#        transform_scaler = NormalizeState(conf)
+#    else:
+#        logger.log('scaler type not supported check data: scaler_type in config file')
+#        raise
+#
+#    to_tensor_scaler = ToTensor(conf=conf)
+#
+#    return tforms.Compose([
+#            transform_scaler,
+#            to_tensor_scaler,
+#        ])
 
 
 class NormalizeState:
@@ -115,7 +116,6 @@ class ToTensor:
     def __call__(self, sample: Sample) -> Sample:
 
         return_dict = {}
-
         for key, value in sample.items():
             if key == 'historical_ERA5_images' or key == 'x':
                 self.datetime = value['Time']
@@ -133,18 +133,17 @@ class ToTensor:
                         value_var = value_var.squeeze(1)
                     concatenated_vars.append(value_var[:, self.slice_x, self.slice_y])
                 concatenated_vars = np.array(concatenated_vars)
-
             else:
                 value_var = value
-
+                
             if key == 'x':
-                x = torch.as_tensor(np.vstack([np.expand_dims(x, axis=0) for x in concatenated_vars]))
+                x = torch.as_tensor(np.vstack([np.expand_dims(v, axis=0) for v in concatenated_vars]))
                 return_dict['x'] = x
 
             elif key == 'y':
-                y = torch.as_tensor(np.vstack([np.expand_dims(x, axis=0) for x in concatenated_vars]))
+                y = torch.as_tensor(np.vstack([np.expand_dims(v, axis=0) for v in concatenated_vars]))
                 return_dict['y'] = y
-
+                
         if self.static_variables:
             pass
 
