@@ -21,7 +21,7 @@ trainer:
     mode: ddp # ddp fsdp
     train_batch_size: 2
     valid_batch_size: 2
-    batches_per_epoch: 1500 # Set to 0 to use len(dataloader)
+    batches_per_epoch: 0 # Set to 0 to use len(dataloader)
     valid_batches_per_epoch: 100
     learning_rate: 5.0e-04
     weight_decay: 1.0e-05
