@@ -55,7 +55,7 @@ model:
     num_groups: 32       # Number of groups (default: 32)
     channels: 4          # Channels (default: 4)
     surface_channels: 7  # Surface channels (default: 7)
-    static_channels: 2   #
+    static_channels: 3   #
     num_heads: 8         # Number of heads (default: 8)
     window_size: 7       # Window size (default: 7)
     depth: 8             # Depth of the swin transformer (default: 48)
@@ -69,7 +69,7 @@ loss:
     spectral_wavenum_init: 20
     spectral_lambda_reg: 0.1 # power loss is order of 1e1 (usually between 1-10)
     use_latitude_weights: True
-    latitude_weights: "/glade/u/home/wchapman/MLWPS/DataLoader/static_variables_ERA5_zhght.nc"
+    latitude_weights: "/glade/u/home/wchapman/MLWPS/DataLoader/LSM_static_variables_ERA5_zhght.nc"
     use_variable_weights: False
     variable_weights:
         U: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
