@@ -28,6 +28,7 @@ dependencies:
   - zarr
   - jupyter
   - xesmf
+  - geocat-comp
   - pip:
     - einops
     - echo-opt

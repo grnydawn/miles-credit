@@ -34,16 +34,24 @@ def accum_log(log, new_logs):
 
 
 class TOADataLoader:
-    # This should get moved to solar.py at some point
     def __init__(self, conf):
-        self.TOA = xr.open_dataset(conf["data"]["TOA_forcing_path"])
+        self.TOA = xr.open_dataset(conf["data"]["TOA_forcing_path"]).load()
         self.times_b = pd.to_datetime(self.TOA.time.values)
+
+        # Precompute day of year and hour arrays
+        self.days_of_year = self.times_b.dayofyear
+        self.hours_of_day = self.times_b.hour
 
     def __call__(self, datetime_input):
         doy = datetime_input.dayofyear
         hod = datetime_input.hour
-        mask_toa = [doy == time.dayofyear and hod == time.hour for time in self.times_b]
-        return torch.tensor(((self.TOA['tsi'].sel(time=mask_toa))/2540585.74).to_numpy()).unsqueeze(0)
+
+        # Use vectorized comparison for masking
+        mask_toa = (self.days_of_year == doy) & (self.hours_of_day == hod)
+        selected_tsi = self.TOA['tsi'].sel(time=mask_toa) / 2540585.74
+
+        # Convert to tensor and add dimension
+        return torch.tensor(selected_tsi.to_numpy()).unsqueeze(0)
 
 
 class Trainer:
@@ -69,14 +77,17 @@ class Trainer:
         scheduler,
         metrics
     ):
-
+        # training hyperparameters
         batches_per_epoch = conf['trainer']['batches_per_epoch']
         grad_accum_every = conf['trainer']['grad_accum_every']
         history_len = conf["data"]["history_len"]
         forecast_len = conf["data"]["forecast_len"]
         amp = conf['trainer']['amp']
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
+
         rollout_p = 1.0 if 'stop_rollout' not in conf['trainer'] else conf['trainer']['stop_rollout']
+
+        total_time_steps = conf["data"]["total_time_steps"] if "total_time_steps" in conf["data"] else forecast_len
 
         if "static_variables" in conf["data"] and "tsi" in conf["data"]["static_variables"]:
             self.toa = TOADataLoader(conf)
@@ -134,9 +145,9 @@ class Trainer:
                 k = 0
                 while True:
 
-                    with torch.no_grad() if k != forecast_len else torch.enable_grad():
+                    with torch.no_grad() if k != total_time_steps else torch.enable_grad():
 
-                        self.model.eval() if k != forecast_len else self.model.train()
+                        self.model.eval() if k != total_time_steps else self.model.train()
 
                         if getattr(self.model, 'use_codebook', False):
                             y_pred, cm_loss = self.model(x)
@@ -144,7 +155,7 @@ class Trainer:
                         else:
                             y_pred = self.model(x)
 
-                        if k == forecast_len:
+                        if k == total_time_steps:
                             break
 
                         k += 1
@@ -153,17 +164,22 @@ class Trainer:
                             x_detach = x.detach()[:, :, 1:]
                             if "static" in batch:
                                 y_pred = torch.cat((y_pred, static[:, :, 0:1].clone()), dim=1)
+
                             if "TOA" in batch:  # update the TOA based on doy and hod
                                 elapsed_time = pd.Timedelta(hours=k)
                                 current_times = [pd.to_datetime(_t, unit="ns") + elapsed_time for _t in batch["datetime"]]
                                 toa = torch.cat([self.toa(_t).unsqueeze(0) for _t in current_times], dim=0).to(self.device)
                                 y_pred = torch.cat([y_pred, toa], dim=1)
+
                             x = torch.cat([x_detach, y_pred], dim=2).detach()
                         else:
                             if "static" in batch or "TOA" in batch:
+
                                 x = y_pred.detach()
+
                                 if "static" in batch:
                                     x = torch.cat((x, static[:, :, 0:1].clone()), dim=1)
+
                                 if "TOA" in batch:  # update the TOA based on doy and hod
                                     elapsed_time = pd.Timedelta(hours=k)
                                     current_times = [pd.to_datetime(_t, unit="ns") + elapsed_time for _t in batch["datetime"]]
@@ -196,15 +212,23 @@ class Trainer:
             scaler.update()
             optimizer.zero_grad()
 
+            # Handle batch_loss
             batch_loss = torch.Tensor([logs["loss"]]).cuda(self.device)
             if distributed:
                 dist.all_reduce(batch_loss, dist.ReduceOp.AVG, async_op=False)
             results_dict["train_loss"].append(batch_loss[0].item())
+
             if 'forecast_hour' in batch:
-                forecast_hour_stop = batch['forecast_hour'][-1].item()
-                results_dict["train_forecast_len"].append(forecast_hour_stop+1)
+                forecast_hour_tensor = batch['forecast_hour'].to(self.device)
+                if distributed:
+                    dist.all_reduce(forecast_hour_tensor, dist.ReduceOp.AVG, async_op=False)
+                    forecast_hour_avg = forecast_hour_tensor[-1].item()
+                else:
+                    forecast_hour_avg = batch['forecast_hour'][-1].item()
+
+                results_dict["train_forecast_len"].append(forecast_hour_avg + 1)
             else:
-                results_dict["train_forecast_len"].append(forecast_len+1)
+                results_dict["train_forecast_len"].append(forecast_len + 1)
 
             if not np.isfinite(np.mean(results_dict["train_loss"])):
                 try:
@@ -254,6 +278,7 @@ class Trainer:
         history_len = conf["data"]["valid_history_len"] if "valid_history_len" in conf["data"] else conf["history_len"]
         forecast_len = conf["data"]["valid_forecast_len"] if "valid_forecast_len" in conf["data"] else conf["forecast_len"]
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
+        total_time_steps = conf["data"]["total_time_steps"] if "total_time_steps" in conf["data"] else forecast_len
 
         results_dict = defaultdict(list)
 
@@ -307,7 +332,7 @@ class Trainer:
                     else:
                         y_pred = self.model(x)
 
-                    if k == forecast_len:
+                    if k == total_time_steps:
                         break
 
                     k += 1
@@ -316,17 +341,22 @@ class Trainer:
                         x_detach = x.detach()[:, :, 1:]
                         if "static" in batch:
                             y_pred = torch.cat((y_pred, static[:, :, 0:1].clone()), dim=1)
+
                         if "TOA" in batch:  # update the TOA based on doy and hod
                             elapsed_time = pd.Timedelta(hours=k)
                             current_times = [pd.to_datetime(_t, unit="ns") + elapsed_time for _t in batch["datetime"]]
                             toa = torch.cat([self.toa(_t).unsqueeze(0) for _t in current_times], dim=0).to(self.device)
                             y_pred = torch.cat([y_pred, toa], dim=1)
+
                         x = torch.cat([x_detach, y_pred], dim=2).detach()
+
                     else:
                         if "static" in batch or "TOA" in batch:
                             x = y_pred.detach()
+
                             if "static" in batch:
                                 x = torch.cat((x, static[:, :, 0:1].clone()), dim=1)
+
                             if "TOA" in batch:  # update the TOA based on doy and hod
                                 elapsed_time = pd.Timedelta(hours=k)
                                 current_times = [pd.to_datetime(_t, unit="ns") + elapsed_time for _t in batch["datetime"]]
@@ -390,7 +420,10 @@ class Trainer:
         rollout_scheduler=None,
         trial=False
     ):
-        save_loc = conf['save_loc']
+        # convert $USER to the actual user name
+        conf['save_loc'] = save_loc = os.path.expandvars(conf['save_loc'])
+
+        # training hyperparameters
         start_epoch = conf['trainer']['start_epoch']
         epochs = conf['trainer']['epochs']
         skip_validation = conf['trainer']['skip_validation'] if 'skip_validation' in conf['trainer'] else False
@@ -401,6 +434,13 @@ class Trainer:
         else:
             results_dict = defaultdict(list)
             saved_results = pd.read_csv(os.path.join(save_loc, "training_log.csv"))
+
+            # Set start_epoch to the length of the training log and train for one epoch
+            # This is a manual override, you must use train_one_epoch = True
+            if "train_one_epoch" in conf["trainer"] and conf["trainer"]["train_one_epoch"]:
+                start_epoch = len(saved_results)
+                epochs = start_epoch + 1
+
             for key in saved_results.columns:
                 if key == "index":
                     continue
@@ -564,10 +604,6 @@ class Trainer:
             gc.collect()
 
             training_metric = "train_loss" if skip_validation else "valid_loss"
-
-            # Report result to the trial
-            if trial:
-                trial.report(results_dict[training_metric][-1], step=epoch)
 
             # Stop training if we have not improved after X epochs (stopping patience)
             best_epoch = [
