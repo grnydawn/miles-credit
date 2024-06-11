@@ -1,4 +1,4 @@
-save_loc: '/glade/work/mcginnis/ML/GWC/results/unet-05-winds'
+save_loc: '/glade/work/mcginnis/ML/GWC/results/unet-06-winds'
 seed: 2222
 
 data:
@@ -36,13 +36,13 @@ data:
     save_loc: './'
     mean_path: '/glade/derecho/scratch/mcginnis/conus404/stats/all.avg.C404.nc'
     std_path: '/glade/derecho/scratch/mcginnis/conus404/stats/all.std.C404.nc'
-    history_len: 3 
+    history_len: 2 
     forecast_len: 1
     valid_history_len: 2
     valid_forecast_len: 1
     time_step: 1
-    start: "1979-09-01"
-    finish: "2017-12-31"
+    start: "1979-10-01"
+    finish: "2012-09-30"
 
 model:
     type: "unet404"
@@ -63,7 +63,7 @@ trainer:
     learning_rate: 1.0e-04
     weight_decay: 1.0e-05
     start_epoch: 0
-    epochs: 80
+    epochs: 65  # 30 years hourly = 262,980; 66 x 1000-batch epoch =~ 1 full pass
     amp: False
     grad_accum_every: 1
     grad_max_norm: 1.0
@@ -93,8 +93,8 @@ loss:
 
 
 predict:
-    start: "2018-06-01"
-    finish: "2018-07-01"
+    start: "2017-10-01"
+    finish: "2022-09-30"
     use_laplace_filter: False
     save_format: "nc"
 
@@ -120,7 +120,7 @@ visualization:
     
 pbs: # casper
     conda: "credit"
-    job_name: 'unet-debug'
+    job_name: 'unet-speedtest'
     nodes: 1
     ncpus: 8
     ngpus: 1
