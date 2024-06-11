@@ -6,6 +6,7 @@ import xarray as xr
 from tqdm import tqdm
 
 
+
 def get_solar_radiation_loc(lon, lat, altitude, start_date, end_date, step_freq="1h", sub_freq="5Min"):
     """
     Calculate total solar irradiance at a single location over a range of times. Solar irradiance is integrated
@@ -41,6 +42,13 @@ def get_solar_radiation_loc(lon, lat, altitude, start_date, end_date, step_freq=
                               dims=("time", "latitude", "longitude"), name="tsi",
                               attrs={"long_name": "total solar irradiance", "units": "J m-2"})
     return out_rad_da
+
+
+def get_solar_index(curr_date, ref_date="2000-01-01"):
+    curr_date_ts = pd.to_datetime(curr_date)
+    year_start = pd.Timestamp(f"{curr_date_ts.year:d}-01-01")
+    curr_diff = curr_date_ts - year_start
+    return int(curr_diff.total_seconds() / 3600)
 
 
 if __name__ == "__main__":
