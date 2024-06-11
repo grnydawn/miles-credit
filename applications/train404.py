@@ -32,7 +32,7 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
    apply_activation_checkpointing,
 )
 from torchsummary import summary
-from credit.models.unet404 import SegmentationModel
+from credit.models.unet404 import SegmentationModel404
 from credit.loss404 import VariableTotalLoss2D
 from credit.data404 import CONUS404Dataset
 from credit.transforms404 import NormalizeState, ToTensor
@@ -92,7 +92,9 @@ def load_dataset_and_sampler(conf, world_size, rank, is_train, seed=42):
         varnames=conf['data']['variables'],
         history_len=conf['data']['history_len'],
         forecast_len=conf['data']['forecast_len'],
-        transform=transforms
+        transform=transforms,
+        start=conf['data']['start'],
+        finish=conf['data']['finish']
     )
 
     sampler = DistributedSampler(
@@ -269,7 +271,7 @@ def model_and_memory_summary(conf):
 
     # model
 
-    m = SegmentationModel(conf)
+    m = SegmentationModel404(conf)
     # m = load_model(conf)
 
     # send the module to the correct device first
@@ -360,7 +362,7 @@ def main(rank, world_size, conf, trial=False):
 
     # model
 
-    m = SegmentationModel(conf)
+    m = SegmentationModel404(conf)
     #m = load_model(conf)
 
     # have to send the module to the correct device first
