@@ -71,28 +71,46 @@ def setup(rank, world_size, mode):
 
 
 def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
+
+    # convert $USER to the actual user name
+    conf['save_loc'] = os.path.expandvars(conf['save_loc'])
+
+    # number of previous lead time inputs
     history_len = conf["data"]["history_len"]
-    forecast_len = conf["data"]["forecast_len"]
-    max_forecast_len = None if "max_forecast_len" not in conf["data"] else conf["data"]["max_forecast_len"]
     valid_history_len = conf["data"]["valid_history_len"]
+    history_len = history_len if is_train else valid_history_len
+
+    # number of lead times to forecast
+    forecast_len = conf["data"]["forecast_len"]
     valid_forecast_len = conf["data"]["valid_forecast_len"]
+    forecast_len = forecast_len if is_train else valid_forecast_len
+
+    # optional setting: max_forecast_len
+    max_forecast_len = None if "max_forecast_len" not in conf["data"] else conf["data"]["max_forecast_len"]
+
+    # optional setting: skip_periods
     skip_periods = None if "skip_periods" not in conf["data"] else conf["data"]["skip_periods"]
+
+    # optional setting: one_shot
     one_shot = None if "one_shot" not in conf["data"] else conf["data"]["one_shot"]
 
-    history_len = history_len if is_train else valid_history_len
-    forecast_len = forecast_len if is_train else valid_forecast_len
+    # shufle dataloader if training
     shuffle = is_train
     name = "Train" if is_train else "Valid"
 
+    # data preprocessing utils
     transforms = load_transforms(conf)
 
+    # quantile transform using BridgeScaler
     if conf["data"]["scaler_type"] == "quantile-cached":
         dataset = Dataset_BridgeScaler(
             conf,
             conf_dataset='bs_years_train' if is_train else 'bs_years_val',
             transform=transforms
         )
+
     else:
+        # Z-score
         dataset = ERA5Dataset(
             filenames=files,
             history_len=history_len,
@@ -103,6 +121,7 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
             transform=transforms
         )
 
+    # Pytorch sampler
     sampler = DistributedSampler(
         dataset,
         num_replicas=world_size,
@@ -118,18 +137,27 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
 
 def distributed_model_wrapper(conf, neural_network, device):
 
+    # convert $USER to the actual user name
+    conf['save_loc'] = os.path.expandvars(conf['save_loc'])
+
+    # FSDP polices
     if conf["trainer"]["mode"] == "fsdp":
 
         # Define the sharding policies
-
+        # crossformer
         if "crossformer" in conf["model"]["type"]:
             from credit.models.crossformer import (
                 Attention, DynamicPositionBias, FeedForward, CrossEmbedLayer
             )
             transformer_layers_cls = {Attention, DynamicPositionBias, FeedForward, CrossEmbedLayer}
+
+        # FuXi
+        # FuXi supports "spectral_nrom = True" only
         elif "fuxi" in conf["model"]["type"]:
             from timm.models.swin_transformer_v2 import SwinTransformerV2Stage
             transformer_layers_cls = {SwinTransformerV2Stage}
+
+        # other models not supported
         else:
             raise OSError("You asked for FSDP but only crossformer and fuxi are currently supported.")
 
@@ -213,11 +241,16 @@ def distributed_model_wrapper(conf, neural_network, device):
 
 def load_model_states_and_optimizer(conf, model, device):
 
+    # convert $USER to the actual user name
+    conf['save_loc'] = save_loc = os.path.expandvars(conf['save_loc'])
+
+    # training hyperparameters
     start_epoch = conf['trainer']['start_epoch']
-    save_loc = os.path.expandvars(conf['save_loc'])
     learning_rate = float(conf['trainer']['learning_rate'])
     weight_decay = float(conf['trainer']['weight_decay'])
     amp = conf['trainer']['amp']
+
+    # load weights falg
     load_weights = False if 'load_weights' not in conf['trainer'] else conf['trainer']['load_weights']
 
     #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
@@ -232,6 +265,8 @@ def load_model_states_and_optimizer(conf, model, device):
     else:
         ckpt = os.path.join(save_loc, "checkpoint.pt")
         checkpoint = torch.load(ckpt, map_location=device)
+
+        # FSDP checkpoint settings
         if conf["trainer"]["mode"] == "fsdp":
             logging.info(f"Loading FSDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
             optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
@@ -240,7 +275,9 @@ def load_model_states_and_optimizer(conf, model, device):
             checkpoint_io.load_unsharded_model(model, os.path.join(save_loc, "model_checkpoint.pt"))
             if 'load_optimizer' in conf['trainer'] and conf['trainer']['load_optimizer']:
                 checkpoint_io.load_unsharded_optimizer(optimizer, os.path.join(save_loc, "optimizer_checkpoint.pt"))
+
         else:
+            # DDP settings
             if conf["trainer"]["mode"] == "ddp":
                 logging.info(f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
                 model.module.load_state_dict(checkpoint["model_state_dict"])
@@ -253,8 +290,10 @@ def load_model_states_and_optimizer(conf, model, device):
 
         scheduler = load_scheduler(optimizer, conf)
         scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
+
         if scheduler is not None:
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
         scaler.load_state_dict(checkpoint['scaler_state_dict'])
 
     # Enable updating the lr if not using a policy
@@ -266,25 +305,28 @@ def load_model_states_and_optimizer(conf, model, device):
 
 
 def model_and_memory_summary(conf):
-    # Config settings
 
-    channels = conf["model"]["levels"] * len(conf["data"]["variables"]) + len(conf["data"]["surface_variables"])
+    # convert $USER to the actual user name
+    conf['save_loc'] = os.path.expandvars(conf['save_loc'])
+
+    # estimate input tensor size
+    static_channels = 0 if "static_channels" not in conf["model"] else conf["model"]["static_channels"]
+    channels = conf["model"]["levels"] * len(conf["data"]["variables"]) + len(conf["data"]["surface_variables"]) + static_channels
     frames = conf["model"]["frames"]
     height = conf["model"]["image_height"]
     width = conf["model"]["image_width"]
+
+    # set device
     device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
 
     # Set seeds
-
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
 
     # model
-
     m = load_model(conf)
 
     # send the module to the correct device first
-
     m.to(device)
 
     try:
@@ -297,6 +339,9 @@ def model_and_memory_summary(conf):
 
 
 def main(rank, world_size, conf, trial=False):
+
+    # convert $USER to the actual user name
+    conf['save_loc'] = os.path.expandvars(conf['save_loc'])
 
     if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
         setup(rank, world_size, conf["trainer"]["mode"])
@@ -318,11 +363,11 @@ def main(rank, world_size, conf, trial=False):
     # datasets (zarr reader)
 
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
-    #filenames = list(map(os.path.basename, all_ERA_files))
-    #all_years = sorted([re.findall(r'(?:_)(\d{4})', fn)[0] for fn in filenames])
+    # filenames = list(map(os.path.basename, all_ERA_files))
+    # all_years = sorted([re.findall(r'(?:_)(\d{4})', fn)[0] for fn in filenames])
 
     # Specify the years for each set
-    #if conf["data"][train_test_split]:
+    # if conf["data"][train_test_split]:
     #    normalized_split = conf["data"][train_test_split] / sum(conf["data"][train_test_split])
     #    n_years = len(all_years)
     #    train_years, sklearn.model_selection.train_test_split¶
@@ -510,6 +555,7 @@ if __name__ == "__main__":
     # Create directories if they do not exist and copy yml file
     save_loc = os.path.expandvars(conf["save_loc"])
     os.makedirs(save_loc, exist_ok=True)
+
     if not os.path.exists(os.path.join(save_loc, "model.yml")):
         shutil.copy(config, os.path.join(save_loc, "model.yml"))
 

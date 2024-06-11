@@ -2,7 +2,7 @@ import numpy as np
 import xarray as xr
 import torch
 
-from credit.data_conversions import dataConverter
+# from credit.data_conversions import dataConverter
 # from weatherbench2.derived_variables import ZonalEnergySpectrum
 # WEC limiting spectrum shit cause weather bench2 not installed.
 
@@ -82,14 +82,13 @@ class LatWeightedMetrics:
         # additional metrics where xarray computations are needed
         # put metric configs here
         # convert to xarray:
-        if self.predict_mode:
-            self.converter = dataConverter(self.conf)
-            pred_ds = self.converter.tensor_to_dataset(pred, [forecast_datetime])
-            y_ds = self.converter.tensor_to_dataset(y, [forecast_datetime])
-            # loss_dict = loss_dict | self.zonal_metrics(pred_ds, y_ds)  # merge two dictionaries
+        # if self.predict_mode:
+        #     self.converter = dataConverter(self.conf)
+        #     pred_ds = self.converter.tensor_to_dataset(pred, [forecast_datetime])
+        #     y_ds = self.converter.tensor_to_dataset(y, [forecast_datetime])
+        #     loss_dict = loss_dict | self.zonal_metrics(pred_ds, y_ds)  # merge two dictionaries
 
         return loss_dict
-
 
 # class ZonalSpectrumMetric:
 #     def __init__(self, conf):

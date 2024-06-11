@@ -53,6 +53,7 @@ class TOADataLoader:
         # Convert to tensor and add dimension
         return torch.tensor(selected_tsi.to_numpy()).unsqueeze(0)
 
+
 class Trainer:
 
     def __init__(self, model, rank, module=False):
@@ -76,14 +77,16 @@ class Trainer:
         scheduler,
         metrics
     ):
-
+        # training hyperparameters
         batches_per_epoch = conf['trainer']['batches_per_epoch']
         grad_accum_every = conf['trainer']['grad_accum_every']
         history_len = conf["data"]["history_len"]
         forecast_len = conf["data"]["forecast_len"]
         amp = conf['trainer']['amp']
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
+
         rollout_p = 1.0 if 'stop_rollout' not in conf['trainer'] else conf['trainer']['stop_rollout']
+
         total_time_steps = conf["data"]["total_time_steps"] if "total_time_steps" in conf["data"] else forecast_len
 
         if "static_variables" in conf["data"] and "tsi" in conf["data"]["static_variables"]:
@@ -161,17 +164,22 @@ class Trainer:
                             x_detach = x.detach()[:, :, 1:]
                             if "static" in batch:
                                 y_pred = torch.cat((y_pred, static[:, :, 0:1].clone()), dim=1)
+
                             if "TOA" in batch:  # update the TOA based on doy and hod
                                 elapsed_time = pd.Timedelta(hours=k)
                                 current_times = [pd.to_datetime(_t, unit="ns") + elapsed_time for _t in batch["datetime"]]
                                 toa = torch.cat([self.toa(_t).unsqueeze(0) for _t in current_times], dim=0).to(self.device)
                                 y_pred = torch.cat([y_pred, toa], dim=1)
+
                             x = torch.cat([x_detach, y_pred], dim=2).detach()
                         else:
                             if "static" in batch or "TOA" in batch:
+
                                 x = y_pred.detach()
+
                                 if "static" in batch:
                                     x = torch.cat((x, static[:, :, 0:1].clone()), dim=1)
+
                                 if "TOA" in batch:  # update the TOA based on doy and hod
                                     elapsed_time = pd.Timedelta(hours=k)
                                     current_times = [pd.to_datetime(_t, unit="ns") + elapsed_time for _t in batch["datetime"]]
@@ -333,17 +341,22 @@ class Trainer:
                         x_detach = x.detach()[:, :, 1:]
                         if "static" in batch:
                             y_pred = torch.cat((y_pred, static[:, :, 0:1].clone()), dim=1)
+
                         if "TOA" in batch:  # update the TOA based on doy and hod
                             elapsed_time = pd.Timedelta(hours=k)
                             current_times = [pd.to_datetime(_t, unit="ns") + elapsed_time for _t in batch["datetime"]]
                             toa = torch.cat([self.toa(_t).unsqueeze(0) for _t in current_times], dim=0).to(self.device)
                             y_pred = torch.cat([y_pred, toa], dim=1)
+
                         x = torch.cat([x_detach, y_pred], dim=2).detach()
+
                     else:
                         if "static" in batch or "TOA" in batch:
                             x = y_pred.detach()
+
                             if "static" in batch:
                                 x = torch.cat((x, static[:, :, 0:1].clone()), dim=1)
+
                             if "TOA" in batch:  # update the TOA based on doy and hod
                                 elapsed_time = pd.Timedelta(hours=k)
                                 current_times = [pd.to_datetime(_t, unit="ns") + elapsed_time for _t in batch["datetime"]]
@@ -407,7 +420,10 @@ class Trainer:
         rollout_scheduler=None,
         trial=False
     ):
-        save_loc = conf['save_loc']
+        # convert $USER to the actual user name
+        conf['save_loc'] = save_loc = os.path.expandvars(conf['save_loc'])
+
+        # training hyperparameters
         start_epoch = conf['trainer']['start_epoch']
         epochs = conf['trainer']['epochs']
         skip_validation = conf['trainer']['skip_validation'] if 'skip_validation' in conf['trainer'] else False
