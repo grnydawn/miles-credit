@@ -16,8 +16,6 @@ python predict.py -c ../results/fuxi/model.yml
 
 # Config file structure break down
 
-## Head
-
 ```
 save_loc: "/glade/work/$USER/"
 ```
