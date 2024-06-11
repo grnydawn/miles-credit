@@ -71,7 +71,7 @@ def setup(rank, world_size, mode):
 
 
 def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
-    
+
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
 
@@ -79,12 +79,12 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
     history_len = conf["data"]["history_len"]
     valid_history_len = conf["data"]["valid_history_len"]
     history_len = history_len if is_train else valid_history_len
-    
+
     # number of lead times to forecast
     forecast_len = conf["data"]["forecast_len"]
     valid_forecast_len = conf["data"]["valid_forecast_len"]
     forecast_len = forecast_len if is_train else valid_forecast_len
-    
+
     # optional setting: max_forecast_len
     max_forecast_len = None if "max_forecast_len" not in conf["data"] else conf["data"]["max_forecast_len"]
 
@@ -108,7 +108,7 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
             conf_dataset='bs_years_train' if is_train else 'bs_years_val',
             transform=transforms
         )
-        
+
     else:
         # Z-score
         dataset = ERA5Dataset(
@@ -136,7 +136,7 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
 
 
 def distributed_model_wrapper(conf, neural_network, device):
-    
+
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
 
@@ -144,20 +144,20 @@ def distributed_model_wrapper(conf, neural_network, device):
     if conf["trainer"]["mode"] == "fsdp":
 
         # Define the sharding policies
-        ## crossformer
+        # crossformer
         if "crossformer" in conf["model"]["type"]:
             from credit.models.crossformer import (
                 Attention, DynamicPositionBias, FeedForward, CrossEmbedLayer
             )
             transformer_layers_cls = {Attention, DynamicPositionBias, FeedForward, CrossEmbedLayer}
-            
-        ## FuXi
-        ## FuXi supports "spectral_nrom = True" only
+
+        # FuXi
+        # FuXi supports "spectral_nrom = True" only
         elif "fuxi" in conf["model"]["type"]:
             from timm.models.swin_transformer_v2 import SwinTransformerV2Stage
             transformer_layers_cls = {SwinTransformerV2Stage}
-            
-        ## other models not supported
+
+        # other models not supported
         else:
             raise OSError("You asked for FSDP but only crossformer and fuxi are currently supported.")
 
@@ -238,8 +238,9 @@ def distributed_model_wrapper(conf, neural_network, device):
 
     return model
 
+
 def load_model_states_and_optimizer(conf, model, device):
-    
+
     # convert $USER to the actual user name
     conf['save_loc'] = save_loc = os.path.expandvars(conf['save_loc'])
 
@@ -274,7 +275,7 @@ def load_model_states_and_optimizer(conf, model, device):
             checkpoint_io.load_unsharded_model(model, os.path.join(save_loc, "model_checkpoint.pt"))
             if 'load_optimizer' in conf['trainer'] and conf['trainer']['load_optimizer']:
                 checkpoint_io.load_unsharded_optimizer(optimizer, os.path.join(save_loc, "optimizer_checkpoint.pt"))
-                
+
         else:
             # DDP settings
             if conf["trainer"]["mode"] == "ddp":
@@ -289,10 +290,10 @@ def load_model_states_and_optimizer(conf, model, device):
 
         scheduler = load_scheduler(optimizer, conf)
         scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
-        
+
         if scheduler is not None:
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-            
+
         scaler.load_state_dict(checkpoint['scaler_state_dict'])
 
     # Enable updating the lr if not using a policy
@@ -307,7 +308,7 @@ def model_and_memory_summary(conf):
 
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
-    
+
     # estimate input tensor size
     static_channels = 0 if "static_channels" not in conf["model"] else conf["model"]["static_channels"]
     channels = conf["model"]["levels"] * len(conf["data"]["variables"]) + len(conf["data"]["surface_variables"]) + static_channels
@@ -327,7 +328,7 @@ def model_and_memory_summary(conf):
 
     # send the module to the correct device first
     m.to(device)
-    
+
     try:
         summary(m, input_size=(channels, frames, height, width))
     except RuntimeError as e:
@@ -341,7 +342,7 @@ def main(rank, world_size, conf, trial=False):
 
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
-    
+
     if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
         setup(rank, world_size, conf["trainer"]["mode"])
 
@@ -362,11 +363,11 @@ def main(rank, world_size, conf, trial=False):
     # datasets (zarr reader)
 
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
-    #filenames = list(map(os.path.basename, all_ERA_files))
-    #all_years = sorted([re.findall(r'(?:_)(\d{4})', fn)[0] for fn in filenames])
+    # filenames = list(map(os.path.basename, all_ERA_files))
+    # all_years = sorted([re.findall(r'(?:_)(\d{4})', fn)[0] for fn in filenames])
 
     # Specify the years for each set
-    #if conf["data"][train_test_split]:
+    # if conf["data"][train_test_split]:
     #    normalized_split = conf["data"][train_test_split] / sum(conf["data"][train_test_split])
     #    n_years = len(all_years)
     #    train_years, sklearn.model_selection.train_test_split¶
@@ -554,7 +555,7 @@ if __name__ == "__main__":
     # Create directories if they do not exist and copy yml file
     save_loc = os.path.expandvars(conf["save_loc"])
     os.makedirs(save_loc, exist_ok=True)
-    
+
     if not os.path.exists(os.path.join(save_loc, "model.yml")):
         shutil.copy(config, os.path.join(save_loc, "model.yml"))
 
