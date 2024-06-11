@@ -5,8 +5,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 import sys
 
-from credit.vit2d import ViT2D
-from credit.rvt import RViT
+from credit.models.vit2d import ViT2D
+from credit.models.rvt import RViT
 from credit.data import ERA5Dataset, ToTensor, NormalizeState, NormalizeTendency, DistributedSequentialDataset
 from torchvision import transforms
 from credit.metrics import LatWeightedMetrics

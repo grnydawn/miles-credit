@@ -27,6 +27,7 @@ dependencies:
   - dask-jobqueue
   - zarr
   - jupyter
+  - xesmf
   - pip:
     - einops
     - echo-opt
@@ -36,5 +37,6 @@ dependencies:
     - vector_quantize_pytorch
     - timm==0.6.12
     - ffmpeg
+    - torchsummary
     - .
 
