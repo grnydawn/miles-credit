@@ -114,11 +114,11 @@ class KE_Diagnostic:
         for k, v in conf["diagnostics"]["ke_vis"].items():
             setattr(self, k, v)
 
-        if self.use_KE_spectrum_vis:
-            self.zonal_spectrum_calculator = None  # ZonalEnergySpectrum("KE")
-            if self.summary_plot_fhs:
-                self.KE_fig, self.KE_axs = plt.subplots(ncols=1, figsize=(5, 5))
-                self.KE_axs = [self.KE_axs]
+        # if self.use_KE_spectrum_vis:
+        #     self.zonal_spectrum_calculator = ZonalEnergySpectrum("KE")
+        #     if self.summary_plot_fhs:
+        #         self.KE_fig, self.KE_axs = plt.subplots(ncols=1, figsize=(5, 5))
+        #         self.KE_axs = [self.KE_axs]
 
     def __call__(self, pred_ds, y_ds, fh):
         """
@@ -189,6 +189,7 @@ class KE_Diagnostic:
 
     def KE_spectrum_vis(self, pred_ke, y_ke, fh):
         # plot on summary plot
+
         if int(fh) in self.summary_plot_fhs:  # plot some fhs onto a single plot
             avg_pred_spectrum = self.get_avg_spectrum_ke(pred_ke)
             avg_y_spectrum = self.get_avg_spectrum_ke(y_ke)
@@ -250,6 +251,7 @@ class ZonalSpectrumVis:
         # self.zonal_spectrum_calculator = ZonalEnergySpectrum(
         #     self.atmos_variables + self.single_level_variables
         # )
+
         self.ifs_levels = xr.open_dataset(
             "/glade/derecho/scratch/dkimpara/nwp_files/ifs_levels.nc"
         )
@@ -297,6 +299,7 @@ class ZonalSpectrumVis:
         fig.savefig(join(self.plot_save_loc, f"spectra_{datetime_str}"))
 
         # plot on summary plot
+
         if fh in self.summary_plot_fhs:  # plot some fhs onto a single plot
             fh_idx = self.summary_plot_fhs.index(fh)
             self.summary_fig, self.summary_axs = self.plot_avg_spectrum(
