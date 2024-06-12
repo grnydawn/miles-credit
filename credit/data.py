@@ -300,7 +300,7 @@ class ERA5Dataset(torch.utils.data.Dataset):
         if true_ind > (len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+1)):
             true_ind = len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+1)
 
-        datasel = self.all_fils[int(result_key)].isel(time=slice(true_ind, true_ind+self.history_len+self.forecast_len+1)).load()
+        datasel = self.all_fils[int(result_key)].isel(time=slice(true_ind, true_ind+self.history_len+self.forecast_len+1))
 
         if (self.skip_periods is not None) and (self.one_shot is None):
             sample = Sample(
@@ -320,12 +320,15 @@ class ERA5Dataset(torch.utils.data.Dataset):
             )
 
         elif self.one_shot is not None:
-            total_seq_len = self.history_len + self.forecast_len + 1
+            historical_data = datasel.isel(time=slice(0, self.history_len)).load()
+            target_data = datasel.isel(time=slice(-1, None)).load()
+            # Create the Sample object with the loaded data
             sample = Sample(
-                historical_ERA5_images=datasel.isel(time=slice(0, self.history_len)),
-                target_ERA5_images=datasel.isel(time=slice(total_seq_len-1, total_seq_len)),
-                datetime_index=datasel.time.values.astype('datetime64[s]').astype(int)
-            )
+                historical_ERA5_images=historical_data,
+                target_ERA5_images=target_data,
+                datetime_index=[int(historical_data.time.values[0].astype('datetime64[s]').astype(int)),
+                                int(target_data.time.values[0].astype('datetime64[s]').astype(int))]
+                )
         else:
             sample = Sample(
                 historical_ERA5_images=datasel.isel(time=slice(0, self.history_len)),
@@ -415,7 +418,7 @@ class ERA5(torch.utils.data.Dataset):
         if true_ind > (len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+1)):
             true_ind = len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+1)
 
-        datasel = self.all_fils[int(result_key)].isel(time=slice(true_ind, true_ind+self.history_len+self.forecast_len+1)).load()
+        datasel = self.all_fils[int(result_key)].isel(time=slice(true_ind, true_ind+self.history_len+self.forecast_len+1))
 
         if (self.skip_periods is not None) and (self.one_shot is None):
             sample = Sample(
@@ -435,12 +438,14 @@ class ERA5(torch.utils.data.Dataset):
             )
 
         elif self.one_shot is not None:
-            total_seq_len = self.history_len + self.forecast_len + 1
+            historical_data = datasel.isel(time=slice(0, self.history_len)).load()
+            target_data = datasel.isel(time=slice(-1, None)).load()
             sample = Sample(
-                historical_ERA5_images=datasel.isel(time=slice(0, self.history_len)),
-                target_ERA5_images=datasel.isel(time=slice(total_seq_len-1, total_seq_len)),
-                datetime_index=datasel.time.values.astype('datetime64[s]').astype(int)
-            )
+                historical_ERA5_images=historical_data,
+                target_ERA5_images=target_data,
+                datetime_index=[int(historical_data.time.values[0].astype('datetime64[s]').astype(int)),
+                                int(target_data.time.values[0].astype('datetime64[s]').astype(int))]
+                )
         else:
             sample = Sample(
                 historical_ERA5_images=datasel.isel(time=slice(0, self.history_len)),
