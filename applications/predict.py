@@ -43,6 +43,7 @@ from credit.forecast import load_forecasts
 from credit.data_conversions import dataConverter
 from credit.distributed import distributed_model_wrapper
 from credit.models.checkpoint import load_model_state
+from credit.solar import TOADataLoader
 
 # ---------- #
 from credit.visualization_tools import shared_mem_draw_wrapper
@@ -53,27 +54,6 @@ warnings.filterwarnings("ignore")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
-
-
-class TOADataLoader:
-    def __init__(self, conf):
-        self.TOA = xr.open_dataset(conf["data"]["TOA_forcing_path"]).load()
-        self.times_b = pd.to_datetime(self.TOA.time.values)
-
-        # Precompute day of year and hour arrays
-        self.days_of_year = self.times_b.dayofyear
-        self.hours_of_day = self.times_b.hour
-
-    def __call__(self, datetime_input):
-        doy = datetime_input.dayofyear
-        hod = datetime_input.hour
-
-        # Use vectorized comparison for masking
-        mask_toa = (self.days_of_year == doy) & (self.hours_of_day == hod)
-        selected_tsi = self.TOA['tsi'].sel(time=mask_toa) / 2540585.74
-
-        # Convert to tensor and add dimension
-        return torch.tensor(selected_tsi.to_numpy()).unsqueeze(0)
 
 
 def get_num_cpus():
