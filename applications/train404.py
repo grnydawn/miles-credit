@@ -6,7 +6,6 @@ import wandb
 import optuna
 import shutil
 import logging
-import functools
 
 from pathlib import Path
 from argparse import ArgumentParser
@@ -16,21 +15,7 @@ import torch
 import torch.distributed as dist
 from torch.cuda.amp import GradScaler
 from torch.utils.data.distributed import DistributedSampler
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
-from torch.distributed.fsdp.fully_sharded_data_parallel import (
-    MixedPrecision,
-    CPUOffload
-)
-from torch.distributed.fsdp.wrap import (
-    transformer_auto_wrap_policy,
-    size_based_auto_wrap_policy,
-)
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-   checkpoint_wrapper,
-   CheckpointImpl,
-   apply_activation_checkpointing,
-)
 from credit.distributed import distributed_model_wrapper
 from torchsummary import summary
 from credit.models.unet404 import SegmentationModel
@@ -43,11 +28,9 @@ from credit.metrics404 import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything
 from credit.models.checkpoint import (
-    TorchFSDPModel,
     FSDPOptimizerWrapper,
     TorchFSDPCheckpointIO
 )
-from credit.mixed_precision import parse_dtype
 
 
 warnings.filterwarnings("ignore")
@@ -362,7 +345,7 @@ def main(rank, world_size, conf, trial=False):
     # model
 
     m = SegmentationModel(conf)
-    #m = load_model(conf)
+    # m = load_model(conf)
 
     # have to send the module to the correct device first
 

@@ -3,11 +3,9 @@ import os
 import sys
 import glob
 import yaml
-import wandb
 import optuna
 import shutil
 import logging
-import functools
 
 from pathlib import Path
 from argparse import ArgumentParser
@@ -16,21 +14,7 @@ from echo.src.base_objective import BaseObjective
 import torch
 import torch.distributed as dist
 from torch.cuda.amp import GradScaler
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
-from torch.distributed.fsdp.fully_sharded_data_parallel import (
-    MixedPrecision,
-    CPUOffload
-)
-from torch.distributed.fsdp.wrap import (
-    transformer_auto_wrap_policy,
-    size_based_auto_wrap_policy,
-)
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-   checkpoint_wrapper,
-   CheckpointImpl,
-   apply_activation_checkpointing,
-)
 from credit.distributed import distributed_model_wrapper
 from torchvision import transforms
 
@@ -44,11 +28,9 @@ from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything
 from credit.models.checkpoint import (
-    TorchFSDPModel,
     FSDPOptimizerWrapper,
     TorchFSDPCheckpointIO
 )
-from credit.mixed_precision import parse_dtype
 
 
 warnings.filterwarnings("ignore")
@@ -259,11 +241,11 @@ def main(rank, world_size, conf, trial=False):
     # datasets (zarr reader)
 
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
-    #filenames = list(map(os.path.basename, all_ERA_files))
-    #all_years = sorted([re.findall(r'(?:_)(\d{4})', fn)[0] for fn in filenames])
+    # filenames = list(map(os.path.basename, all_ERA_files))
+    # all_years = sorted([re.findall(r'(?:_)(\d{4})', fn)[0] for fn in filenames])
 
     # Specify the years for each set
-    #if conf["data"][train_test_split]:
+    # if conf["data"][train_test_split]:
     #    normalized_split = conf["data"][train_test_split] / sum(conf["data"][train_test_split])
     #    n_years = len(all_years)
     #    train_years, sklearn.model_selection.train_test_split¶
@@ -317,12 +299,11 @@ def main(rank, world_size, conf, trial=False):
     num_params = sum(p.numel() for p in vae.parameters())
     if rank == 0:
         logging.info(f"Number of parameters in the model: {num_params}")
-    #summary(vae, input_size=(channels, height, width))
+    # summary(vae, input_size=(channels, height, width))
 
     # have to send the module to the correct device first
 
     vae.to(device)
-    #vae = torch.compile(vae)
 
     # Wrap in DDP or FSDP module, or none
 

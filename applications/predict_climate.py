@@ -5,17 +5,14 @@ import os
 import sys
 import yaml
 import glob
-import copy
 import logging
 import warnings
-import functools
 import subprocess
 import time
 from pathlib import Path
 from functools import partial
 from multiprocessing import Pool
 from multiprocessing.managers import SharedMemoryManager
-from collections import defaultdict
 from argparse import ArgumentParser
 from credit.distributed import distributed_model_wrapper
 
@@ -31,31 +28,13 @@ import xarray as xr
 # AI libs
 import torch
 import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision import transforms
 # import wandb
-
-from torch.distributed.fsdp.fully_sharded_data_parallel import (
-    MixedPrecision,
-    CPUOffload
-)
-from torch.distributed.fsdp.wrap import (
-    transformer_auto_wrap_policy,
-    size_based_auto_wrap_policy,
-)
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-   checkpoint_wrapper,
-   CheckpointImpl,
-   apply_activation_checkpointing,
-)
 
 # ---------- #
 # credit
 from credit.data import PredictForecast
-from credit.loss import VariableTotalLoss2D
 from credit.models import load_model
-from credit.models.crossformer_may1 import CrossFormer
-from credit.metrics import LatWeightedMetrics
 from credit.transforms import ToTensor, NormalizeState, NormalizeState_Quantile
 from credit.seed import seed_everything
 from credit.pbs import launch_script, launch_script_mpi
@@ -64,10 +43,8 @@ from credit.forecast import load_forecasts
 # from credit.trainer import TOADataLoader
 
 from credit.models.checkpoint import (
-    TorchFSDPModel,
     TorchFSDPCheckpointIO
 )
-from credit.mixed_precision import parse_dtype
 
 # ---------- #
 from credit.visualization_tools import shared_mem_draw_wrapper
@@ -99,6 +76,7 @@ class TOADataLoader:
 
         # Convert to tensor and add dimension
         return torch.tensor(selected_tsi.to_numpy()).unsqueeze(0)
+
 
 def get_num_cpus():
     num_cpus = len(os.sched_getaffinity(0))
@@ -437,11 +415,6 @@ def predict(rank, world_size, conf, pool, smm):
 
     model.eval()
 
-    # Set up metrics and containers
-    metrics = LatWeightedMetrics(conf)
-    metrics_results = defaultdict(list)
-    loss_fn = VariableTotalLoss2D(conf, validation=True)
-
     # get lat/lons from x-array
     latlons = xr.open_dataset(conf["loss"]["latitude_weights"])
 
@@ -485,13 +458,13 @@ def predict(rank, world_size, conf, pool, smm):
         y_pred = None
         static = None
         loop_time = time.time()
-        
+
         # model inference loops
         k = 0
         start_date = conf["predict"]["forecasts"][0][0]
-        end_date =conf["predict"]["forecasts"][0][1]
-        time_step = 1 # this will have to change (hr)
-        save_number_forecasts = 24 # this is just a fucking setting... 
+        end_date = conf["predict"]["forecasts"][0][1]
+        time_step = 1  # this will have to change (hr)
+        save_number_forecasts = 24  # this is just a fucking setting...
 
         print(start_date, end_date, skip_periods)
 
@@ -529,7 +502,7 @@ def predict(rank, world_size, conf, pool, smm):
 
             # Add solar "statics"
             if "static_variables" in conf["data"] and "tsi" in conf["data"]["static_variables"]:
-                if k==0:
+                if k == 0:
                     toaDL = TOADataLoader(conf)
                 elapsed_time = pd.Timedelta(hours=k)
                 tnow = pd.to_datetime(datetime.datetime.utcfromtimestamp(batch["datetime"]))
@@ -538,14 +511,14 @@ def predict(rank, world_size, conf, pool, smm):
                     current_times = [pd.to_datetime(datetime.datetime.utcfromtimestamp(_t)) + elapsed_time for _t in tnow]
                 else:
                     current_times = [tnow if hl == 0 else tnow - pd.Timedelta(hours=hl) for hl in range(history_len)]
-                
+
                 toa = torch.cat([toaDL(_t) for _t in current_times], dim=0).to(device)
                 toa = toa.squeeze().unsqueeze(0)
                 print(f"toa shape 1: {toa.shape} || ")
                 print_str2 = f"toa shape 2: {toa.unsqueeze(1).shape} || "
                 x = torch.cat([x, toa.unsqueeze(1).to(device).float()], dim=1)
                 k += 1
-            
+
             y_pred = model(x)
 
             end_time = time.time()
@@ -700,8 +673,6 @@ def predict(rank, world_size, conf, pool, smm):
             end_time = time.time()
             duration = end_time - start_time
             print_str2 += f"TOT time: {duration:.4f} ||"
-
-
             end_time = time.time()
             duration = end_time - loop_time
             print_str2 += f"LOOP time: {duration:.4f} ||"
@@ -714,19 +685,19 @@ def predict(rank, world_size, conf, pool, smm):
                 # save forecast results to file
                 if "save_format" in conf["predict"] and conf["predict"]["save_format"] == "nc":
                     logger.info("Save forecasts as netCDF format")
-                    filename_netcdf = save_netcdf(
+                    _ = save_netcdf(
                         list_darray_upper_air, list_darray_single_level, conf
                     )
                 else:
                     logger.info("Warning: forecast results will not be saved")
-    
+
                 # forecast count = a constant for each run
                 forecast_count += 1
-    
+
                 # lists to collect x-arrays
                 list_darray_upper_air = []
                 list_darray_single_level = []
-    
+
                 # a list that collects image file names
                 job_info = []
                 filenames_upper_air = []
@@ -738,15 +709,15 @@ def predict(rank, world_size, conf, pool, smm):
                 if distributed:
                     torch.distributed.barrier()
 
-            break 
+            break
 
-        #rollout loop, which is much faster. 
+        # rollout loop, which is much faster.
         bingo = 0
         end_date = pd.to_datetime(end_date)
         while bingo < 20:
             print('k is :', k)
 
-            #deal with the time step:
+            # deal with the time step:
             elapsed_time = pd.Timedelta(hours=k)
             tnow = pd.to_datetime(datetime.datetime.utcfromtimestamp(batch["datetime"]))
             tnow = tnow + elapsed_time
@@ -765,7 +736,7 @@ def predict(rank, world_size, conf, pool, smm):
 
             # Add solar "statics"
             if "static_variables" in conf["data"] and "tsi" in conf["data"]["static_variables"]:
-                if k==0:
+                if k == 0:
                     toaDL = TOADataLoader(conf)
                 elapsed_time = pd.Timedelta(hours=k)
                 tnow = pd.to_datetime(datetime.datetime.utcfromtimestamp(batch["datetime"]))
@@ -774,14 +745,14 @@ def predict(rank, world_size, conf, pool, smm):
                     current_times = [pd.to_datetime(datetime.datetime.utcfromtimestamp(_t)) + elapsed_time for _t in tnow]
                 else:
                     current_times = [tnow if hl == 0 else tnow - pd.Timedelta(hours=hl) for hl in range(history_len)]
-                
+
                 toa = torch.cat([toaDL(_t) for _t in current_times], dim=0).to(device)
                 toa = toa.squeeze().unsqueeze(0)
                 print(f"toa shape 1: {toa.shape} || ")
                 print_str2 = f"toa shape 2: {toa.unsqueeze(1).shape} || "
                 x = torch.cat([x, toa.unsqueeze(1).to(device).float()], dim=1)
                 k += 1
-            
+
             y_pred = model(x)
 
             end_time = time.time()
@@ -936,8 +907,6 @@ def predict(rank, world_size, conf, pool, smm):
             end_time = time.time()
             duration = end_time - start_time
             print_str2 += f"TOT time: {duration:.4f} ||"
-
-
             end_time = time.time()
             duration = end_time - loop_time
             print_str2 += f"LOOP time: {duration:.4f} ||"
@@ -951,37 +920,35 @@ def predict(rank, world_size, conf, pool, smm):
                 # save forecast results to file
                 if "save_format" in conf["predict"] and conf["predict"]["save_format"] == "nc":
                     logger.info("Save forecasts as netCDF format")
-                    filename_netcdf = save_netcdf(
+                    _ = save_netcdf(
                         list_darray_upper_air, list_darray_single_level, conf
                     )
                 else:
                     logger.info("Warning: forecast results will not be saved")
-    
+
                 # forecast count = a constant for each run
                 forecast_count += 1
-    
+
                 # lists to collect x-arrays
                 list_darray_upper_air = []
                 list_darray_single_level = []
-    
+
                 # a list that collects image file names
                 job_info = []
                 filenames_upper_air = []
                 filenames_diagnostics = []
                 filenames_surface = []
 
-            
-
             if tnow > end_date:
                 bingo = 1000
-    
+
     # y_pred allocation
     y_pred = None
-            
+
     gc.collect()
     if distributed:
         torch.distributed.barrier()
-            
+
     # collect all image file names for making videos
     filename_bundle = {}
     filename_bundle["sigma_level_visualize"] = filenames_upper_air
