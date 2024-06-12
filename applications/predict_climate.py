@@ -15,6 +15,7 @@ from multiprocessing import Pool
 from multiprocessing.managers import SharedMemoryManager
 from argparse import ArgumentParser
 from credit.distributed import distributed_model_wrapper
+from credit.models.checkpoint import load_model_state
 
 
 # ---------- #
@@ -41,10 +42,6 @@ from credit.pbs import launch_script, launch_script_mpi
 from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
 from credit.forecast import load_forecasts
 # from credit.trainer import TOADataLoader
-
-from credit.models.checkpoint import (
-    TorchFSDPCheckpointIO
-)
 
 # ---------- #
 from credit.visualization_tools import shared_mem_draw_wrapper
@@ -323,25 +320,6 @@ def create_shared_mem(da, smm):
 #         model = neural_network
 
 #     return model
-
-
-def load_model_state(conf, model, device):
-    save_loc = os.path.expandvars(conf['save_loc'])
-    #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
-    ckpt = os.path.join(save_loc, "checkpoint.pt")
-    checkpoint = torch.load(ckpt, map_location=device)
-    if conf["trainer"]["mode"] == "fsdp":
-        logging.info(f"Loading FSDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-        checkpoint_io = TorchFSDPCheckpointIO()
-        checkpoint_io.load_unsharded_model(model, os.path.join(save_loc, "model_checkpoint.pt"))
-    else:
-        if conf["trainer"]["mode"] == "ddp":
-            logging.info(f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-            model.module.load_state_dict(checkpoint["model_state_dict"])
-        else:
-            logging.info(f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-            model.load_state_dict(checkpoint["model_state_dict"])
-    return model
 
 
 def predict(rank, world_size, conf, pool, smm):

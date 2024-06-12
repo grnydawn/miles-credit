@@ -5,10 +5,8 @@ import os
 import sys
 import yaml
 import glob
-import copy
 import logging
 import warnings
-import functools
 import subprocess
 from pathlib import Path
 from functools import partial
@@ -21,7 +19,6 @@ from argparse import ArgumentParser
 # ---------- #
 # Numerics
 import datetime
-import numpy as np
 import pandas as pd
 import xarray as xr
 
@@ -29,43 +26,23 @@ import xarray as xr
 # AI libs
 import torch
 import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision import transforms
 # import wandb
-
-from torch.distributed.fsdp.fully_sharded_data_parallel import (
-    MixedPrecision,
-    CPUOffload
-)
-from torch.distributed.fsdp.wrap import (
-    transformer_auto_wrap_policy,
-    size_based_auto_wrap_policy,
-)
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-   checkpoint_wrapper,
-   CheckpointImpl,
-   apply_activation_checkpointing,
-)
 
 # ---------- #
 # credit
 from credit.data import PredictForecast
 from credit.loss import VariableTotalLoss2D
 from credit.models import load_model
-from credit.models.crossformer_may1 import CrossFormer
 from credit.metrics import LatWeightedMetrics
-from credit.diagnostics import Diagnostics
 from credit.transforms import ToTensor, NormalizeState, NormalizeState_Quantile
 from credit.seed import seed_everything
 from credit.pbs import launch_script, launch_script_mpi
 from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
 from credit.forecast import load_forecasts
-from credit.models.checkpoint import (
-    TorchFSDPModel,
-    TorchFSDPCheckpointIO
-)
-from credit.mixed_precision import parse_dtype
 from credit.data_conversions import dataConverter
+from credit.distributed import distributed_model_wrapper
+from credit.models.checkpoint import load_model_state
 
 # ---------- #
 from credit.visualization_tools import shared_mem_draw_wrapper
@@ -76,6 +53,7 @@ warnings.filterwarnings("ignore")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
+
 
 class TOADataLoader:
     def __init__(self, conf):
@@ -96,6 +74,7 @@ class TOADataLoader:
 
         # Convert to tensor and add dimension
         return torch.tensor(selected_tsi.to_numpy()).unsqueeze(0)
+
 
 def get_num_cpus():
     num_cpus = len(os.sched_getaffinity(0))
@@ -181,113 +160,6 @@ def create_shared_mem(da, smm):
     shm = smm.SharedMemory(da_mem.nbytes)
     shm.buf[:] = da_mem
     return shm
-
-
-def distributed_model_wrapper(conf, neural_network, device):
-
-    if conf["trainer"]["mode"] == "fsdp":
-
-        # Define the sharding policies
-
-        if "crossformer" in conf["model"]["type"]:
-            from credit.models.crossformer_skip import Attention as Attend
-        elif "fuxi" in conf["model"]["type"]:
-            from credit.models.fuxi import UTransformer as Attend
-        else:
-            raise OSError("You asked for FSDP but only crossformer and fuxi are currently supported.")
-
-        auto_wrap_policy1 = functools.partial(
-            transformer_auto_wrap_policy,
-            transformer_layer_cls={Attend}
-        )
-
-        auto_wrap_policy2 = functools.partial(
-            size_based_auto_wrap_policy, min_num_params=1_000
-        )
-
-        def combined_auto_wrap_policy(module, recurse, nonwrapped_numel):
-            # Define a new policy that combines policies
-            p1 = auto_wrap_policy1(module, recurse, nonwrapped_numel)
-            p2 = auto_wrap_policy2(module, recurse, nonwrapped_numel)
-            return p1 or p2
-
-        # Mixed precision
-
-        use_mixed_precision = conf["trainer"]["use_mixed_precision"] if "use_mixed_precision" in conf["trainer"] else False
-
-        logging.info(f"Using mixed_precision: {use_mixed_precision}")
-
-        if use_mixed_precision:
-            for key, val in conf["trainer"]["mixed_precision"].items():
-                conf["trainer"]["mixed_precision"][key] = parse_dtype(val)
-            mixed_precision_policy = MixedPrecision(**conf["trainer"]["mixed_precision"])
-        else:
-            mixed_precision_policy = None
-
-        # CPU offloading
-
-        cpu_offload = conf["trainer"]["cpu_offload"] if "cpu_offload" in conf["trainer"] else False
-
-        logging.info(f"Using CPU offloading: {cpu_offload}")
-
-        # FSDP module
-
-        model = TorchFSDPModel(
-            neural_network,
-            use_orig_params=True,
-            auto_wrap_policy=combined_auto_wrap_policy,
-            mixed_precision=mixed_precision_policy,
-            cpu_offload=CPUOffload(offload_params=cpu_offload)
-        )
-
-        # activation checkpointing on the transformer blocks
-
-        activation_checkpoint = conf["trainer"]["activation_checkpoint"] if "activation_checkpoint" in conf["trainer"] else False
-
-        logging.info(f"Activation checkpointing: {activation_checkpoint}")
-
-        if activation_checkpoint:
-
-            # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
-
-            non_reentrant_wrapper = functools.partial(
-                checkpoint_wrapper,
-                checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-            )
-
-            check_fn = lambda submodule: isinstance(submodule, Attend)
-
-            apply_activation_checkpointing(
-                model,
-                checkpoint_wrapper_fn=non_reentrant_wrapper,
-                check_fn=check_fn
-            )
-
-    elif conf["trainer"]["mode"] == "ddp":
-        model = DDP(neural_network, device_ids=[device])
-    else:
-        model = neural_network
-
-    return model
-
-
-def load_model_state(conf, model, device):
-    save_loc = os.path.expandvars(conf['save_loc'])
-    #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
-    ckpt = os.path.join(save_loc, "checkpoint.pt")
-    checkpoint = torch.load(ckpt, map_location=device)
-    if conf["trainer"]["mode"] == "fsdp":
-        logging.info(f"Loading FSDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-        checkpoint_io = TorchFSDPCheckpointIO()
-        checkpoint_io.load_unsharded_model(model, os.path.join(save_loc, "model_checkpoint.pt"))
-    else:
-        if conf["trainer"]["mode"] == "ddp":
-            logging.info(f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-            model.module.load_state_dict(checkpoint["model_state_dict"])
-        else:
-            logging.info(f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-            model.load_state_dict(checkpoint["model_state_dict"])
-    return model
 
 
 def predict(rank, world_size, conf, pool, smm):
@@ -432,22 +304,21 @@ def predict(rank, world_size, conf, pool, smm):
                 svloc_init_time = datetime.datetime.utcfromtimestamp(date_time).strftime(
                     "%Y-%m-%dT%HZ"
                 )
-                
+
                 img_save_loc = os.path.join(
                     os.path.expandvars(conf["save_loc"]),
-                    f"forecasts/images_{svloc_init_time}",
+                    "forecasts/images_{svloc_init_time}",
                 )
                 dataset_save_loc = os.path.join(
                     os.path.expandvars(conf["save_loc"]),
-                    f"forecasts/netcdf",
+                    "forecasts/netcdf",
                 )
                 os.makedirs(dataset_save_loc, exist_ok=True)
                 if N_vars > 0:
                     os.makedirs(img_save_loc, exist_ok=True)
-                
-                # initialize diagnostics
-                #diagnostics = Diagnostics(conf, init_time, data_converter)
 
+                # initialize diagnostics
+                # diagnostics = Diagnostics(conf, init_time, data_converter)
 
             # Add statics
             if "static" in batch:
@@ -457,7 +328,7 @@ def predict(rank, world_size, conf, pool, smm):
 
             # Add solar "statics"
             if "static_variables" in conf["data"] and "tsi" in conf["data"]["static_variables"]:
-                if k==0:
+                if k == 0:
                     toaDL = TOADataLoader(conf)
                 elapsed_time = pd.Timedelta(hours=k)
                 tnow = pd.to_datetime(datetime.datetime.utcfromtimestamp(batch["datetime"]))
@@ -466,11 +337,10 @@ def predict(rank, world_size, conf, pool, smm):
                     current_times = [pd.to_datetime(datetime.datetime.utcfromtimestamp(_t)) + elapsed_time for _t in tnow]
                 else:
                     current_times = [tnow if hl == 0 else tnow - pd.Timedelta(hours=hl) for hl in range(history_len)]
-                
+
                 toa = torch.cat([toaDL(_t) for _t in current_times], dim=0).to(device)
                 toa = toa.squeeze().unsqueeze(0)
                 x = torch.cat([x, toa.unsqueeze(1).to(device).float()], dim=1)
-
 
             y = model.concat_and_reshape(batch["y"], batch["y_surf"]).to(device)
             # Predict and convert to real space for laplace filter and metrics
@@ -478,8 +348,7 @@ def predict(rank, world_size, conf, pool, smm):
             y_pred = state_transformer.inverse_transform(y_pred.cpu())
             y = state_transformer.inverse_transform(y.cpu())
 
-            if ("use_laplace_filter" in conf["predict"]
-                and conf["predict"]["use_laplace_filter"]):
+            if ("use_laplace_filter" in conf["predict"] and conf["predict"]["use_laplace_filter"]):
                 y_pred = (
                     dpf.diff_lap2d_filt(y_pred.to(device).squeeze())
                     .unsqueeze(0)
@@ -487,13 +356,12 @@ def predict(rank, world_size, conf, pool, smm):
                     .cpu()
                 )
 
-            ######### for debugging, save tensors
+            # for debugging, save tensors
             # save_ = os.path.expandvars(conf["save_loc"])
             # torch.save(y, os.path.join(save_, 'y.pt'))
             # torch.save(y_pred, os.path.join(save_, 'pred.pt'))
 
-            ############################# Compute metrics ##############################
-            ############################################################################
+            # Compute metrics ##############################
             utc_datetime = datetime.datetime.utcfromtimestamp(date_time)
 
             mae = loss_fn(y, y_pred)
@@ -508,10 +376,7 @@ def predict(rank, world_size, conf, pool, smm):
             print_str += f"Hour: {batch['forecast_hour'].item()} "
             print_str += f"MAE: {mae.item()} "
             print_str += f"ACC: {metrics_dict['acc']} "
-            #print_str += f"spectrumMSE: {metrics_dict['spectrum_mse']}" #WEC limiting spectrum shit cause weather bench2 not installed. 
-
-            ############################################################################
-            ############################################################################
+            # print_str += f"spectrumMSE: {metrics_dict['spectrum_mse']}" #WEC limiting spectrum shit cause weather bench2 not installed.
 
             # convert the current step result as x-array
             darray_upper_air, darray_single_level = (
@@ -519,22 +384,19 @@ def predict(rank, world_size, conf, pool, smm):
             # collect x-arrays for upper air and surface variables
             list_darray_upper_air.append(darray_upper_air)
             list_darray_single_level.append(darray_single_level)
-            
+
             # convert to datasets and save out
             pred_ds = data_converter.dataArrays_to_dataset(darray_upper_air, darray_single_level)
             y_ds = data_converter.tensor_to_dataset(y.float(), [utc_datetime])
 
             list_datasets.append(pred_ds)
 
-            ############################################################################
-            ############################################################################
-            ############################# Compute KE/spectra Diagnostics ###############
-            ############################################################################
-            #diag_metrics = diagnostics(pred_ds, y_ds, forecast_hour) #WEC limiting spectrum shit cause weather bench2 not installed. 
-            #metrics_dict = metrics_dict | diag_metrics #WEC limiting spectrum shit cause weather bench2 not installed. 
-            # for key,value in diag_metrics.items(): # add metrics to the print str #WEC limiting spectrum shit cause weather bench2 not installed. 
+            # Compute KE/spectra Diagnostics ###############
+            # diag_metrics = diagnostics(pred_ds, y_ds, forecast_hour) #WEC limiting spectrum shit cause weather bench2 not installed.
+            # metrics_dict = metrics_dict | diag_metrics #WEC limiting spectrum shit cause weather bench2 not installed.
+            # for key,value in diag_metrics.items(): # add metrics to the print str #WEC limiting spectrum shit cause weather bench2 not installed.
             #     print_str += f"{key}: {value}"
-            
+
             logger.info(print_str)
 
             # ---------------------------------------------------------------------------------- #
@@ -631,7 +493,7 @@ def predict(rank, world_size, conf, pool, smm):
             else:
                 # use multiple past forecast steps as inputs
                 static_dim_size = abs(x.shape[1] - y_pred.shape[1])  # static channels will get updated on next pass
-                x_detach = x[:, :-static_dim_size, 1:].detach() if static_dim_size else x[:,:,1:].detach() # if static_dim_size=0 then :0 gives empty range
+                x_detach = x[:, :-static_dim_size, 1:].detach() if static_dim_size else x[:, :, 1:].detach()  # if static_dim_size=0 then :0 gives empty range
                 x = torch.cat([x_detach, y_pred.detach()], dim=2)
 
             # Explicitly release GPU memory
@@ -803,7 +665,7 @@ if __name__ == "__main__":
     num_cpus = get_num_cpus()
     logger.info(f"using {num_cpus} cpus for image generation")
     with Pool(processes=num_cpus - 1) as pool, SharedMemoryManager() as smm:
-        if conf["trainer"]["mode"] in ["fsdp", "ddp"]: # multi-gpu inference
+        if conf["trainer"]["mode"] in ["fsdp", "ddp"]:  # multi-gpu inference
             (
                 list_darray_upper_air,
                 list_darray_single_level,
@@ -813,7 +675,7 @@ if __name__ == "__main__":
             ) = predict(
                 int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf, pool, smm
             )
-        else: # single device inference
+        else:  # single device inference
             (
                 list_darray_upper_air,
                 list_darray_single_level,
