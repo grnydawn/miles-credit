@@ -80,7 +80,7 @@ def load_dataset_and_sampler(conf, world_size, rank, is_train, seed=42):
     history_len = history_len if is_train else valid_history_len
     forecast_len = forecast_len if is_train else valid_forecast_len
     shuffle = is_train
-    name = "Train" if is_train else "Valid"
+    name = "train" if is_train else "validate"
 
     transforms = transforms.Compose([
         NormalizeState(conf),
@@ -96,6 +96,9 @@ def load_dataset_and_sampler(conf, world_size, rank, is_train, seed=42):
         start=conf['data']['start'],
         finish=conf['data']['finish']
     )
+
+    ## todo: conf['data']['start'][name] ('train' or 'validate') here & in config
+    ## to split dataset into train and validate while training
 
     sampler = DistributedSampler(
         dataset,
