@@ -39,6 +39,10 @@ from credit.mixed_precision import parse_dtype
 
 # ---------- #
 
+logging.basicConfig(
+    format='%(asctime)s %(message)s',
+    level=logging.INFO,
+    datefmt='%Y-%m-%d %H:%M:%S')
 logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
@@ -46,31 +50,7 @@ os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 
 
-def load_model_state(conf, model, device):
-    save_loc = os.path.expandvars(conf['save_loc'])
-    #  Load optimizer, gradient scaler, and learning rate scheduler
-    #  Optimizer must come after wrapping model using FSDP
-    ckpt = os.path.join(save_loc, "checkpoint.pt")
-    checkpoint = torch.load(ckpt, map_location=device)
-    if conf["trainer"]["mode"] == "fsdp":
-        logging.info(f"Loading FSDP model, optimizer, grad scaler, and"
-                     f"learning rate scheduler states from {save_loc}")
-        checkpoint_io = TorchFSDPCheckpointIO()
-        checkpoint_io.load_unsharded_model(model, os.path.join(save_loc, "model_checkpoint.pt"))
-    else:
-        if conf["trainer"]["mode"] == "ddp":
-            logging.info(f"Loading DDP model, optimizer, grad scaler, and"
-                         f"learning rate scheduler states from {save_loc}")
-            model.module.load_state_dict(checkpoint["model_state_dict"])
-        else:
-            logging.info(f"Loading model, optimizer, grad scaler, and "
-                         f"learning rate scheduler states from {save_loc}")
-            model.load_state_dict(checkpoint["model_state_dict"])
-    return model
-
-
-
-def predict(rank, world_size, conf):
+def predict(rank, world_size, conf, dataset):
 
     # infer device id from rank
     if torch.cuda.is_available():
@@ -79,36 +59,10 @@ def predict(rank, world_size, conf):
     else:
         device = torch.device("cpu")
 
-    # Config settings
-    #seed = 1000 if "seed" not in conf else conf["seed"]
-    #seed_everything(seed)
-
-    #history_len = conf["data"]["history_len"]
-    #forecast_len = conf["data"]["forecast_len"]
     #time_step = conf["data"]["time_step"] if "time_step" in conf["data"] else None
 
-    # Preprocessing transformations
-    if conf["data"]["scaler_type"] == "std":
-        state_transformer = NormalizeState(conf)
-    else:
-        state_transformer = NormalizeState_Quantile(conf)
-    transform = transforms.Compose(
-        [
-            state_transformer,
-            ToTensor(conf),
-        ]
-    )
-
-    dataset = CONUS404Dataset(
-        varnames = conf["data"]["variables"],
-        history_len = conf["data"]["history_len"],
-        forecast_len = conf["data"]["forecast_len"],
-        transform=transform,
-        start = conf["predict"]["start"],
-        finish = conf["predict"]["finish"]
-        )
-
     # set up the dataloader for this process
+    logging.info("setting up data loader")
     data_loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=1,
@@ -119,32 +73,44 @@ def predict(rank, world_size, conf):
     )
 
     # load model
+    logging.info("Loading model")
     model = load_model(conf, load_weights=True).to(device)
 
     # switch to evaluation mode
     model.eval()
 
-    # Rollout
+    # storage for outputs from model
+    xarraylist = []
+    
+    # do predictions
     with torch.no_grad():
 
-        xarraylist = []
-                
+        #outdims = ["Time","vars","z","y","x"]  ##todo: squeeze bottom_top
+        outdims = ["t","vars","z","y","x"]  ##todo: squeeze bottom_top
+
         # model inference loop
-        for index, batch in enumerate(data_loader):
+        logging.info("Beginning inference loop")
+        
+        if conf["predict"]["autoregressive"]:
+            pass
 
-            xin = batch["x"].to(device)
-            yout = model(xin)
-            y = state_transformer.inverse_transform(yout.cpu())
+        else:
+            # don't use output as input for next step
+            for index, batch in enumerate(data_loader):
 
-            rawdata = dataset.get_data(index, do_transform=False)            
-            t = rawdata["y"].coords[dataset.tdimname]
+                xin = batch["x"].to(device)
+                yout = model(xin)
+                y = state_transformer.inverse_transform(yout.cpu())
+                
+                #rawdata = dataset.get_data(index, do_transform=False)            
+                #t = rawdata["y"].coords[dataset.tdimname]
+                
+                xarr = xr.DataArray(y, dims=outdims)
+                #                    coords=dict(vars=dataset.varnames, Time=t))
 
-            outdims = ["Time","vars","z","y","x"]  ##todo: squeeze bottom_top
-            xarr = xr.DataArray(y, dims=outdims,
-                                coords=dict(vars=dataset.varnames, Time=t))
-            #todo: use dataset.tdimname
             
-            xarraylist.append(xarr)
+                xarraylist.append(xarr)
+
             
             ## rollout: xin will be a stack of previous timesteps,
             ## at each timestep, drop oldest & add newest, predict next
@@ -184,8 +150,8 @@ def predict(rank, world_size, conf):
             #gc.collect()
             
 
-    if distributed:
-        torch.distributed.barrier()
+    #if distributed:
+    #    torch.distributed.barrier()
 
 
     return xarraylist
@@ -277,17 +243,55 @@ if __name__ == "__main__":
         sys.exit()
 
 
+    # main branch if not launching starts here
+
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
 
-    xarraylist = predict(
-        rank = int(os.environ["RANK"]),
-        world_size = int(os.environ["WORLD_SIZE"]),
-        conf = conf
-    )
+    logging.info("Loading C404 dataset")
 
-    xcat = xr.concat(xarraylist, dim="Time")
-    ds_out = xcat.to_dataset(dim="vars")  ##todo: move to_dataset inside loop
+    # Preprocessing transformations
+    if conf["data"]["scaler_type"] == "std":
+        state_transformer = NormalizeState(conf)
+    else:
+        state_transformer = NormalizeState_Quantile(conf)
+    transform = transforms.Compose(
+        [
+            state_transformer,
+            ToTensor(conf),
+        ]
+    )
+    
+    ds = CONUS404Dataset(
+        varnames = conf["data"]["variables"],
+        history_len = conf["data"]["history_len"],
+        forecast_len = conf["data"]["forecast_len"],
+        transform=transform,
+        start = conf["predict"]["start"],
+        finish = conf["predict"]["finish"]
+        )
+
+    
+    # if mode in ["fsdp", "ddp"]:
+    #     xarraylist = predict(
+    #         rank = int(os.environ["RANK"]),
+    #         world_size = int(os.environ["WORLD_SIZE"]),
+    #         conf = conf,
+    #         dataset = ds
+    #     )
+    # else:
+    #    xarraylist = predict(rank=0, world_size=1, conf=conf, dataset=ds)
+
+    logging.info("Starting prediction")
+    xarraylist = predict(rank=0, world_size=1, conf=conf, dataset=ds)
+    logging.info("Prediction finished")
+
+    
+    xcat = xr.concat(xarraylist, dim="t")
+    xcat = xcat.rename(dict(t=ds.tdimname))
+    xcat = xcat.assign_coords(dict(vars=ds.varnames))
+    
+    ds_out = xcat.to_dataset(dim="vars")
 
     sep = "."
     filename = sep.join([os.path.basename(conf["save_loc"]),
@@ -297,6 +301,7 @@ if __name__ == "__main__":
                          "nc"])
     save_path = os.path.join(conf["save_loc"], filename)
     
+    logging.info("Writing results to file")
     ds_out.to_netcdf(path=save_path,
                      format="NETCDF4",
                      engine="netcdf4",
@@ -306,4 +311,5 @@ if __name__ == "__main__":
                      unlimited_dims="Time",
                      compute=True
                      )
-        
+
+    logging.info("Done!")
