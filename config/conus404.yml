@@ -97,7 +97,8 @@ predict:
     finish: "2017-10-03"
 #    finish: "2022-09-30"
     use_laplace_filter: False
-    autoregressive: False
+#    autoregressive: False
+    autoregressive: True
     save_format: "nc"
 
 #visualization:

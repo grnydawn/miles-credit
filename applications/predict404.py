@@ -52,6 +52,8 @@ os.environ["MKL_NUM_THREADS"] = "1"
 
 def predict(rank, world_size, conf, dataset):
 
+    autoregressive = conf['predict']['autoregressive']
+    
     # infer device id from rank
     if torch.cuda.is_available():
         device = torch.device(f"cuda:{rank % torch.cuda.device_count()}")
@@ -59,18 +61,6 @@ def predict(rank, world_size, conf, dataset):
     else:
         device = torch.device("cpu")
 
-    #time_step = conf["data"]["time_step"] if "time_step" in conf["data"] else None
-
-    # set up the dataloader for this process
-    logging.info("setting up data loader")
-    data_loader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=1,
-        shuffle=False,
-        pin_memory=True,
-        num_workers=0,
-        drop_last=False,
-    )
 
     # load model
     logging.info("Loading model")
@@ -85,54 +75,27 @@ def predict(rank, world_size, conf, dataset):
     # do predictions
     with torch.no_grad():
 
-        #outdims = ["Time","vars","z","y","x"]  ##todo: squeeze bottom_top
         outdims = ["t","vars","z","y","x"]  ##todo: squeeze bottom_top
 
         # model inference loop
         logging.info("Beginning inference loop")
-        
-        if conf["predict"]["autoregressive"]:
-            pass
 
-        else:
-            # don't use output as input for next step
-            for index, batch in enumerate(data_loader):
+        for index in range(len(dataset)):
 
-                xin = batch["x"].to(device)
-                yout = model(xin)
-                y = state_transformer.inverse_transform(yout.cpu())
+            if autoregressive and index > 0:
+                ## !HERE! ##
+                ## This doesn't work but everything else does
+                xin[:,:,0,:,:] = xin[:,:,1,:,:] 
+                xin[:,:,1,:,:] = xin[:,:,2,:,:] 
+                xin[:,:,2,:,:] = yout
+            else:
+                xin = dataset[index]['x'].unsqueeze(0).to(device)
                 
-                #rawdata = dataset.get_data(index, do_transform=False)            
-                #t = rawdata["y"].coords[dataset.tdimname]
-                
-                xarr = xr.DataArray(y, dims=outdims)
-                #                    coords=dict(vars=dataset.varnames, Time=t))
-
+            yout = model(xin)
+            y = state_transformer.inverse_transform(yout.cpu())
+            xarr = xr.DataArray(y, dims=outdims)
+            xarraylist.append(xarr)
             
-                xarraylist.append(xarr)
-
-            
-            ## rollout: xin will be a stack of previous timesteps,
-            ## at each timestep, drop oldest & add newest, predict next
-            ## also have to use the first N timesteps as input-only;
-            ## first prediction is timestep N+1            
-
-            ## initialization on the first forecast hour
-            #if forecast_hour == 1:
-            #    # Initialize x and x_surf with the first time step
-            #    x = model.concat_and_reshape(batch["x"], batch["x_surf"]).to(device)
-            #
-            #    # setup save directory for images
-            #    init_time = datetime.datetime.utcfromtimestamp(date_time).strftime(
-            #        "%Y-%m-%dT%HZ"
-            #    )
-            #    img_save_loc = os.path.join(
-            #        os.path.expandvars(conf["save_loc"]),
-            #        f"forecasts/images_{init_time}",
-            #    )
-            #    if N_vars > 0:
-            #        os.makedirs(img_save_loc, exist_ok=True)
-
             ## Update the input
             ## setup for next iteration, transform to z-space and send to device
             #y_pred = state_transformer.transform_array(y_pred).to(device)
