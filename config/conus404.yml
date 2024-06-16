@@ -96,10 +96,10 @@ predict:
     start: "2017-10-01"
     finish: "2017-10-03"
 #    finish: "2022-09-30"
+    autoregressive: False
     use_laplace_filter: False
-#    autoregressive: False
-    autoregressive: True
     save_format: "nc"
+
 
 #visualization:
 #    surface_visualize: 

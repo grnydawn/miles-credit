@@ -51,9 +51,8 @@ os.environ["MKL_NUM_THREADS"] = "1"
 
 
 def predict(rank, world_size, conf, dataset):
-
     autoregressive = conf['predict']['autoregressive']
-    
+
     # infer device id from rank
     if torch.cuda.is_available():
         device = torch.device(f"cuda:{rank % torch.cuda.device_count()}")
@@ -83,11 +82,7 @@ def predict(rank, world_size, conf, dataset):
         for index in range(len(dataset)):
 
             if autoregressive and index > 0:
-                ## !HERE! ##
-                ## This doesn't work but everything else does
-                xin[:,:,0,:,:] = xin[:,:,1,:,:] 
-                xin[:,:,1,:,:] = xin[:,:,2,:,:] 
-                xin[:,:,2,:,:] = yout
+                xin = torch.cat((xin[:,:,1:3,:,:], yout[:,:,0:1,:,:]), dim=2)
             else:
                 xin = dataset[index]['x'].unsqueeze(0).to(device)
                 
