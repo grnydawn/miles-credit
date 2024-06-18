@@ -7,7 +7,6 @@ import wandb
 import optuna
 import shutil
 import logging
-import functools
 
 from pathlib import Path
 from argparse import ArgumentParser
@@ -17,22 +16,8 @@ import torch
 import torch.distributed as dist
 from torch.cuda.amp import GradScaler
 from torch.utils.data.distributed import DistributedSampler
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
-from torch.distributed.fsdp.fully_sharded_data_parallel import (
-    MixedPrecision,
-    CPUOffload
-)
-from torch.distributed.fsdp.wrap import (
-    transformer_auto_wrap_policy,
-    size_based_auto_wrap_policy,
-)
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-   checkpoint_wrapper,
-   CheckpointImpl,
-   apply_activation_checkpointing,
-)
-from torchsummary import summary
+from credit.distributed import distributed_model_wrapper
 
 from credit.models import load_model
 from credit.loss import VariableTotalLoss2D
@@ -44,11 +29,9 @@ from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything
 from credit.models.checkpoint import (
-    TorchFSDPModel,
     FSDPOptimizerWrapper,
     TorchFSDPCheckpointIO
 )
-from credit.mixed_precision import parse_dtype
 
 
 warnings.filterwarnings("ignore")
@@ -135,110 +118,6 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
     return dataset, sampler
 
 
-def distributed_model_wrapper(conf, neural_network, device):
-
-    # convert $USER to the actual user name
-    conf['save_loc'] = os.path.expandvars(conf['save_loc'])
-
-    # FSDP polices
-    if conf["trainer"]["mode"] == "fsdp":
-
-        # Define the sharding policies
-        # crossformer
-        if "crossformer" in conf["model"]["type"]:
-            from credit.models.crossformer import (
-                Attention, DynamicPositionBias, FeedForward, CrossEmbedLayer
-            )
-            transformer_layers_cls = {Attention, DynamicPositionBias, FeedForward, CrossEmbedLayer}
-
-        # FuXi
-        # FuXi supports "spectral_nrom = True" only
-        elif "fuxi" in conf["model"]["type"]:
-            from timm.models.swin_transformer_v2 import SwinTransformerV2Stage
-            transformer_layers_cls = {SwinTransformerV2Stage}
-
-        # other models not supported
-        else:
-            raise OSError("You asked for FSDP but only crossformer and fuxi are currently supported.")
-
-        auto_wrap_policy1 = functools.partial(
-            transformer_auto_wrap_policy,
-            transformer_layer_cls=transformer_layers_cls
-        )
-
-        auto_wrap_policy2 = functools.partial(
-            size_based_auto_wrap_policy, min_num_params=100_000
-        )
-
-        def combined_auto_wrap_policy(module, recurse, nonwrapped_numel):
-            # Define a new policy that combines policies
-            p1 = auto_wrap_policy1(module, recurse, nonwrapped_numel)
-            p2 = auto_wrap_policy2(module, recurse, nonwrapped_numel)
-            return p1 or p2
-
-        # Mixed precision
-
-        use_mixed_precision = conf["trainer"]["use_mixed_precision"] if "use_mixed_precision" in conf["trainer"] else False
-
-        logging.info(f"Using mixed_precision: {use_mixed_precision}")
-
-        if use_mixed_precision:
-            for key, val in conf["trainer"]["mixed_precision"].items():
-                conf["trainer"]["mixed_precision"][key] = parse_dtype(val)
-            mixed_precision_policy = MixedPrecision(**conf["trainer"]["mixed_precision"])
-        else:
-            mixed_precision_policy = None
-
-        # CPU offloading
-
-        cpu_offload = conf["trainer"]["cpu_offload"] if "cpu_offload" in conf["trainer"] else False
-
-        logging.info(f"Using CPU offloading: {cpu_offload}")
-
-        # FSDP module
-
-        model = TorchFSDPModel(
-            neural_network,
-            use_orig_params=True,
-            auto_wrap_policy=combined_auto_wrap_policy,
-            mixed_precision=mixed_precision_policy,
-            cpu_offload=CPUOffload(offload_params=cpu_offload)
-        )
-
-        # activation checkpointing on the transformer blocks
-
-        activation_checkpoint = conf["trainer"]["activation_checkpoint"] if "activation_checkpoint" in conf["trainer"] else False
-
-        logging.info(f"Activation checkpointing: {activation_checkpoint}")
-
-        if activation_checkpoint:
-
-            # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
-
-            non_reentrant_wrapper = functools.partial(
-                checkpoint_wrapper,
-                checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-            )
-
-            check_fn = lambda submodule: any(isinstance(submodule, cls) for cls in transformer_layers_cls)
-
-            apply_activation_checkpointing(
-                model,
-                checkpoint_wrapper_fn=non_reentrant_wrapper,
-                check_fn=check_fn
-            )
-
-        # attempting to get around the launch issue we are having
-        torch.distributed.barrier()
-
-    elif conf["trainer"]["mode"] == "ddp":
-        model = DDP(neural_network, device_ids=[device])
-    else:
-        model = neural_network
-
-    return model
-
-
 def load_model_states_and_optimizer(conf, model, device):
 
     # convert $USER to the actual user name
@@ -302,40 +181,6 @@ def load_model_states_and_optimizer(conf, model, device):
             param_group['lr'] = learning_rate
 
     return model, optimizer, scheduler, scaler
-
-
-def model_and_memory_summary(conf):
-
-    # convert $USER to the actual user name
-    conf['save_loc'] = os.path.expandvars(conf['save_loc'])
-
-    # estimate input tensor size
-    static_channels = 0 if "static_channels" not in conf["model"] else conf["model"]["static_channels"]
-    channels = conf["model"]["levels"] * len(conf["data"]["variables"]) + len(conf["data"]["surface_variables"]) + static_channels
-    frames = conf["model"]["frames"]
-    height = conf["model"]["image_height"]
-    width = conf["model"]["image_width"]
-
-    # set device
-    device = torch.device("cuda:0") if torch.cuda.is_available() else torch.device("cpu")
-
-    # Set seeds
-    seed = 1000 if "seed" not in conf else conf["seed"]
-    seed_everything(seed)
-
-    # model
-    m = load_model(conf)
-
-    # send the module to the correct device first
-    m.to(device)
-
-    try:
-        summary(m, input_size=(channels, frames, height, width))
-    except RuntimeError as e:
-        if "CUDA" in str(e):
-            logging.warning(f"CUDA out of memory error occurred: {e}.")
-        else:
-            logging.warning(f"An error occurred: {e}")
 
 
 def main(rank, world_size, conf, trial=False):
@@ -515,14 +360,6 @@ if __name__ == "__main__":
         help="Submit workers to PBS.",
     )
     parser.add_argument(
-        "-s",
-        "--summary",
-        dest="summary",
-        type=int,
-        default=0,
-        help="Get a summary of the models size and memory footprint"
-    )
-    parser.add_argument(
         "-w",
         "--wandb",
         dest="wandb",
@@ -534,7 +371,6 @@ if __name__ == "__main__":
     args_dict = vars(args)
     config = args_dict.pop("model_config")
     launch = int(args_dict.pop("launch"))
-    print_summary = int(args_dict.pop("summary"))
     use_wandb = int(args_dict.pop("wandb"))
 
     # Set up logger to print stuff
@@ -558,10 +394,6 @@ if __name__ == "__main__":
 
     if not os.path.exists(os.path.join(save_loc, "model.yml")):
         shutil.copy(config, os.path.join(save_loc, "model.yml"))
-
-    if print_summary:
-        model_and_memory_summary(conf)
-        sys.exit()
 
     # Launch PBS jobs
     if launch:

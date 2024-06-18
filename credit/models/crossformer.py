@@ -300,10 +300,9 @@ class CrossFormer(BaseModel):
         image_width=1280,
         patch_width=1,
         frames=2,
-        frame_patch_size=2,
         channels=4,
         surface_channels=7,
-        static_channels=0,
+        static_channels=3,
         levels=15,
         dim=(64, 128, 256, 512),
         depth=(2, 2, 8, 2),
@@ -316,7 +315,8 @@ class CrossFormer(BaseModel):
         ff_dropout=0.,
         pad_lon=0,
         pad_lat=0,
-        use_spectral_norm=True
+        use_spectral_norm=True,
+        **kwargs
     ):
         super().__init__()
 
@@ -499,8 +499,6 @@ if __name__ == "__main__":
     channels = 4
     surface_channels = 7
     static_channels = 3
-    patch_height = 1
-    patch_width = 1
     frame_patch_size = 2
     pad_lon = 80
     pad_lat = 80
@@ -509,21 +507,19 @@ if __name__ == "__main__":
 
     model = CrossFormer(
         image_height=image_height,
-        patch_height=patch_height,
         image_width=image_width,
-        patch_width=patch_width,
         frames=frames,
         frame_patch_size=frame_patch_size,
         channels=channels,
         surface_channels=surface_channels,
         static_channels=static_channels,
         levels=levels,
-        dim=(64, 128, 256, 512),
-        depth=(2, 2, 8, 2),
-        global_window_size=(5, 5, 2, 1),
-        local_window_size=10,
+        dim=(128, 256, 512, 1024),
+        depth=(2, 2, 18, 2),
+        global_window_size=(8, 4, 2, 1),
+        local_window_size=5,
         cross_embed_kernel_sizes=((4, 8, 16, 32), (2, 4), (2, 4), (2, 4)),
-        cross_embed_strides=(2, 2, 2, 2),
+        cross_embed_strides=(4, 2, 2, 2),
         attn_dropout=0.,
         ff_dropout=0.,
         pad_lon=pad_lon,
