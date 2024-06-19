@@ -111,7 +111,7 @@ class Trainer:
 
                 if "static" in batch:
                     if static is None:
-                        static = batch["static"].to(self.device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float()
+                        static = batch["static"].to(self.device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float() # [batch, num_stat_vars, hist_len, lat, lon]
                     x = torch.cat((x, static.clone()), dim=1)
                 
                 if "TOA" in batch:
