@@ -6,7 +6,6 @@ import xarray as xr
 from tqdm import tqdm
 import torch
 
-
 class TOADataLoader:
     def __init__(self, conf):
         self.TOA = xr.open_dataset(conf["data"]["TOA_forcing_path"]).load()
@@ -25,7 +24,8 @@ class TOADataLoader:
         selected_tsi = self.TOA['tsi'].sel(time=mask_toa) / 2540585.74
 
         # Convert to tensor and add dimension
-        return torch.tensor(selected_tsi.to_numpy()).unsqueeze(0)
+        return torch.tensor(selected_tsi.to_numpy()).unsqueeze(0).float()
+        
 
 
 def get_solar_radiation_loc(lon, lat, altitude, start_date, end_date, step_freq="1h", sub_freq="5Min"):

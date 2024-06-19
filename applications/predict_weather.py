@@ -97,7 +97,7 @@ class TOADataLoader:
         selected_tsi = self.TOA['tsi'].sel(time=mask_toa) / 2540585.74
 
         # Convert to tensor and add dimension
-        return torch.tensor(selected_tsi.to_numpy()).unsqueeze(0)
+        return torch.tensor(selected_tsi.to_numpy()).unsqueeze(0).float()
 
 def get_num_cpus():
     num_cpus = len(os.sched_getaffinity(0))

@@ -301,7 +301,7 @@ class ToTensor:
                     TOA = xr.open_dataset(self.conf["data"]["TOA_forcing_path"])
                     times_b = pd.to_datetime(TOA.time.values)
                     mask_toa = [any(i == time.dayofyear and j == time.hour for i, j in zip(self.doy, self.hod)) for time in times_b]
-                    return_dict['TOA'] = torch.tensor(((TOA[sv].sel(time=mask_toa))/2540585.74).to_numpy())
+                    return_dict['TOA'] = torch.tensor(((TOA[sv].sel(time=mask_toa))/2540585.74).to_numpy()).float()
                     # Need the datetime at time t(i) (which is the last element) to do multi-step training
                     return_dict['datetime'] = pd.to_datetime(self.datetime).astype(int).values[-1]
 
