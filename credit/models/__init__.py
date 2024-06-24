@@ -1,9 +1,11 @@
+import os
 import copy
 import logging
 from importlib.metadata import version
 
 # Import model classes
 from credit.models.crossformer import CrossFormer
+from credit.models.crossformer_may1 import CrossFormer as CrossFormerDep
 from credit.models.simple_vit import SimpleViT
 from credit.models.cube_vit import CubeViT
 from credit.models.vit2d import ViT2D
@@ -22,6 +24,7 @@ model_types = {
     "simple-vit": (SimpleViT, "Loading a simplified vit rotary transformer architecture ..."),
     "cube-vit": (CubeViT, "Loading a simplified vit rotary transformer architecture with a 3D conv tokenizer ..."),
     "crossformer": (CrossFormer, "Loading the CrossFormer model with a conv decoder head and skip connections ..."),
+    "crossformer-deprecated": (CrossFormerDep, "Loading the CrossFormer model with a conv decoder head and skip connections ..."),
     "unet": (SegmentationModel, "Loading a unet model"),
     "fuxi": (Fuxi, "Loading Fuxi Model")
 } 
@@ -39,10 +42,27 @@ def load_model(conf, load_weights=False):
     model_type = model_conf.pop("type")
 
     if model_type == 'unet':
+        import torch
         model, message = model_types[model_type]
         logger.info(message)
         if load_weights:
-            return model.load_model(conf)
+            model = model(conf)
+            save_loc = conf['save_loc']
+            ckpt = os.path.join(save_loc, "checkpoint.pt")
+
+            if not os.path.isfile(ckpt):
+                raise ValueError(
+                    "No saved checkpoint exists. You must train a model first. Exiting."
+                )
+
+            logging.info(
+                f"Loading a model with pre-trained weights from path {ckpt}"
+            )
+
+            checkpoint = torch.load(ckpt)
+            model.load_state_dict(checkpoint["model_state_dict"])
+            return model
+            
         return model(conf)
 
     if model_type in model_types:

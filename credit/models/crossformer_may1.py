@@ -1,3 +1,5 @@
+import os
+import copy
 import torch
 import logging
 import torch.nn.functional as F
@@ -11,7 +13,6 @@ from credit.models.base_model import BaseModel
 logger = logging.getLogger(__name__)
 
 # helpers
-
 
 def cast_tuple(val, length=1):
     return val if isinstance(val, tuple) else ((val,) * length)
@@ -109,25 +110,20 @@ class CrossEmbedLayer(nn.Module):
 
 # dynamic positional bias
 
-class DynamicPositionBias(nn.Module):
-    def __init__(self, dim):
-        super(DynamicPositionBias, self).__init__()
-        self.layers = nn.Sequential(
-            nn.Linear(2, dim),
-            nn.LayerNorm(dim),
-            nn.ReLU(),
-            nn.Linear(dim, dim),
-            nn.LayerNorm(dim),
-            nn.ReLU(),
-            nn.Linear(dim, dim),
-            nn.LayerNorm(dim),
-            nn.ReLU(),
-            nn.Linear(dim, 1),
-            Rearrange('... () -> ...')
-        )
-
-    def forward(self, x):
-        return self.layers(x)
+def DynamicPositionBias(dim):
+    return nn.Sequential(
+        nn.Linear(2, dim),
+        nn.LayerNorm(dim),
+        nn.ReLU(),
+        nn.Linear(dim, dim),
+        nn.LayerNorm(dim),
+        nn.ReLU(),
+        nn.Linear(dim, dim),
+        nn.LayerNorm(dim),
+        nn.ReLU(),
+        nn.Linear(dim, 1),
+        Rearrange('... () -> ...')
+    )
 
 
 # transformer classes
@@ -145,19 +141,14 @@ class LayerNorm(nn.Module):
         return (x - mean) / (var + self.eps).sqrt() * self.g + self.b
 
 
-class FeedForward(nn.Module):
-    def __init__(self, dim, mult=4, dropout=0.):
-        super(FeedForward, self).__init__()
-        self.layers = nn.Sequential(
-            LayerNorm(dim),
-            nn.Conv2d(dim, dim * mult, 1),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Conv2d(dim * mult, dim, 1)
-        )
-
-    def forward(self, x):
-        return self.layers(x)
+def FeedForward(dim, mult=4, dropout=0.):
+    return nn.Sequential(
+        LayerNorm(dim),
+        nn.Conv2d(dim, dim * mult, 1),
+        nn.GELU(),
+        nn.Dropout(dropout),
+        nn.Conv2d(dim * mult, dim, 1)
+    )
 
 
 class Attention(nn.Module):
@@ -300,9 +291,10 @@ class CrossFormer(BaseModel):
         image_width=1280,
         patch_width=1,
         frames=2,
+        frame_patch_size=2,
         channels=4,
         surface_channels=7,
-        static_channels=3,
+        static_channels=0,
         levels=15,
         dim=(64, 128, 256, 512),
         depth=(2, 2, 8, 2),
@@ -315,8 +307,7 @@ class CrossFormer(BaseModel):
         ff_dropout=0.,
         pad_lon=0,
         pad_lat=0,
-        use_spectral_norm=True,
-        **kwargs
+        use_spectral_norm=True
     ):
         super().__init__()
 
@@ -455,6 +446,7 @@ class CrossFormer(BaseModel):
         return (k1 + 2 * k2 + 2 * k3 + k4) / 6
 
 
+
 if __name__ == "__main__":
     # image_height = 192  # 640, 192
     # image_width = 288  # 1280, 288
@@ -499,6 +491,8 @@ if __name__ == "__main__":
     channels = 4
     surface_channels = 7
     static_channels = 3
+    patch_height = 1
+    patch_width = 1
     frame_patch_size = 2
     pad_lon = 80
     pad_lat = 80
@@ -507,19 +501,21 @@ if __name__ == "__main__":
 
     model = CrossFormer(
         image_height=image_height,
+        patch_height=patch_height,
         image_width=image_width,
+        patch_width=patch_width,
         frames=frames,
         frame_patch_size=frame_patch_size,
         channels=channels,
         surface_channels=surface_channels,
         static_channels=static_channels,
         levels=levels,
-        dim=(128, 256, 512, 1024),
-        depth=(2, 2, 18, 2),
-        global_window_size=(8, 4, 2, 1),
-        local_window_size=5,
+        dim=(64, 128, 256, 512),
+        depth=(2, 2, 8, 2),
+        global_window_size=(5, 5, 2, 1),
+        local_window_size=10,
         cross_embed_kernel_sizes=((4, 8, 16, 32), (2, 4), (2, 4), (2, 4)),
-        cross_embed_strides=(4, 2, 2, 2),
+        cross_embed_strides=(2, 2, 2, 2),
         attn_dropout=0.,
         ff_dropout=0.,
         pad_lon=pad_lon,

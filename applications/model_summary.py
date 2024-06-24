@@ -5,36 +5,18 @@ import yaml
 import wandb
 import shutil
 import logging
-import functools
 
 from pathlib import Path
 from argparse import ArgumentParser
 
 import torch
 import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
-from torch.distributed.fsdp.fully_sharded_data_parallel import (
-    MixedPrecision,
-    CPUOffload
-)
-from torch.distributed.fsdp.wrap import (
-    transformer_auto_wrap_policy,
-    size_based_auto_wrap_policy,
-)
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-   checkpoint_wrapper,
-   CheckpointImpl,
-   apply_activation_checkpointing,
-)
 from torchsummary import summary
 
 from credit.models import load_model
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything
-from credit.models.checkpoint import (
-    TorchFSDPModel,
-)
-from credit.mixed_precision import parse_dtype
+from credit.distributed import distributed_model_wrapper
 
 
 warnings.filterwarnings("ignore")
@@ -52,92 +34,92 @@ def setup(rank, world_size, mode):
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
 
-def distributed_model_wrapper(conf, neural_network, device):
+# def distributed_model_wrapper(conf, neural_network, device):
 
-    if conf["trainer"]["mode"] == "fsdp":
+#     if conf["trainer"]["mode"] == "fsdp":
 
-        # Define the sharding policies
+#         # Define the sharding policies
 
-        if "crossformer" in conf["model"]["type"]:
-            from credit.models.crossformer_skip import Attention as Attend
-        elif "fuxi" in conf["model"]["type"]:
-            from credit.models.fuxi import UTransformer as Attend
-        else:
-            raise OSError("You asked for FSDP but only crossformer and fuxi are currently supported.")
+#         if "crossformer" in conf["model"]["type"]:
+#             from credit.models.crossformer_skip import Attention as Attend
+#         elif "fuxi" in conf["model"]["type"]:
+#             from credit.models.fuxi import UTransformer as Attend
+#         else:
+#             raise OSError("You asked for FSDP but only crossformer and fuxi are currently supported.")
 
-        auto_wrap_policy1 = functools.partial(
-            transformer_auto_wrap_policy,
-            transformer_layer_cls={Attend}
-        )
+#         auto_wrap_policy1 = functools.partial(
+#             transformer_auto_wrap_policy,
+#             transformer_layer_cls={Attend}
+#         )
 
-        auto_wrap_policy2 = functools.partial(
-            size_based_auto_wrap_policy, min_num_params=1_000
-        )
+#         auto_wrap_policy2 = functools.partial(
+#             size_based_auto_wrap_policy, min_num_params=1_000
+#         )
 
-        def combined_auto_wrap_policy(module, recurse, nonwrapped_numel):
-            # Define a new policy that combines policies
-            p1 = auto_wrap_policy1(module, recurse, nonwrapped_numel)
-            p2 = auto_wrap_policy2(module, recurse, nonwrapped_numel)
-            return p1 or p2
+#         def combined_auto_wrap_policy(module, recurse, nonwrapped_numel):
+#             # Define a new policy that combines policies
+#             p1 = auto_wrap_policy1(module, recurse, nonwrapped_numel)
+#             p2 = auto_wrap_policy2(module, recurse, nonwrapped_numel)
+#             return p1 or p2
 
-        # Mixed precision
+#         # Mixed precision
 
-        use_mixed_precision = conf["trainer"]["use_mixed_precision"] if "use_mixed_precision" in conf["trainer"] else False
+#         use_mixed_precision = conf["trainer"]["use_mixed_precision"] if "use_mixed_precision" in conf["trainer"] else False
 
-        logging.info(f"Using mixed_precision: {use_mixed_precision}")
+#         logging.info(f"Using mixed_precision: {use_mixed_precision}")
 
-        if use_mixed_precision:
-            for key, val in conf["trainer"]["mixed_precision"].items():
-                conf["trainer"]["mixed_precision"][key] = parse_dtype(val)
-            mixed_precision_policy = MixedPrecision(**conf["trainer"]["mixed_precision"])
-        else:
-            mixed_precision_policy = None
+#         if use_mixed_precision:
+#             for key, val in conf["trainer"]["mixed_precision"].items():
+#                 conf["trainer"]["mixed_precision"][key] = parse_dtype(val)
+#             mixed_precision_policy = MixedPrecision(**conf["trainer"]["mixed_precision"])
+#         else:
+#             mixed_precision_policy = None
 
-        # CPU offloading
+#         # CPU offloading
 
-        cpu_offload = conf["trainer"]["cpu_offload"] if "cpu_offload" in conf["trainer"] else False
+#         cpu_offload = conf["trainer"]["cpu_offload"] if "cpu_offload" in conf["trainer"] else False
 
-        logging.info(f"Using CPU offloading: {cpu_offload}")
+#         logging.info(f"Using CPU offloading: {cpu_offload}")
 
-        # FSDP module
+#         # FSDP module
 
-        model = TorchFSDPModel(
-            neural_network,
-            use_orig_params=True,
-            auto_wrap_policy=combined_auto_wrap_policy,
-            mixed_precision=mixed_precision_policy,
-            cpu_offload=CPUOffload(offload_params=cpu_offload)
-        )
+#         model = TorchFSDPModel(
+#             neural_network,
+#             use_orig_params=True,
+#             auto_wrap_policy=combined_auto_wrap_policy,
+#             mixed_precision=mixed_precision_policy,
+#             cpu_offload=CPUOffload(offload_params=cpu_offload)
+#         )
 
-        # activation checkpointing on the transformer blocks
+#         # activation checkpointing on the transformer blocks
 
-        activation_checkpoint = conf["trainer"]["activation_checkpoint"] if "activation_checkpoint" in conf["trainer"] else False
+#         activation_checkpoint = conf["trainer"]["activation_checkpoint"] if "activation_checkpoint" in conf["trainer"] else False
 
-        logging.info(f"Activation checkpointing: {activation_checkpoint}")
+#         logging.info(f"Activation checkpointing: {activation_checkpoint}")
 
-        if activation_checkpoint:
+#         if activation_checkpoint:
 
-            # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
+#             # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
 
-            non_reentrant_wrapper = functools.partial(
-                checkpoint_wrapper,
-                checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-            )
+#             non_reentrant_wrapper = functools.partial(
+#                 checkpoint_wrapper,
+#                 checkpoint_impl=CheckpointImpl.NO_REENTRANT,
+#             )
 
-            check_fn = lambda submodule: isinstance(submodule, Attend)
+#             check_fn = lambda submodule: isinstance(submodule, Attend)
 
-            apply_activation_checkpointing(
-                model,
-                checkpoint_wrapper_fn=non_reentrant_wrapper,
-                check_fn=check_fn
-            )
+#             apply_activation_checkpointing(
+#                 model,
+#                 checkpoint_wrapper_fn=non_reentrant_wrapper,
+#                 check_fn=check_fn
+#             )
 
-    elif conf["trainer"]["mode"] == "ddp":
-        model = DDP(neural_network, device_ids=[device])
-    else:
-        model = neural_network
+#     elif conf["trainer"]["mode"] == "ddp":
+#         model = DDP(neural_network, device_ids=[device])
+#     else:
+#         model = neural_network
 
-    return model
+#     return model
 
 
 def main(rank, world_size, conf, trial=False):
