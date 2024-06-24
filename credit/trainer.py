@@ -16,6 +16,7 @@ import optuna
 from credit.models.checkpoint import TorchFSDPCheckpointIO
 from credit.solar import TOADataLoader
 
+logger = logging.getLogger(__name__)
 
 def cleanup():
     dist.destroy_process_group()
@@ -106,13 +107,13 @@ class Trainer:
                 x = self.model.concat_and_reshape(
                     batch["x"],
                     batch["x_surf"]
-                ).to(self.device)
+                ).to(self.device)               
 
                 if "static" in batch:
                     if static is None:
-                        static = batch["static"].to(self.device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float()
+                        static = batch["static"].to(self.device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float() # [batch, num_stat_vars, hist_len, lat, lon]
                     x = torch.cat((x, static.clone()), dim=1)
-
+                
                 if "TOA" in batch:
                     toa = batch["TOA"].to(self.device)
                     x = torch.cat([x, toa.unsqueeze(1)], dim=1)
