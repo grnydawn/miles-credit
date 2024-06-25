@@ -12,21 +12,22 @@ data:
     TOA_forcing_path: '/glade/derecho/scratch/dgagne/credit_scalers/solar_radiation_2024-03-29_0204.nc' 
     scaler_type: 'std' # 'std'
     history_len: 2 
-    forecast_len: 0
+    forecast_len: 2 # larger than 0 for multi step
     valid_history_len: 2
-    valid_forecast_len: 0
-    time_step: 1
+    valid_forecast_len: 2 # 
+    one_shot: True
+    skip_periods: null
     
 trainer:
-    mode: ddp  #, fsdp
-    train_batch_size: 2
-    valid_batch_size: 2
-    batches_per_epoch: 0 # Set to 0 to use len(dataloader)
-    valid_batches_per_epoch: 100
-    learning_rate: 5.0e-04
+    mode: ddp
+    train_batch_size: 1
+    valid_batch_size: 1
+    batches_per_epoch: 2500 # Set to 0 to use len(dataloader)
+    valid_batches_per_epoch: 20
+    learning_rate: 1.0e-07
     weight_decay: 1.0e-05
-    start_epoch: 0
-    epochs: 20
+    start_epoch: 1
+    epochs: 20 # train_one_epoch: True
     amp: False
     grad_accum_every: 1
     grad_max_norm: 1.0
@@ -35,7 +36,8 @@ trainer:
     stopping_patience: 50
     teacher_forcing_ratio: 0.5 #0.9886539666794065
     stop_rollout: 0.9
-    load_weights: False
+    skip_validation: True
+    load_weights: True
     load_optimizer: False
     use_scheduler: False
     #scheduler: {'scheduler_type': 'cosine-annealing', first_cycle_steps: 500, cycle_mult: 6.0, max_lr: 5.0e-04, min_lr: 5.0e-07, warmup_steps: 499, gamma: 0.7}
@@ -58,7 +60,9 @@ model:
     static_channels: 3   #
     num_heads: 8         # Number of heads (default: 8)
     window_size: 7       # Window size (default: 7)
-    depth: 8             # Depth of the swin transformer (default: 48)
+    depth: 16            # Depth of the swin transformer (default: 48)
+    pad_lon: 80
+    pad_lat: 80
     use_spectral_norm: False
     
 loss: 

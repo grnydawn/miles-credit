@@ -12,12 +12,18 @@ logger = logging.getLogger(__name__)
 
 
 def apply_spectral_norm(model):
+    '''
+    add spectral norm to all the conv and linear layers
+    '''
     for module in model.modules():
         if isinstance(module, (nn.Conv2d, nn.Linear, nn.ConvTranspose2d)):
             nn.utils.spectral_norm(module)
 
 
 def circular_pad1d(x, pad):
+    '''
+    Repeat the edge the map to fill the padded area
+    '''
     return torch.cat((x[..., -pad:], x, x[..., :pad]), dim=-1)
 
 
@@ -280,8 +286,8 @@ class Fuxi(BaseModel):
                  num_heads=8,
                  depth=48,
                  window_size=7,
-                 pad_lon=0,
-                 pad_lat=0,
+                 pad_lon=80,
+                 pad_lat=80,
                  use_spectral_norm=False):
 
         super().__init__()
@@ -403,6 +409,8 @@ class Fuxi(BaseModel):
 
 if __name__ == "__main__":
 
+    # ============================================================= #
+    # hyperparam examples
     image_height = 640    # Image height (default: 640)
     patch_height = 4     # Patch height (default: 16)
     image_width = 1280    # Image width (default: 1280)
@@ -419,24 +427,14 @@ if __name__ == "__main__":
     window_size = 7       # Window size (default: 7)
     depth = 8            # Depth of the swin transformer (default: 48)
     use_spectral_norm = True
-    
-    # image_height = 640  # 640
-    # patch_height = 16
-    # image_width = 1280  # 1280
-    # patch_width = 16
-    # levels = 15
-    # frames = 2
-    # frame_patch_size = 2
-
     pad_lon = 80
     pad_lat = 80
     
-    img_size = (2, image_height, image_width)
-    patch_size = (2, patch_height, patch_width)
+    # ============================================================= #
+    # build the model
+    img_size = (frames, image_height, image_width)
+    patch_size = (frames, patch_height, patch_width)
     
-    input_tensor = torch.randn(2, channels * levels + surface_channels + static_channels, 
-                               frames, image_height, image_width).to("cuda")
-
     model = Fuxi(
         channels=channels,
         surface_channels=surface_channels,
@@ -454,9 +452,18 @@ if __name__ == "__main__":
         use_spectral_norm=use_spectral_norm
     ).to("cuda")
 
+    # ============================================================= #
+    # test the model
+    
+    # pass an input tensor to test the graph
+    input_tensor = torch.randn(2, channels * levels + surface_channels + static_channels, 
+                               frames, image_height, image_width).to("cuda")    
+    
     y_pred = model(input_tensor.to("cuda"))
 
-    print("Predicted shape:", y_pred.shape)
+    print('Input shape: {}'.format(input_tensor.shape))
+    print("Predicted shape: {}".format(y_pred.shape))
 
+    # print the number of params
     num_params = sum(p.numel() for p in model.parameters())
     print(f"Number of parameters in the model: {num_params}")

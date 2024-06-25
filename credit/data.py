@@ -1,19 +1,38 @@
-from typing import Optional, Callable, TypedDict, Union, Iterable, NamedTuple, List
-import numpy as np
+'''
+data.py 
+-------------------------------------------------------
+Content:
+    - get_forward_data(filename) -> xr.DataArray
+    - get_forward_data_netCDF4(filename) -> xr.DataArray
+    - ERA5_Static_Dataset(torch.utils.data.Dataset)
+
+'''
+
+# system tools
 import os
+from glob import glob
+from timeit import timeit
+from functools import reduce
+from itertools import repeat
+from dataclasses import dataclass, field
+from typing import Optional, Callable, TypedDict, Union, Iterable, NamedTuple, List
+
+# data utils
+import datetime
+import numpy as np
 import pandas as pd
 import xarray as xr
+
+# Pytorch utils
 import torch
+import torch.utils.data
 from torch.utils.data import get_worker_info
 from torch.utils.data.distributed import DistributedSampler
-import torch.utils.data
-import datetime
-from dataclasses import dataclass, field
-from functools import reduce
-from glob import glob
-from itertools import repeat
-from timeit import timeit
 
+#
+Array = Union[np.ndarray, xr.DataArray]
+IMAGE_ATTR_NAMES = ('historical_ERA5_images', 'target_ERA5_images')
+#
 
 def get_forward_data(filename) -> xr.DataArray:
     """Lazily opens the Zarr store on gladefilesystem.
@@ -21,10 +40,11 @@ def get_forward_data(filename) -> xr.DataArray:
     dataset = xr.open_zarr(filename, consolidated=True)
     return dataset
 
-
-Array = Union[np.ndarray, xr.DataArray]
-IMAGE_ATTR_NAMES = ('historical_ERA5_images', 'target_ERA5_images')
-
+def get_forward_data_netCDF4(filename) -> xr.DataArray:
+    """Lazily opens netCDF4 files.
+    """
+    dataset = xr.open_dataset(filename)
+    return dataset
 
 class Sample(TypedDict):
     """Simple class for structuring data for the ML model.
@@ -237,6 +257,201 @@ def find_key_for_number(input_number, data_dict):
 
     # Return None if the number is not within any range
     return None
+
+
+class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
+    '''
+    A Pytorch Dataset class that works on:
+        - ERA5 variables (time, level, lat, lon)
+        - foring variables (time, lat, lon)
+        - static variables (lat, lon)
+        
+    Parameters:
+    - filenames: ERA5 file path as *.zarr with re (e.g., /user/ERA5/*.zarr)
+    - filename_forcing: None /or a netCDF4 file that contains all the forcing variables.
+    - filename_static: None /or a netCDF4 file that contains all the static variables.
+    
+    '''
+    def __init__(
+        self,
+        filenames,
+        filename_forcing=None,
+        filename_static=None,
+        history_len=2,
+        forecast_len=0,
+        transform=None,
+        seed=42,
+        skip_periods=None,
+        one_shot=None,
+        max_forecast_len=None
+    ):
+        self.history_len = history_len
+        self.forecast_len = forecast_len
+        self.transform = transform
+
+        # skip periods
+        self.skip_periods = skip_periods
+        if self.skip_periods is None:
+            self.skip_periods = 1
+
+        # one shot option
+        self.one_shot = one_shot
+
+        # total number of needed forecast lead times 
+        self.total_seq_len = self.history_len + self.forecast_len
+
+        # set random seed
+        self.rng = np.random.default_rng(seed=seed)
+        
+        # max possible forecast len
+        self.max_forecast_len = max_forecast_len
+
+        # ======================================================== #
+        # ERA5 operations
+        all_fils = []
+        filenames = sorted(filenames)
+        for fn in filenames:
+            all_fils.append(get_forward_data(filename=fn))
+        self.all_fils = all_fils
+        
+        # get sample indices for all ERA5 files:
+        ind_start = 0
+        self.ERA5_indices = {} # <------ change
+        for ind_file, ERA5_xarray in enumerate(self.all_fils):
+            
+            # [number of samples, ind_start, ind_end]
+            self.ERA5_indices[str(ind_file)] = [len(ERA5_xarray['time']), 
+                                                  ind_start, 
+                                                  ind_start+len(ERA5_xarray['time'])]
+            ind_start += len(ERA5_xarray['time'])+1
+            
+        # ======================================================== #
+        # forcing file
+        self.filename_forcing = filename_forcing
+        
+        if self.filename_forcing is not None:
+            assert os.path.isfile(filename_forcing), 'Cannot find forcing file [{}]'.format(filename_forcing)
+            self.xarray_forcing = get_forward_data_netCDF4(filename_forcing)
+        else:
+            self.xarray_forcing = False
+
+        # ======================================================== #
+        # static file
+        self.filename_static = filename_static
+        
+        if self.filename_static is not None:
+            assert os.path.isfile(filename_static), 'Cannot find static file [{}]'.format(filename_forcing)
+            self.xarray_static = get_forward_data_netCDF4(filename_static)
+        else:
+            self.xarray_static = False
+
+    def __post_init__(self):
+        # Total sequence length of each sample.
+        self.total_seq_len = self.history_len + self.forecast_len
+
+    def __len__(self):
+        # compute the total number of length
+        total_len = 0
+        for ERA5_xarray in self.all_fils:
+            total_len += len(ERA5_xarray['time']) - self.total_seq_len + 1
+        return total_len
+
+    def __getitem__(self, index):
+        # ========================================================================== #
+        # cross-year indices --> the index of the year + indices within that year
+        
+        # select the ind_file based on the iter index 
+        ind_file = find_key_for_number(index, self.ERA5_indices)
+
+        # get the ind within the current file
+        ind_start = self.ERA5_indices[ind_file][1]
+        ind_start_in_file = index - ind_start
+
+        # handle out-of-bounds
+        ind_largest = len(self.all_fils[int(ind_file)]['time'])-(self.history_len+self.forecast_len+1)
+        if ind_start_in_file > ind_largest:
+            ind_start_in_file = ind_largest
+        # ========================================================================== #
+        # subset xarray on time dimension & load it to the memory
+        
+        ## ERA5_subset: a xarray dataset that contains training input and target (for the current index)
+        ind_end_in_file = ind_start_in_file+self.history_len+self.forecast_len
+        ERA5_subset = self.all_fils[int(ind_file)].isel(
+            time=slice(ind_start_in_file, ind_end_in_file+1)).load()
+        
+        # ==================================================== #
+        # split ERA5_subset into training inputs and targets + merge with forcing and static
+
+        # the ind_end of the ERA5_subset
+        ind_end_time = len(ERA5_subset['time'])
+
+        # datetiem information as int number (used in some normalization methods)
+        datetime_as_number = ERA5_subset.time.values.astype('datetime64[s]').astype(int)
+
+        # ==================================================== #
+        # xarray dataset as input
+        ## historical_ERA5_images: the final input
+        
+        historical_ERA5_images = ERA5_subset.isel(time=slice(0, self.history_len, self.skip_periods))
+            
+        # merge forcing inputs
+        if self.xarray_forcing:
+            # slice + load to the GPU
+            forcing_subset_input = self.xarray_forcing.isel(
+                time=slice(ind_start_in_file, ind_end_in_file+1))
+            forcing_subset_input = forcing_subset_input.isel(time=slice(0, self.history_len, self.skip_periods)).load()
+            
+            # update
+            
+            forcing_subset_input['time'] = historical_ERA5_images['time']
+            
+            # merge
+            historical_ERA5_images = historical_ERA5_images.merge(forcing_subset_input)
+            
+        # merge static inputs
+        if self.xarray_static:
+            # expand static var on time dim
+            N_time_dims = len(ERA5_subset['time'])
+            static_subset_input = self.xarray_static.expand_dims(dim={"time": N_time_dims})
+            # assign coords 'time'
+            static_subset_input = static_subset_input.assign_coords({'time': ERA5_subset['time']})
+            
+            # slice + load to the GPU
+            static_subset_input = static_subset_input.isel(time=slice(0, self.history_len, self.skip_periods)).load()
+            
+            # update 
+            static_subset_input['time'] = historical_ERA5_images['time']
+            
+            # merge
+            historical_ERA5_images = historical_ERA5_images.merge(static_subset_input)
+
+        # ==================================================== #
+        # xarray dataset as target
+        ## target_ERA5_images: the final input
+        
+        target_ERA5_images = ERA5_subset.isel(time=slice(self.history_len, ind_end_time, self.skip_periods))
+        
+        if self.one_shot is not None:
+            # get the final state of the target as one-shot
+            target_ERA5_images = target_ERA5_images.isel(time=slice(0, 1))
+
+        # pipe xarray datasets to the sampler
+        sample = Sample(
+            historical_ERA5_images=historical_ERA5_images,
+            target_ERA5_images=target_ERA5_images,
+            datetime_index=datetime_as_number
+        )
+        
+        # ==================================== #
+        # data normalization
+        if self.transform:
+            sample = self.transform(sample)
+
+        # assign sample index
+        sample["index"] = index
+
+        return sample
+
 
 
 class ERA5Dataset(torch.utils.data.Dataset):
