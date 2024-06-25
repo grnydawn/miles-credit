@@ -1,14 +1,28 @@
-import torch
+'''
+transforms.py 
+-------------------------------------------------------
+Content:
+    - load_transforms(conf)
+    - Normalize_ERA5_and_Forcing
+    - ToTensor_ERA5_and_Forcing
+
+Yingkai Sha
+ksha@ucar.edu
+'''
+
 import logging
+from typing import Dict
+
 import numpy as np
+import pandas as pd
 import xarray as xr
 import netCDF4 as nc
-from credit.data import Sample
-from typing import Dict
-import pandas as pd
-from bridgescaler import read_scaler
+
+import torch
 from torchvision import transforms as tforms
 
+from credit.data import Sample
+from bridgescaler import read_scaler
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +126,167 @@ class NormalizeState:
         return transformed_x.to(device)
 
 
+class Normalize_ERA5_and_Forcing:
+    '''
+    Compute z-score norms for ERA5, forcing, and static variables. 
+    '''
+    def __init__(self, conf):
+        
+        # import the variable mean
+        self.mean_ds = xr.open_dataset(conf['data']['mean_path'])
+        
+        # import the variable std
+        self.std_ds = xr.open_dataset(conf['data']['std_path'])
+
+        # get levels and upper air variables
+        self.levels = conf['model']['levels']
+        self.varname_upper_air = conf['data']['variables']
+        self.num_upper_air = (len(self.varname_upper_air)*self.levels)
+        
+        # get surface variables
+        self.varname_surface = conf['data']['surface_variables']
+        self.num_surface = len(self.varname_surface)
+        
+        # identify if forcing and static exist
+        flag_forcing = ('forcing_variables' in conf['data']) and (len(conf['data']['forcing_variables']) > 0)
+        flag_static = ('static_variables' in conf['data']) and (len(conf['data']['static_variables']) > 0)
+        
+        if flag_forcing or flag_static:
+            self.has_forcing_static = True
+            self.varname_forcing_static = conf['data']['forcing_variables'] + conf['data']['static_variables']
+        else:
+            self.has_forcing_static = False
+        
+        logger.info("Loading stored mean and std data for z-score-based transform and inverse transform")
+
+    def __call__(self, sample: Sample, inverse: bool = False) -> Sample:
+        if inverse:
+            # inverse transformation
+            return self.inverse_transform(sample)
+        else:
+            # transformation
+            return self.transform(sample)
+
+    def transform_array(self, x: torch.Tensor) -> torch.Tensor:
+
+        # get the current device
+        device = x.device
+
+        # subset upper air
+        tensor_upper_air = x[:, :self.num_upper_air, :, :]
+        transformed_upper_air = tensor_upper_air.clone()
+
+        # surface variables
+        tensor_surface = x[:, self.num_upper_air:(self.num_upper_air+self.num_surface), :, :]
+        transformed_surface = tensor_surface.clone()
+
+        # forcing and static
+        if self.has_forcing_static:
+            tensor_forcing_static = x[:, (self.num_upper_air+self.num_surface):, :, :]
+        
+        # standardize upper air variables
+        # upper air variable structure: var 1 [all levels] --> var 2 [all levels]
+        k = 0
+        for name in self.varname_upper_air:
+            for level in range(self.levels):
+                var_mean = self.mean_ds[name].values[level]
+                var_std = self.std_ds[name].values[level]
+                transformed_upper_air[:, k] = (tensor_upper_air[:, k] - var_mean) / var_std
+                k += 1
+        
+        # standardize surface variables
+        for k, name in enumerate(self.varname_surface):
+            var_mean = self.mean_ds[name].values
+            var_std = self.std_ds[name].values
+            transformed_surface[:, k] = (tensor_surface[:, k] - var_mean) / var_std
+
+        # concat everything
+        if self.has_forcing_static:
+            transformed_x = torch.cat((transformed_upper_air, 
+                                       transformed_surface, 
+                                       tensor_forcing_static), dim=1)
+        else:
+            transformed_x = torch.cat((transformed_upper_air, 
+                                       transformed_surface), dim=1)
+            
+        return transformed_x.to(device)
+
+    def transform(self, sample: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]:
+        normalized_sample = {}
+        if self.has_forcing_static:
+            for key, value in sample.items():
+                # key: 'historical_ERA5_images', 'target_ERA5_images'
+                # value: the xarray datasets
+                if isinstance(value, xr.Dataset):
+                    # training input
+                    if key == 'historical_ERA5_images':
+
+                        # get all the input vars
+                        varname_inputs = value.keys()
+
+                        # loop through dataset variables, handle forcing and static differently
+                        for varname in varname_inputs:
+
+                            # if forcing and static skip it, otherwise do z-score
+                            if (varname in self.varname_forcing_static) is False:
+                                value[varname] = (value[varname] - self.mean_ds[varname]) / self.std_ds[varname]
+                        
+                        # put transformed back to 
+                        normalized_sample[key] = value
+                        
+                    # target fields do not contain forcing and static
+                    else:
+                        normalized_sample[key] = (value - self.mean_ds) / self.std_ds
+        else:
+            for key, value in sample.items():
+                if isinstance(value, xr.Dataset):
+                    normalized_sample[key] = (value - self.mean_ds) / self.std_ds
+                        
+        return normalized_sample
+        
+    def inverse_transform(self, x: torch.Tensor) -> torch.Tensor:
+        
+        # get the current device
+        device = x.device
+        
+        # subset upper air
+        tensor_upper_air = x[:, :self.num_upper_air, :, :]
+        transformed_upper_air = tensor_upper_air.clone()
+        
+        # surface variables
+        tensor_surface = x[:, self.num_upper_air:(self.num_upper_air+self.num_surface), :, :]
+        transformed_surface = tensor_surface.clone()
+        
+        # forcing and static
+        if self.has_forcing_static:
+            tensor_forcing_static = x[:, (self.num_upper_air+self.num_surface):, :, :]
+        
+        # reverse upper air variables
+        k = 0
+        for name in self.varname_upper_air:
+            for level in range(self.levels):
+                mean = self.mean_ds[name].values[level]
+                std = self.std_ds[name].values[level]
+                transformed_upper_air[:, k] = tensor_upper_air[:, k] * std + mean
+                k += 1
+                
+        # reverse surface variables    
+        for k, name in enumerate(self.varname_surface):
+            mean = self.mean_ds[name].values
+            std = self.std_ds[name].values
+            transformed_surface[:, k] = tensor_surface[:, k] * std + mean
+
+        # concat everything
+        if self.has_forcing_static:
+            transformed_x = torch.cat((transformed_upper_air, 
+                                       transformed_surface, 
+                                       tensor_forcing_static), dim=1)
+        else:
+            transformed_x = torch.cat((transformed_upper_air, 
+                                       transformed_surface), dim=1)
+        
+        return transformed_x.to(device)
+        
 class NormalizeState_Quantile:
     """Class to use the bridgescaler Quantile functionality.
     Some hoops have to be jumped thorugh, and the efficiency could be
@@ -317,6 +492,109 @@ class ToTensor:
             return_dict['static'] = np.stack(arrs, axis=0) # [num_stat_vars, lat, lon]
 
         return return_dict
+
+class ToTensor_ERA5_and_Forcing:
+    '''
+    Convert xarray.Dataset to torch.Tensor. It handles ERA5, forcing, and static variables. 
+    '''
+    def __init__(self, conf):
+        self.conf = conf
+        self.hist_len = int(conf["data"]["history_len"])
+        self.for_len = int(conf["data"]["forecast_len"])
+        
+        self.varname_upper_air = conf["data"]["variables"]
+        self.varname_surface = conf["data"]["surface_variables"]
+        
+        # identify if forcing and static exist
+        flag_forcing = ('forcing_variables' in conf['data']) and (len(conf['data']['forcing_variables']) > 0)
+        flag_static = ('static_variables' in conf['data']) and (len(conf['data']['static_variables']) > 0)
+        
+        if flag_forcing or flag_static:
+            self.has_forcing_static = True
+            self.varname_forcing = conf['data']['forcing_variables']
+            self.varname_static = conf['data']['static_variables']
+            self.allvars = self.varname_upper_air + self.varname_surface
+        else:
+            self.has_forcing_static = False
+            
+        self.allvars = self.varname_upper_air + self.varname_surface
+            
+    def __call__(self, sample: Sample) -> Sample:
+
+        return_dict = {}
+        
+        for key, value in sample.items():
+            
+            ## if DataArray
+            if isinstance(value, xr.DataArray):
+                var_value = value.values
+
+            ## if Dataset
+            elif isinstance(value, xr.Dataset):
+                list_vars_surface = []
+                list_vars_upper_air = []
+                
+                for var_name in self.allvars:
+                    var_value = value[var_name].values
+                    if var_name in self.varname_surface:
+                        list_vars_surface.append(var_value)
+                    else:
+                        list_vars_upper_air.append(var_value)
+                        
+                numpy_vars_surface = np.array(list_vars_surface) # [num_surf_vars, hist_len, lat, lon]
+                numpy_vars_upper_air = np.array(list_vars_upper_air) # [num_vars, hist_len, num_levels, lat, lon]
+                
+                if self.has_forcing_static:
+                    if key == 'historical_ERA5_images' or key == 'x':
+                        list_vars_forcing_static = []
+                        for var_name in (self.varname_forcing + self.varname_static):
+                            var_value = value[var_name].values
+                            list_vars_forcing_static.append(var_value)
+    
+                        numpy_vars_forcing_static = np.array(list_vars_forcing_static)
+                    
+            ## if numpy
+            else:
+                var_value = value
+
+            if key == 'historical_ERA5_images' or key == 'x':
+                x_surf = torch.as_tensor(numpy_vars_surface).squeeze()
+                
+                if len(x_surf.shape) == 4:
+                    # [surface_var, time, lat, lon] --> [time, surface_var, lat, lon]
+                    return_dict['x_surf'] = x_surf.permute(1, 0, 2, 3)
+                else:
+                    # [time, lat, lon] --> [time, 1, lat, lon]
+                    return_dict['x_surf'] = x_surf.unsqueeze(1) # 
+
+                # [upper_var, time, level, lat, lon] --> [time, upper_var, level, lat, lon]
+                x_upper_air = np.hstack([
+                    np.expand_dims(var_upper_air, axis=1) for var_upper_air in numpy_vars_upper_air])
+                
+                return_dict['x'] = torch.as_tensor(x_upper_air)
+
+                if self.has_forcing_static:
+                    
+                    x_static = torch.as_tensor(numpy_vars_forcing_static).squeeze()
+                    
+                    if len(x_static.shape) == 4:
+                        # [forcing_var, time, lat, lon] --> [time, forcing_var, lat, lon]
+                        return_dict['static'] = x_static.permute(1, 0, 2, 3)
+                    else:
+                        # [time, lat, lon] --> [time, 1, lat, lon]
+                        return_dict['static'] = x_static.unsqueeze(1)
+                        
+            elif key == 'target_ERA5_images' or key == 'y':
+                
+                y_surf = torch.as_tensor(numpy_vars_surface)
+                return_dict['y_surf'] = y_surf.permute(1, 0, 2, 3)
+                
+                y_upper_air = np.hstack([
+                    np.expand_dims(var_upper_air, axis=1) for var_upper_air in numpy_vars_upper_air])
+                
+                return_dict['y'] = torch.as_tensor(y_upper_air)
+        return return_dict
+
 
 
 class NormalizeState_Quantile_Bridgescalar:
