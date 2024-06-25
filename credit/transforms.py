@@ -34,12 +34,20 @@ def load_transforms(conf):
         transform_scaler = NormalizeState_Quantile_Bridgescalar(conf)
     elif conf["data"]["scaler_type"] == 'std':
         transform_scaler = NormalizeState(conf)
+    elif conf["data"]["scaler_type"] == 'std_new':
+        # --------------------------------------------------- #
+        # the new pipeline
+        transform_scaler = Normalize_ERA5_and_Forcing(conf)
     else:
         logger.log('scaler type not supported check data: scaler_type in config file')
         raise
 
     if conf["data"]["scaler_type"] == 'quantile-cached':
         to_tensor_scaler = ToTensor_BridgeScaler(conf)
+    elif conf["data"]["scaler_type"] == 'std_new':
+        # --------------------------------------------------- #
+        # the new pipeline
+        to_tensor_scaler = ToTensor_ERA5_and_Forcing(conf)
     else:
         to_tensor_scaler = ToTensor(conf=conf)
 
@@ -231,7 +239,7 @@ class Normalize_ERA5_and_Forcing:
                             if (varname in self.varname_forcing_static) is False:
                                 value[varname] = (value[varname] - self.mean_ds[varname]) / self.std_ds[varname]
                         
-                        # put transformed back to 
+                        # put transformed dataset back 
                         normalized_sample[key] = value
                         
                     # target fields do not contain forcing and static
@@ -524,6 +532,12 @@ class ToTensor_ERA5_and_Forcing:
         return_dict = {}
         
         for key, value in sample.items():
+            # datetime information of samples reserved for debugging
+            # can be removed
+            if key == 'historical_ERA5_images' or key == 'x':
+                self.datetime = value['time']
+                self.doy = value['time.dayofyear']
+                self.hod = value['time.hour']
             
             ## if DataArray
             if isinstance(value, xr.DataArray):
@@ -579,10 +593,10 @@ class ToTensor_ERA5_and_Forcing:
                     
                     if len(x_static.shape) == 4:
                         # [forcing_var, time, lat, lon] --> [time, forcing_var, lat, lon]
-                        return_dict['static'] = x_static.permute(1, 0, 2, 3)
+                        return_dict['forcing_static'] = x_static.permute(1, 0, 2, 3)
                     else:
                         # [time, lat, lon] --> [time, 1, lat, lon]
-                        return_dict['static'] = x_static.unsqueeze(1)
+                        return_dict['forcing_static'] = x_static.unsqueeze(1)
                         
             elif key == 'target_ERA5_images' or key == 'y':
                 
