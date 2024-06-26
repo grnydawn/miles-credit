@@ -27,7 +27,7 @@ class Sample(TypedDict):
 
     x = input (predictor) data (i.e, C404dataset[historical mask]
     y = target (predictand) data (i.e, C404dataset[forecast mask]
-    
+
     Using typing.TypedDict gives us several advantages:
       1. Single 'source of truth' for the type and documentation of each example.
       2. A static type checker can check the types are correct.
@@ -40,34 +40,16 @@ class Sample(TypedDict):
     y: Array
 
 
-## I don't think either of these are used anywhere
-#@dataclass
-#class Reshape_Data():
-#    size: int = 128  #: Size of the cropped image.
-#
-#    def __call__(self, sample: Sample) -> Sample:
-#        for attr_name in IMAGE_ATTR_NAMES:
-#            image = sample[attr_name]
-#            # TODO: Random crop!
-#            cropped_image = image[..., :self.size, :self.size]
-#            sample[attr_name] = cropped_image
-#        return sample
-#
-#
-#class CheckForBadData():
-#    def __call__(self, sample: Sample) -> Sample:
-#        for attr_name in IMAGE_ATTR_NAMES:
-#            image = sample[attr_name]
-#            if np.any(image < 0):
-#                raise ValueError(f'\n{attr_name} has negative values at {image.time.values}')
-#        return sample
-
-# flatten list-of-list
 def flatten(array):
+
+    """ flattens a list-of-lists
+    """
     return reduce(lambda a, b: a+b, array)
 
 
 def lazymerge(zlist, rename=None):
+    """ merges zarr stores opened lazily with get_forward_data()
+    """
     zarrs = [get_forward_data(z) for z in zlist]
     if rename is not None:
         oldname = flatten([list(z.keys()) for z in zarrs])
@@ -129,32 +111,32 @@ class CONUS404Dataset(torch.utils.data.Dataset):
             self.varnames = os.listdir(self.zarrpath)
         self.varnames = sorted(self.varnames)
 
-        ## get file paths
+        # get file paths
         zdict = {}
         for v in self.varnames:
             zdict[v] = sorted(glob(os.path.join(self.zarrpath, v, v+".*.zarr")))
 
-        ## check that lists align
+        # check that lists align
         zlen = [len(z) for z in zdict.values()]
         assert all(zlen[i] == zlen[0] for i in range(len(zlen)))
 
-        ## transpose list-of-lists; sort by key to ensure var order constant
+        # transpose list-of-lists; sort by key to ensure var order constant
         zlol = list(zip(*sorted(zdict.values())))
 
-        ## lazy-load & merge zarr stores
+        # lazy-load & merge zarr stores
         self.zarrs = [lazymerge(z, self.varnames) for z in zlol]
 
-        ## Name of time dimension may vary by dataset.  ERA5 is "time"
-        ## but C404 is "Time".  If dataset is CF-compliant, we
-        ## can/should look for a coordinate with the attribute
-        ## 'axis="T"', but C404 isn't CF, so instead we look for a dim
-        ## named "time" (any capitalization), and defer checking the
-        ## axis attribute until it actually comes up in practice.
+        # Name of time dimension may vary by dataset.  ERA5 is "time"
+        # but C404 is "Time".  If dataset is CF-compliant, we
+        # can/should look for a coordinate with the attribute
+        # 'axis="T"', but C404 isn't CF, so instead we look for a dim
+        # named "time" (any capitalization), and defer checking the
+        # axis attribute until it actually comes up in practice.
         dnames = list(self.zarrs[0].dims)
         self.tdimname = dnames[[d.lower() for d in dnames].index("time")]
 
-        ## subset zarrs to constrain data to period defined by start
-        ## and finish.  Note that xarray subsetting includes finish.
+        # subset zarrs to constrain data to period defined by start
+        # and finish.  Note that xarray subsetting includes finish.
         start, finish = self.start, self.finish
         if start is not None or finish is not None:
             if start is None:
@@ -165,18 +147,18 @@ class CONUS404Dataset(torch.utils.data.Dataset):
             selection = {self.tdimname: slice(start, finish)}
             self.zarrs = [z.sel(selection) for z in self.zarrs]
 
-        ## construct indexing arrays
+        # construct indexing arrays
         zarrlen = [z.sizes[self.tdimname] for z in self.zarrs]
         whichseg = [list(repeat(s, z)) for s, z in zip(range(len(zarrlen)), zarrlen)]
         segindex = [list(range(z)) for z in zarrlen]
 
-        ## subset to samples that don't overlap a segment boundary
-        ## (sample size N = can't use last N-1 samples)
+        # subset to samples that don't overlap a segment boundary
+        # (sample size N = can't use last N-1 samples)
         N = self.sample_len - 1
         self.segments = flatten([s[:-N] for s in whichseg])
         self.zindex = flatten([i[:-N] for i in segindex])
 
-        ## precompute mask arrays for subsetting data for samples
+        # precompute mask arrays for subsetting data for samples
         self.histmask = list(range(0, self.history_len, self.stride))
         foreind = list(range(self.sample_len))
         if self.one_shot:
@@ -191,6 +173,14 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         return self.get_data(index)
 
     def get_data(self, index, do_transform=True):
+        """like gets an element by index (as __getitem__ does), but
+        with an optional argument to skip applying the normalization
+        transform.
+        """
+        # Possible refactor: instead of an optional argument, make
+        # do_transform a class attribute (i.e., a switch that can be
+        # flipped) and push this all back to __getitem__
+
         time = self.tdimname
         first = self.zindex[index]
         last = first + self.sample_len
@@ -208,6 +198,8 @@ class CONUS404Dataset(torch.utils.data.Dataset):
 
 
 #    def get_time(self, index):
+#        """ get time coordinate(s) associated with index
+#        """
 #        time = self.tdimname
 #        first = self.zindex[index]
 #        last = first + self.sample_len
@@ -219,11 +211,11 @@ class CONUS404Dataset(torch.utils.data.Dataset):
 #        return result
 
 
-
-
-## Test load speed of different number of vars & storage locs.  Full
-## load for C404 takes about 4 sec on campaign, 5 sec on scratch
 def testC4loader():
+    """Test load speed of different number of vars & storage locs.
+    Full load for C404 takes about 4 sec on campaign, 5 sec on scratch
+
+    """
     zdirs = {
         "worktest": "/glade/work/mcginnis/ML/GWC/testdata/zarr",
         "scratch": "/glade/derecho/scratch/mcginnis/conus404/zarr",

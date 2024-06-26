@@ -417,7 +417,7 @@ class Trainer:
             # results_dict['train_forecast_len'].append(np.mean(train_results['train_forecast_len']))
             results_dict["learn_rate"].append(optimizer.param_groups[0]["lr"])
             results_dict["datetime"].append(dt.datetime.now().isoformat())
-            
+
             df = pd.DataFrame.from_dict(results_dict).reset_index()
 
             # Save the dataframe to disk

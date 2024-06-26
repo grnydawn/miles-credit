@@ -368,7 +368,6 @@ def main(rank, world_size, conf, trial=False):
     # model
 
     m = SegmentationModel404(conf)
-    #m = load_model(conf)
 
     # have to send the module to the correct device first
 

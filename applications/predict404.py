@@ -39,6 +39,11 @@ os.environ["MKL_NUM_THREADS"] = "1"
 
 
 def predict(rank, world_size, conf, dataset):
+    """Loads model defined in configuration object and applies it to
+    data in dataset (using test split defined in conf).  Returns a
+    list of xarray objects, one for each predicted output.
+
+    """
     autoregressive = conf['predict']['autoregressive']
 
     # infer device id from rank
@@ -47,7 +52,6 @@ def predict(rank, world_size, conf, dataset):
         torch.cuda.set_device(rank % torch.cuda.device_count())
     else:
         device = torch.device("cpu")
-
 
     # load model
     logging.info("Loading model")
@@ -62,15 +66,15 @@ def predict(rank, world_size, conf, dataset):
     # do predictions
     with torch.no_grad():
 
-        outdims = ["t","vars","z","y","x"]  ## todo: squeeze bottom_top
+        outdims = ["t","vars","z","y","x"]  # todo: squeeze bottom_top
 
         # model inference loop
         logging.info("Beginning inference loop")
 
-        for index in range(len(dataset)):
+        for index in range(len(dataset)):   # noqa C0200
 
             if autoregressive and index > 0:
-                xin = torch.cat((xin[:,:,1:3,:,:], yout[:,:,0:1,:,:]), dim=2)
+                xin = torch.cat((xin[:,:,1:3,:,:], yout[:,:,0:1,:,:]), dim=2) # noqa F821
             else:
                 xin = dataset[index]['x'].unsqueeze(0).to(device)
 
@@ -79,32 +83,31 @@ def predict(rank, world_size, conf, dataset):
             xarr = xr.DataArray(y, dims=outdims)
             xarraylist.append(xarr)
 
-            ## Update the input
-            ## setup for next iteration, transform to z-space and send to device
-            #y_pred = state_transformer.transform_array(y_pred).to(device)
+            # # Update the input
+            # # setup for next iteration, transform to z-space and send to device
+            # y_pred = state_transformer.transform_array(y_pred).to(device)
             #
-            #if history_len == 1:
-            #    x = y_pred.detach()
-            #else:
-            #    # use multiple past forecast steps as inputs
-            #    static_dim_size = abs(x.shape[1] - y_pred.shape[1])
-            #        # static channels will get updated on next pass
-            #    x_detach = x[:, :-static_dim_size, 1:].detach()
-            #    x = torch.cat([x_detach, y_pred.detach()], dim=2)
+            # if history_len == 1:
+            #     x = y_pred.detach()
+            # else:
+            #     # use multiple past forecast steps as inputs
+            #     static_dim_size = abs(x.shape[1] - y_pred.shape[1])
+            #         # static channels will get updated on next pass
+            #     x_detach = x[:, :-static_dim_size, 1:].detach()
+            #     x = torch.cat([x_detach, y_pred.detach()], dim=2)
             #
-            ## Explicitly release GPU memory
-            #torch.cuda.empty_cache()
-            #gc.collect()
+            # # Explicitly release GPU memory
+            # torch.cuda.empty_cache()
+            # gc.collect()
 
-
-    #if distributed:
-    #    torch.distributed.barrier()
-
+    # if distributed:
+    #     torch.distributed.barrier()
 
     return xarraylist
 
-if __name__ == "__main__":
 
+if __name__ == "__main__":
+    
     description = "Rollout AI-NWP forecasts"
     parser = ArgumentParser(description=description)
     # -------------------- #
@@ -201,7 +204,7 @@ if __name__ == "__main__":
     if conf["data"]["scaler_type"] == "std":
         state_transformer = NormalizeState(conf)
     else:
-        state_transformer = NormalizeState_Quantile(conf)
+        state_transformer = NormalizeState_Quantile(conf)  # noqa F821
     transform = transforms.Compose(
         [
             state_transformer,
@@ -210,14 +213,13 @@ if __name__ == "__main__":
     )
 
     ds = CONUS404Dataset(
-        varnames = conf["data"]["variables"],
-        history_len = conf["data"]["history_len"],
-        forecast_len = conf["data"]["forecast_len"],
+        varnames=conf["data"]["variables"],
+        history_len=conf["data"]["history_len"],
+        forecast_len=conf["data"]["forecast_len"],
         transform=transform,
-        start = conf["predict"]["start"],
-        finish = conf["predict"]["finish"]
+        start=conf["predict"]["start"],
+        finish=conf["predict"]["finish"]
         )
-
 
     # if mode in ["fsdp", "ddp"]:
     #     xarraylist = predict(
@@ -231,6 +233,8 @@ if __name__ == "__main__":
     xarraylist = predict(rank=0, world_size=1, conf=conf, dataset=ds)
     logging.info("Prediction finished")
 
+
+    # reconstruct xarray dataset
 
     xcat = xr.concat(xarraylist, dim="t")
     xcat = xcat.rename({"t": ds.tdimname})
@@ -250,9 +254,9 @@ if __name__ == "__main__":
     ds_out.to_netcdf(path=save_path,
                      format="NETCDF4",
                      engine="netcdf4",
-                     encoding={v: {"zlib":True,
+                     encoding={v: {"zlib": True,
                                    "complevel": 1,
-                                   "dtype":"float"} for v in conf["data"]["variables"]},
+                                   "dtype": "float"} for v in conf["data"]["variables"]},
                      unlimited_dims="Time",
                      compute=True
                      )
