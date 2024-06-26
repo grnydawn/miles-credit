@@ -1,25 +1,15 @@
 # ---------- #
 # System
-import gc
 import os
 import sys
-import yaml
-import glob
-import copy
 import logging
 import warnings
-import functools
-import subprocess
 from pathlib import Path
-from functools import partial
-from collections import defaultdict
 from argparse import ArgumentParser
+import yaml
 
 # ---------- #
 # Numerics
-import datetime
-import numpy as np
-import pandas as pd
 import xarray as xr
 
 # ---------- #
@@ -30,12 +20,10 @@ from torchvision import transforms
 # ---------- #
 # credit
 from credit.data404 import CONUS404Dataset
-from credit.loss import VariableTotalLoss2D
 from credit.models import load_model
 from credit.transforms404 import ToTensor, NormalizeState
 from credit.seed import seed_everything
 from credit.pbs import launch_script, launch_script_mpi
-from credit.mixed_precision import parse_dtype
 
 # ---------- #
 
@@ -70,11 +58,11 @@ def predict(rank, world_size, conf, dataset):
 
     # storage for outputs from model
     xarraylist = []
-    
+
     # do predictions
     with torch.no_grad():
 
-        outdims = ["t","vars","z","y","x"]  ##todo: squeeze bottom_top
+        outdims = ["t","vars","z","y","x"]  ## todo: squeeze bottom_top
 
         # model inference loop
         logging.info("Beginning inference loop")
@@ -85,12 +73,12 @@ def predict(rank, world_size, conf, dataset):
                 xin = torch.cat((xin[:,:,1:3,:,:], yout[:,:,0:1,:,:]), dim=2)
             else:
                 xin = dataset[index]['x'].unsqueeze(0).to(device)
-                
+
             yout = model(xin)
             y = state_transformer.inverse_transform(yout.cpu())
             xarr = xr.DataArray(y, dims=outdims)
             xarraylist.append(xarr)
-            
+
             ## Update the input
             ## setup for next iteration, transform to z-space and send to device
             #y_pred = state_transformer.transform_array(y_pred).to(device)
@@ -99,14 +87,15 @@ def predict(rank, world_size, conf, dataset):
             #    x = y_pred.detach()
             #else:
             #    # use multiple past forecast steps as inputs
-            #    static_dim_size = abs(x.shape[1] - y_pred.shape[1])  # static channels will get updated on next pass
+            #    static_dim_size = abs(x.shape[1] - y_pred.shape[1])
+            #        # static channels will get updated on next pass
             #    x_detach = x[:, :-static_dim_size, 1:].detach()
             #    x = torch.cat([x_detach, y_pred.detach()], dim=2)
             #
             ## Explicitly release GPU memory
             #torch.cuda.empty_cache()
             #gc.collect()
-            
+
 
     #if distributed:
     #    torch.distributed.barrier()
@@ -219,7 +208,7 @@ if __name__ == "__main__":
             ToTensor(conf),
         ]
     )
-    
+
     ds = CONUS404Dataset(
         varnames = conf["data"]["variables"],
         history_len = conf["data"]["history_len"],
@@ -229,7 +218,7 @@ if __name__ == "__main__":
         finish = conf["predict"]["finish"]
         )
 
-    
+
     # if mode in ["fsdp", "ddp"]:
     #     xarraylist = predict(
     #         rank = int(os.environ["RANK"]),
@@ -238,17 +227,15 @@ if __name__ == "__main__":
     #         dataset = ds
     #     )
     # else:
-    #    xarraylist = predict(rank=0, world_size=1, conf=conf, dataset=ds)
-
     logging.info("Starting prediction")
     xarraylist = predict(rank=0, world_size=1, conf=conf, dataset=ds)
     logging.info("Prediction finished")
 
-    
+
     xcat = xr.concat(xarraylist, dim="t")
-    xcat = xcat.rename(dict(t=ds.tdimname))
-    xcat = xcat.assign_coords(dict(vars=ds.varnames))
-    
+    xcat = xcat.rename({"t": ds.tdimname})
+    xcat = xcat.assign_coords({"vars": ds.varnames})
+
     ds_out = xcat.to_dataset(dim="vars")
 
     sep = "."
@@ -258,7 +245,7 @@ if __name__ == "__main__":
                          conf["predict"]["finish"],
                          "nc"])
     save_path = os.path.join(conf["save_loc"], filename)
-    
+
     logging.info("Writing results to file")
     ds_out.to_netcdf(path=save_path,
                      format="NETCDF4",

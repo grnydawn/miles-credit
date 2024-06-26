@@ -1,31 +1,31 @@
-save_loc: '/glade/work/mcginnis/ML/GWC/results/unet-08-uvtp-31'
+save_loc: '/glade/work/mcginnis/ML/GWC/results/unet-09-uvt-lint'
 seed: 2222
 
 data:
     variables:
 #    - ACSWDNLSM
 #    - COSZEN
-    - PREC_ACC_NC
+#    - PREC_ACC_NC
 #    - PSFC
 #    - Q2
 #    - SNOW
-    - TD2
+#    - TD2
     - T2
 #    - totalVap
 #    - Q500
 #    - Q850
-#    - T500
-#    - T850
+    - T500
+    - T850
     - U10
-    - U250
+#    - U250
     - U500
     - U850
-    - U1000
+#    - U1000
     - V10
-    - V250
+#    - V250
     - V500
     - V850
-    - V1000
+#    - V1000
 #    - Z050
 #    - Z500
 #    - Z850
@@ -36,9 +36,9 @@ data:
     save_loc: './'
     mean_path: '/glade/derecho/scratch/mcginnis/conus404/stats/all.avg.C404.nc'
     std_path: '/glade/derecho/scratch/mcginnis/conus404/stats/all.std.C404.nc'
-    history_len: 3 
+    history_len: 2 
     forecast_len: 1
-    valid_history_len: 3
+    valid_history_len: 2
     valid_forecast_len: 1
     time_step: 1
     start: "1979-10-01"
@@ -63,7 +63,7 @@ trainer:
     learning_rate: 1.0e-04
     weight_decay: 1.0e-05
     start_epoch: 0
-    epochs: 30  # 30 years hourly = 262,980; 66 x 1000-batch epoch =~ 1 full pass
+    epochs: 4  # 30 years hourly = 262,980; 66 x 1000-batch epoch =~ 1 full pass
     amp: False
     grad_accum_every: 1
     grad_max_norm: 1.0
@@ -93,8 +93,8 @@ loss:
 
 
 predict:
-    start: "2017-10-01"
-    finish: "2017-10-03"
+    start: "2017-11-01"
+    finish: "2017-11-03"
 #    finish: "2022-09-30"
     autoregressive: False
     use_laplace_filter: False
@@ -123,13 +123,14 @@ predict:
     
 pbs: # casper
     conda: "credit"
-    job_name: 'unet-uvtp31'
+    job_name: 'unet-uvt-lint'
     nodes: 1
     ncpus: 8
     ngpus: 1
     mem: '128GB'
-    walltime: '24:00:00'
-    gpu_type: 'a100'
+    walltime: '4:00:00'
+#    walltime: '24:00:00'
+    gpu_type: 'v100'
 #    cpu_type: 'milan'
     project: 'NRIS0001'
     queue: 'casper'

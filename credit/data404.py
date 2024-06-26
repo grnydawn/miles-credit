@@ -1,18 +1,14 @@
-from typing import Optional, Callable, TypedDict, Union, Iterable, NamedTuple, List
-import numpy as np
+from typing import Optional, Callable, TypedDict, Union, List
 import os
-import pandas as pd
-import xarray as xr
-import torch
-from torch.utils.data import get_worker_info
-from torch.utils.data.distributed import DistributedSampler
-import torch.utils.data
-import datetime
 from dataclasses import dataclass, field
 from functools import reduce
 from glob import glob
 from itertools import repeat
 from timeit import timeit
+import numpy as np
+import xarray as xr
+import torch
+import torch.utils.data
 
 
 def get_forward_data(filename) -> xr.DataArray:
@@ -43,7 +39,7 @@ class Sample(TypedDict):
     x: Array
     y: Array
 
-    
+
 ## I don't think either of these are used anywhere
 #@dataclass
 #class Reshape_Data():
@@ -74,7 +70,8 @@ def flatten(array):
 def lazymerge(zlist, rename=None):
     zarrs = [get_forward_data(z) for z in zlist]
     if rename is not None:
-        oldname = flatten([list(z.keys()) for z in zarrs])  # this will break on multi-var zarr stores
+        oldname = flatten([list(z.keys()) for z in zarrs])
+        # ^^ this will break on multi-var zarr stores
         zarrs = [z.rename_vars({old: new}) for z, old, new in zip(zarrs, oldname, rename)]
     return xr.merge(zarrs)
 
@@ -139,7 +136,7 @@ class CONUS404Dataset(torch.utils.data.Dataset):
 
         ## check that lists align
         zlen = [len(z) for z in zdict.values()]
-        assert all([zlen[i] == zlen[0] for i in range(len(zlen))])
+        assert all(zlen[i] == zlen[0] for i in range(len(zlen)))
 
         ## transpose list-of-lists; sort by key to ensure var order constant
         zlol = list(zip(*sorted(zdict.values())))
@@ -167,7 +164,7 @@ class CONUS404Dataset(torch.utils.data.Dataset):
 
             selection = {self.tdimname: slice(start, finish)}
             self.zarrs = [z.sel(selection) for z in self.zarrs]
-        
+
         ## construct indexing arrays
         zarrlen = [z.sizes[self.tdimname] for z in self.zarrs]
         whichseg = [list(repeat(s, z)) for s, z in zip(range(len(zarrlen)), zarrlen)]
@@ -192,7 +189,7 @@ class CONUS404Dataset(torch.utils.data.Dataset):
 
     def __getitem__(self, index):
         return self.get_data(index)
-            
+
     def get_data(self, index, do_transform=True):
         time = self.tdimname
         first = self.zindex[index]
@@ -209,7 +206,7 @@ class CONUS404Dataset(torch.utils.data.Dataset):
 
         return sample
 
-    
+
 #    def get_time(self, index):
 #        time = self.tdimname
 #        first = self.zindex[index]
@@ -220,10 +217,10 @@ class CONUS404Dataset(torch.utils.data.Dataset):
 #        result["x"] =subset.isel({time: self.histmask})
 #        result["y"] =subset.isel({time: self.foremask})
 #        return result
-        
 
 
-    
+
+
 ## Test load speed of different number of vars & storage locs.  Full
 ## load for C404 takes about 4 sec on campaign, 5 sec on scratch
 def testC4loader():
@@ -241,4 +238,3 @@ def testC4loader():
             print(testvars)
             cmd = 'c4 = CONUS404Dataset("'+src+'",varnames='+str(testvars)+')'
             print(cmd+"\t"+str(timeit(cmd, globals=globals(), number=1)))
-
