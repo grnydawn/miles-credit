@@ -5,14 +5,11 @@ import os
 import sys
 import yaml
 import glob
-import time
+import tqdm
 import logging
 import warnings
 from pathlib import Path
 from argparse import ArgumentParser
-import netCDF4 as nc
-import dask.array as da
-from dask.diagnostics import ProgressBar
 
 # ---------- #
 # Numerics
@@ -20,6 +17,9 @@ import datetime
 import pandas as pd
 import xarray as xr
 import numpy as np
+
+import dask.array as da
+from dask.diagnostics import ProgressBar
 
 # ---------- #
 # AI libs
@@ -274,64 +274,78 @@ def make_xarray(pred, forecast_datetime, lat, lon, conf):
     return darray_upper_air, darray_single_level
 
 
-def save_netcdf(list_darray_upper_air, list_darray_single_level, conf, use_upper_air=True):
+def merge_netcdf_files(nc_filename_base, conf):
     """
-    Save NetCDF files from x-array inputs using Dask for parallel processing.
+    Merge all individual NetCDF files into one consolidated file, sorted by forecast_hour.
     """
-    start_time = time.time()
-
-    # Convert Xarray DataArrays to Dask arrays
-    if use_upper_air:
-        list_darray_upper_air = [arr.chunk({'datetime': -1}) for arr in list_darray_upper_air]
-    list_darray_single_level = [arr.chunk({'datetime': -1}) for arr in list_darray_single_level]
-
-    # Concatenate full single level variables from a list of x-arrays
-    darray_single_level_merge = xr.concat(list_darray_single_level, dim="datetime")
-
-    # Create a dataset from the concatenated x-arrays
-    ds_surf = darray_single_level_merge.to_dataset(dim="vars")
-
-    if use_upper_air:
-        # Concatenate full upper air variables from a list of x-arrays
-        darray_upper_air_merge = xr.concat(list_darray_upper_air, dim="datetime")
-
-        # Produce datetime string
-        init_datetime_str = np.datetime_as_string(
-            darray_upper_air_merge.datetime[0].values, unit="h", timezone="UTC"
-        )
-
-        ds_x = darray_upper_air_merge.to_dataset(dim="vars")
-        ds = xr.merge([ds_x, ds_surf])
-    else:
-        # Produce datetime string from single level data
-        init_datetime_str = np.datetime_as_string(
-            darray_single_level_merge.datetime[0].values, unit="h", timezone="UTC"
-        )
-
-        ds = ds_surf
-
-    # Create save directory for xarrays
     save_location = conf["predict"]["save_forecast"]
-    os.makedirs(save_location, exist_ok=True)
+    file_pattern = os.path.join(save_location, f"pred_{nc_filename_base}_*.nc")
+    file_list = sorted(glob.glob(file_pattern), key=lambda x: int(x.split('_fh')[-1].split('.nc')[0]))
 
-    nc_filename_all = os.path.join(save_location, f"pred_{init_datetime_str}.nc")
+    logger.info(f"Merging files: {file_list}")
 
-    # Save the dataset to NetCDF
+    datasets = []
+    for file in tqdm.tqdm(file_list):
+        ds = xr.open_dataset(file, chunks={'datetime': 1})
+        datasets.append(ds)
+
+    # Concatenate all datasets along the forecast_hour dimension
+    ds_merged = xr.concat(datasets, dim='forecast_hour')
+
+    # Define the output filename
+    merged_filename = os.path.join(save_location, f"{nc_filename_base}.zarr")
+
+    # Define encoding for compression
+    encoding = {variable: {"compressor": None} for variable in ds.data_vars}
+
+    # Use Dask to write the concatenated dataset in parallel
     with ProgressBar():
-        ds.to_netcdf(
-            path=nc_filename_all,
-            format="NETCDF4",
-            engine="netcdf4",
-            encoding={variable: {"zlib": True, "complevel": 5} for variable in ds.data_vars},
-            unlimited_dims=["datetime"]  # Set unlimited dimension(s)
-        )
+        delayed_obj = ds_merged.to_zarr(merged_filename, mode='w', compute=False, encoding=encoding)
+        da.compute(delayed_obj)
 
-    logger.info(f"Wrote .nc file {nc_filename_all} in {time.time() - start_time:.2f} seconds")
+    logger.info(f"Merged file saved as {merged_filename}")
 
-    return nc_filename_all
+    # Delete excess files
+    for file in file_list:
+        os.remove(file)
+        # logger.info(f"Deleted file: {file}")
+
+    return merged_filename
 
 
-def predict(rank, world_size, conf):
+def save_netcdf_increment(darray_upper_air, darray_single_level, nc_filename, forecast_hour, conf):
+    """
+    Save increment to a unique NetCDF file using Dask for parallel processing.
+    """
+    # Convert DataArrays to Datasets
+    ds_upper = darray_upper_air.to_dataset(dim="vars")
+    ds_single = darray_single_level.to_dataset(dim="vars")
+
+    # Merge datasets
+    ds_merged = xr.merge([ds_upper, ds_single])
+
+    # Add forecast_hour coordinate
+    ds_merged['forecast_hour'] = forecast_hour
+
+    logger.info(f"Trying to save forecast hour {forecast_hour} to {nc_filename}")
+
+    save_location = conf["predict"]["save_forecast"]
+    unique_filename = os.path.join(save_location, f"pred_{nc_filename}_fh{forecast_hour}.nc")
+
+    # Convert to Dask array if not already
+    ds_merged = ds_merged.chunk({'datetime': 1})
+
+    # Define encoding for compression
+    encoding = {variable: {"zlib": True, "complevel": 5} for variable in ds_merged.data_vars}
+
+    # Use Dask to write the dataset in parallel
+    delayed_obj = ds_merged.to_netcdf(unique_filename, mode='w', compute=False, encoding=encoding)
+    da.compute(delayed_obj)
+
+    logger.info(f"Saved forecast hour {forecast_hour} to {unique_filename}")
+
+
+def predict(rank, world_size, conf, p):
 
     if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
         setup(rank, world_size, conf["trainer"]["mode"])
@@ -412,18 +426,16 @@ def predict(rank, world_size, conf):
             nlon=conf["model"]["image_width"],
             device=device,
         )
+
     # Rollout
     with torch.no_grad():
         # forecast count = a constant for each run
         forecast_count = 0
 
-        # lists to collect x-arrays
-        list_darray_upper_air = []
-        list_darray_single_level = []
-
         # y_pred allocation
         y_pred = None
         static = None
+        results = []
 
         # model inference loop
         for k, batch in enumerate(data_loader):
@@ -437,11 +449,8 @@ def predict(rank, world_size, conf):
                 # Initialize x and x_surf with the first time step
                 x = model.concat_and_reshape(batch["x"], batch["x_surf"]).to(device)
 
-                dataset_save_loc = os.path.join(
-                    os.path.expandvars(conf["save_loc"]),
-                    "forecasts/netcdf",
-                )
-                os.makedirs(dataset_save_loc, exist_ok=True)
+                init_datetime_str = datetime.datetime.utcfromtimestamp(date_time)
+                init_datetime_str = str(init_datetime_str).replace(" ", "_")
 
             # Add statics
             if "static" in batch:
@@ -477,8 +486,8 @@ def predict(rank, world_size, conf):
                     .cpu()
                 )
 
-            # Compute metrics ##############################
-            utc_datetime = datetime.datetime.utcfromtimestamp(date_time)
+            # Save the current forecast hour data in parallel
+            utc_datetime = datetime.datetime.utcfromtimestamp(date_time) + datetime.timedelta(hours=forecast_hour)
 
             # convert the current step result as x-array
             darray_upper_air, darray_single_level = make_xarray(
@@ -489,9 +498,12 @@ def predict(rank, world_size, conf):
                 conf,
             )
 
-            # collect x-arrays for upper air and surface variables
-            list_darray_upper_air.append(darray_upper_air)
-            list_darray_single_level.append(darray_single_level)
+            # Save the current forecast hour data in parallel
+            result = p.apply_async(
+                save_netcdf_increment,
+                (darray_upper_air, darray_single_level, init_datetime_str, forecast_hour, conf)
+            )
+            results.append(result)
 
             # Update the input
             # setup for next iteration, transform to z-space and send to device
@@ -510,24 +522,18 @@ def predict(rank, world_size, conf):
             gc.collect()
 
             if batch["stop_forecast"][0]:
-                # save forecast results to file
-                if "save_format" in conf["predict"] and conf["predict"]["save_format"] == "nc":
-                    logger.info("Save forecasts as netCDF format")
-                    _ = save_netcdf(
-                            list_darray_upper_air,
-                            list_darray_single_level,
-                            conf,
-                            use_upper_air=False
-                        )
-                else:
-                    logger.info("Warning: forecast results will not be saved")
+                # Wait for all processes to finish in order
+                for result in results:
+                    result.get()
+
+                # Now merge all the files into one and delete leftovers
+                merge_netcdf_files(init_datetime_str, conf)
 
                 # forecast count = a constant for each run
                 forecast_count += 1
 
-                # lists to collect x-arrays
-                list_darray_upper_air = []
-                list_darray_single_level = []
+                # update lists
+                results = []
 
                 # y_pred allocation
                 y_pred = None
@@ -666,7 +672,13 @@ if __name__ == "__main__":
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
 
-    if conf["trainer"]["mode"] in ["fsdp", "ddp"]:  # multi-gpu inference
-        _ = predict(int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf)
-    else:  # single device inference
-        _ = predict(0, 1, conf)
+    import multiprocessing as mp
+    with mp.Pool(8) as p:
+        if conf["trainer"]["mode"] in ["fsdp", "ddp"]:  # multi-gpu inference
+            _ = predict(int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf, p=p)
+        else:  # single device inference
+            _ = predict(0, 1, conf, p=p)
+
+    # Ensure all processes are finished
+    p.close()
+    p.join()
