@@ -276,16 +276,16 @@ class ToTensor:
                         surface_vars.append(surface_vars_temp)
                     else:
                         concatenated_vars.append(value_var)
-                surface_vars = np.array(surface_vars)
-                concatenated_vars = np.array(concatenated_vars)
+                surface_vars = np.array(surface_vars) # [num_surf_vars, hist_len, lat, lon]
+                concatenated_vars = np.array(concatenated_vars) # [num_vars, hist_len, num_levels, lat, lon]
 
             else:
                 value_var = value
 
             if key == 'historical_ERA5_images' or key == 'x':
                 x_surf = torch.as_tensor(surface_vars).squeeze()
-                return_dict['x_surf'] = x_surf.permute(1, 0, 2, 3) if len(x_surf.shape) == 4 else x_surf.unsqueeze(0)
-                return_dict['x'] = torch.as_tensor(np.hstack([np.expand_dims(x, axis=1) for x in concatenated_vars]))
+                return_dict['x_surf'] = x_surf.permute(1, 0, 2, 3) if len(x_surf.shape) == 4 else x_surf.unsqueeze(0) # [hist_len, num_surf_vars, lat, lon]
+                return_dict['x'] = torch.as_tensor(np.hstack([np.expand_dims(x, axis=1) for x in concatenated_vars])) # [hist_len, num_vars, level, lat, lon]
 
             elif key == 'target_ERA5_images' or key == 'y':
                 y_surf = torch.as_tensor(surface_vars)
@@ -301,7 +301,7 @@ class ToTensor:
                     TOA = xr.open_dataset(self.conf["data"]["TOA_forcing_path"])
                     times_b = pd.to_datetime(TOA.time.values)
                     mask_toa = [any(i == time.dayofyear and j == time.hour for i, j in zip(self.doy, self.hod)) for time in times_b]
-                    return_dict['TOA'] = torch.tensor(((TOA[sv].sel(time=mask_toa))/2540585.74).to_numpy())
+                    return_dict['TOA'] = torch.tensor(((TOA[sv].sel(time=mask_toa))/2540585.74).to_numpy()).float() # [time, lat, lon]
                     # Need the datetime at time t(i) (which is the last element) to do multi-step training
                     return_dict['datetime'] = pd.to_datetime(self.datetime).astype(int).values[-1]
 
@@ -314,7 +314,7 @@ class ToTensor:
                         continue
                 arrs.append(arr)
 
-            return_dict['static'] = np.stack(arrs, axis=0)
+            return_dict['static'] = np.stack(arrs, axis=0) # [num_stat_vars, lat, lon]
 
         return return_dict
 
