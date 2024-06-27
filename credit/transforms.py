@@ -467,7 +467,8 @@ class ToTensor:
 
             if key == 'historical_ERA5_images' or key == 'x':
                 x_surf = torch.as_tensor(surface_vars).squeeze()
-                return_dict['x_surf'] = x_surf.permute(1, 0, 2, 3) if len(x_surf.shape) == 4 else x_surf.unsqueeze(0) # [hist_len, num_surf_vars, lat, lon]
+                return_dict['x_surf'] = x_surf.permute(1, 0, 2, 3) if len(x_surf.shape) == 4 else x_surf.unsqueeze(0) 
+                # !! <--- x_surf.unsqueeze(1) # see line: 600 @ ToTensor_ERA5_and_Forcing
                 return_dict['x'] = torch.as_tensor(np.hstack([np.expand_dims(x, axis=1) for x in concatenated_vars])) # [hist_len, num_vars, level, lat, lon]
 
             elif key == 'target_ERA5_images' or key == 'y':
