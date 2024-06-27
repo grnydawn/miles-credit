@@ -374,7 +374,7 @@ def main(rank, world_size, conf, trial=False):
 
     # Initialize a trainer object
     # <----------------------------------- replace
-    if conf['data']['scaler_type']:
+    if conf['data']['scaler_type'] == 'std_new':
         trainer = Trainer_New(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
     else:
         trainer = Trainer(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
