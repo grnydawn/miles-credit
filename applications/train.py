@@ -28,7 +28,11 @@ from credit.loss import VariableTotalLoss2D
 from credit.data import ERA5Dataset, ERA5_and_Forcing_Dataset, Dataset_BridgeScaler
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
+
 from credit.trainer import Trainer
+# <-------------- the new pipeline
+from credit.trainer_new import Trainer as Trainer_New
+
 from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
 from credit.models import load_model
@@ -296,39 +300,26 @@ def main(rank, world_size, conf, trial=False):
     thread_workers = conf['trainer']['thread_workers']
     valid_thread_workers = conf['trainer']['valid_thread_workers'] if 'valid_thread_workers' in conf['trainer'] else thread_workers
 
-    # datasets (zarr reader)
-
+    # Training
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
-    # filenames = list(map(os.path.basename, all_ERA_files))
-    # all_years = sorted([re.findall(r'(?:_)(\d{4})', fn)[0] for fn in filenames])
-
-    # Specify the years for each set
-    # if conf["data"][train_test_split]:
-    #    normalized_split = conf["data"][train_test_split] / sum(conf["data"][train_test_split])
-    #    n_years = len(all_years)
-    #    train_years, sklearn.model_selection.train_test_split¶
 
     train_years = [str(year) for year in range(1979, 2014)]
-    valid_years = [str(year) for year in range(2014, 2018)]  # can make CV splits if we want to later on
-    test_years = [str(year) for year in range(2018, 2022)]  # same as graphcast -- always hold out
+    valid_years = [str(year) for year in range(2014, 2018)]
+    test_years = [str(year) for year in range(2018, 2022)]
 
-    # train_years = [str(year) for year in range(1995, 2013) if year != 2007]
-    # valid_years = [str(year) for year in range(2014, 2015)]  # can make CV splits if we want to later on
-    # test_years = [str(year) for year in range(2015, 2016)]  # same as graphcast -- always hold out
-
-    # Filter the files for each set
-
+    # Filter the files for training/validation/testing set
     train_files = [file for file in all_ERA_files if any(year in file for year in train_years)]
     valid_files = [file for file in all_ERA_files if any(year in file for year in valid_years)]
     test_files = [file for file in all_ERA_files if any(year in file for year in test_years)]
 
     # load dataset and sampler
+    # <----------------------------------- replace
     if conf['data']['scaler_type'] == 'std_new':
         train_dataset, train_sampler = load_dataset_and_sampler_zscore_only(conf, train_files, world_size, rank, is_train=True)
         valid_dataset, valid_sampler = load_dataset_and_sampler_zscore_only(conf, valid_files, world_size, rank, is_train=False)
-
-    train_dataset, train_sampler = load_dataset_and_sampler(conf, train_files, world_size, rank, is_train=True)
-    valid_dataset, valid_sampler = load_dataset_and_sampler(conf, valid_files, world_size, rank, is_train=False)
+    else:
+        train_dataset, train_sampler = load_dataset_and_sampler(conf, train_files, world_size, rank, is_train=True)
+        valid_dataset, valid_sampler = load_dataset_and_sampler(conf, valid_files, world_size, rank, is_train=False)
 
     # setup the dataloder for this process
 
@@ -382,8 +373,11 @@ def main(rank, world_size, conf, trial=False):
     metrics = LatWeightedMetrics(conf)
 
     # Initialize a trainer object
-
-    trainer = Trainer(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
+    # <----------------------------------- replace
+    if conf['data']['scaler_type']:
+        trainer = Trainer_New(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
+    else:
+        trainer = Trainer(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
 
     # Fit the model
 
