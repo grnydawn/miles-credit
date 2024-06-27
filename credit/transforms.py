@@ -532,12 +532,12 @@ class ToTensor_ERA5_and_Forcing:
         return_dict = {}
         
         for key, value in sample.items():
-            # datetime information of samples reserved for debugging
-            # can be removed
-            if key == 'historical_ERA5_images' or key == 'x':
-                self.datetime = value['time']
-                self.doy = value['time.dayofyear']
-                self.hod = value['time.hour']
+            # # datetime information of samples reserved for debugging
+            # # can be removed
+            # if key == 'historical_ERA5_images' or key == 'x':
+            #     self.datetime = value['time']
+            #     self.doy = value['time.dayofyear']
+            #     self.hod = value['time.hour']
             
             ## if DataArray
             if isinstance(value, xr.DataArray):
