@@ -6,7 +6,6 @@ import wandb
 import optuna
 import shutil
 import logging
-import functools
 
 from pathlib import Path
 from argparse import ArgumentParser
@@ -16,21 +15,7 @@ import torch
 import torch.distributed as dist
 from torch.cuda.amp import GradScaler
 from torch.utils.data.distributed import DistributedSampler
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
-from torch.distributed.fsdp.fully_sharded_data_parallel import (
-    MixedPrecision,
-    CPUOffload
-)
-from torch.distributed.fsdp.wrap import (
-    transformer_auto_wrap_policy,
-    size_based_auto_wrap_policy,
-)
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-   checkpoint_wrapper,
-   CheckpointImpl,
-   apply_activation_checkpointing,
-)
 from credit.distributed import distributed_model_wrapper
 from torchsummary import summary
 from credit.models.unet404 import SegmentationModel
@@ -43,11 +28,9 @@ from credit.metrics404 import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything
 from credit.models.checkpoint import (
-    TorchFSDPModel,
     FSDPOptimizerWrapper,
     TorchFSDPCheckpointIO
 )
-from credit.mixed_precision import parse_dtype
 
 
 warnings.filterwarnings("ignore")
@@ -107,97 +90,6 @@ def load_dataset_and_sampler(conf, world_size, rank, is_train, seed=42):
     logging.info(f" Loaded a {name} ERA dataset, and a distributed sampler (forecast length = {forecast_len})")
 
     return dataset, sampler
-
-
-# def distributed_model_wrapper(conf, neural_network, device):
-
-#     if conf["trainer"]["mode"] == "fsdp":
-
-#         # Define the sharding policies
-
-#         if "crossformer" in conf["model"]["type"]:
-#             from credit.models.crossformer_skip import Attention as Attend
-#         elif "fuxi" in conf["model"]["type"]:
-#             from credit.models.fuxi import UTransformer as Attend
-#         else:
-#             raise OSError("You asked for FSDP but only crossformer and fuxi are currently supported.")
-
-#         auto_wrap_policy1 = functools.partial(
-#             transformer_auto_wrap_policy,
-#             transformer_layer_cls={Attend}
-#         )
-
-#         auto_wrap_policy2 = functools.partial(
-#             size_based_auto_wrap_policy, min_num_params=100_000
-#         )
-
-#         def combined_auto_wrap_policy(module, recurse, nonwrapped_numel):
-#             # Define a new policy that combines policies
-#             p1 = auto_wrap_policy1(module, recurse, nonwrapped_numel)
-#             p2 = auto_wrap_policy2(module, recurse, nonwrapped_numel)
-#             return p1 or p2
-
-#         # Mixed precision
-
-#         use_mixed_precision = conf["trainer"]["use_mixed_precision"] if "use_mixed_precision" in conf["trainer"] else False
-
-#         logging.info(f"Using mixed_precision: {use_mixed_precision}")
-
-#         if use_mixed_precision:
-#             for key, val in conf["trainer"]["mixed_precision"].items():
-#                 conf["trainer"]["mixed_precision"][key] = parse_dtype(val)
-#             mixed_precision_policy = MixedPrecision(**conf["trainer"]["mixed_precision"])
-#         else:
-#             mixed_precision_policy = None
-
-#         # CPU offloading
-
-#         cpu_offload = conf["trainer"]["cpu_offload"] if "cpu_offload" in conf["trainer"] else False
-
-#         logging.info(f"Using CPU offloading: {cpu_offload}")
-
-#         # FSDP module
-
-#         model = TorchFSDPModel(
-#             neural_network,
-#             use_orig_params=True,
-#             auto_wrap_policy=combined_auto_wrap_policy,
-#             mixed_precision=mixed_precision_policy,
-#             cpu_offload=CPUOffload(offload_params=cpu_offload)
-#         )
-
-#         # activation checkpointing on the transformer blocks
-
-#         activation_checkpoint = conf["trainer"]["activation_checkpoint"] if "activation_checkpoint" in conf["trainer"] else False
-
-#         logging.info(f"Activation checkpointing: {activation_checkpoint}")
-
-#         if activation_checkpoint:
-
-#             # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
-
-#             non_reentrant_wrapper = functools.partial(
-#                 checkpoint_wrapper,
-#                 checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-#             )
-
-#             check_fn = lambda submodule: isinstance(submodule, Attend)
-
-#             apply_activation_checkpointing(
-#                 model,
-#                 checkpoint_wrapper_fn=non_reentrant_wrapper,
-#                 check_fn=check_fn
-#             )
-
-#         # attempting to get around the launch issue we are having
-#         torch.distributed.barrier()
-
-#     elif conf["trainer"]["mode"] == "ddp":
-#         model = DDP(neural_network, device_ids=[device])
-#     else:
-#         model = neural_network
-
-#     return model
 
 
 def load_model_states_and_optimizer(conf, model, device):
@@ -362,7 +254,7 @@ def main(rank, world_size, conf, trial=False):
     # model
 
     m = SegmentationModel(conf)
-    #m = load_model(conf)
+    # m = load_model(conf)
 
     # have to send the module to the correct device first
 

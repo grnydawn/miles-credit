@@ -47,7 +47,7 @@ class TOADataLoader:
         doy = datetime_input.dayofyear
         hod = datetime_input.hour
         mask_toa = [doy == time.dayofyear and hod == time.hour for time in self.times_b]
-        return torch.tensor(((self.TOA['tsi'].sel(time=mask_toa))/2540585.74).to_numpy()).unsqueeze(0)
+        return torch.tensor(((self.TOA['tsi'].sel(time=mask_toa))/2540585.74).to_numpy()).unsqueeze(0).float()
 
 
 class WeightedRMSE(torch.nn.Module):

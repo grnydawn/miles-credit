@@ -14,7 +14,9 @@ from torch.cuda.amp import autocast
 from torch.utils.data import IterableDataset
 import optuna
 from credit.models.checkpoint import TorchFSDPCheckpointIO
+from credit.solar import TOADataLoader
 
+logger = logging.getLogger(__name__)
 
 def cleanup():
     dist.destroy_process_group()
@@ -31,27 +33,6 @@ def accum_log(log, new_logs):
         old_value = log.get(key, 0.)
         log[key] = old_value + new_value
     return log
-
-
-class TOADataLoader:
-    def __init__(self, conf):
-        self.TOA = xr.open_dataset(conf["data"]["TOA_forcing_path"]).load()
-        self.times_b = pd.to_datetime(self.TOA.time.values)
-
-        # Precompute day of year and hour arrays
-        self.days_of_year = self.times_b.dayofyear
-        self.hours_of_day = self.times_b.hour
-
-    def __call__(self, datetime_input):
-        doy = datetime_input.dayofyear
-        hod = datetime_input.hour
-
-        # Use vectorized comparison for masking
-        mask_toa = (self.days_of_year == doy) & (self.hours_of_day == hod)
-        selected_tsi = self.TOA['tsi'].sel(time=mask_toa) / 2540585.74
-
-        # Convert to tensor and add dimension
-        return torch.tensor(selected_tsi.to_numpy()).unsqueeze(0)
 
 
 class Trainer:
@@ -126,13 +107,13 @@ class Trainer:
                 x = self.model.concat_and_reshape(
                     batch["x"],
                     batch["x_surf"]
-                ).to(self.device)
+                ).to(self.device)               
 
                 if "static" in batch:
                     if static is None:
-                        static = batch["static"].to(self.device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float()
+                        static = batch["static"].to(self.device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float() # [batch, num_stat_vars, hist_len, lat, lon]
                     x = torch.cat((x, static.clone()), dim=1)
-
+                
                 if "TOA" in batch:
                     toa = batch["TOA"].to(self.device)
                     x = torch.cat([x, toa.unsqueeze(1)], dim=1)
