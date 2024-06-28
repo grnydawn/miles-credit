@@ -13,6 +13,7 @@ from credit.models.vit3d import ViT3D
 from credit.models.rvt import RViT
 from credit.models.unet import SegmentationModel
 from credit.models.fuxi import Fuxi
+from credit.models.swin import SwinTransformerV2Cr
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,8 @@ model_types = {
     "crossformer": (CrossFormer, "Loading the CrossFormer model with a conv decoder head and skip connections ..."),
     "crossformer-deprecated": (CrossFormerDep, "Loading the CrossFormer model with a conv decoder head and skip connections ..."),
     "unet": (SegmentationModel, "Loading a unet model"),
-    "fuxi": (Fuxi, "Loading Fuxi Model")
+    "fuxi": (Fuxi, "Loading Fuxi model"),
+    "swin": (SwinTransformerV2Cr, "Loading the minimal Swin model")
 } 
 
 
