@@ -44,17 +44,20 @@ def generate_forecasts(start_date, days=10, duration=365, start_hours=[0]):
 
 
 if __name__ == "__main__":
-    # Generate forecasts for each day of the year
-    # start_date = datetime(2020, 1, 1)
-    # forecasts = generate_forecasts(start_date)
+    # Example usage
+    forecast_details = {
+        'type': 'custom',
+        'start_year': 2018,
+        'start_month': 6,
+        'start_day': 1,
+        'days': 10,
+        'start_hours': [0, 12],
+        'duration': 4
+    }
 
-    config_file = "/glade/derecho/scratch/schreck/repos/miles-credit/results/wxformer/quarter/zscore_multi/model.yml"
-
-    import yaml
-    with open(config_file) as cf:
-        conf = yaml.load(cf, Loader=yaml.FullLoader)
-
+    conf = {"predict": {"forecasts": forecast_details}}
     forecasts = load_forecasts(conf)
+
     # Print example forecasts
     for forecast in forecasts:
         print(forecast)
