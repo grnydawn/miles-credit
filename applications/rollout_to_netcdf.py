@@ -5,11 +5,12 @@ import os
 import sys
 import yaml
 import glob
-import tqdm
 import logging
 import warnings
+import traceback
 from pathlib import Path
 from argparse import ArgumentParser
+import multiprocessing as mp
 
 # ---------- #
 # Numerics
@@ -17,9 +18,6 @@ import datetime
 import pandas as pd
 import xarray as xr
 import numpy as np
-
-import dask.array as da
-from dask.diagnostics import ProgressBar
 
 # ---------- #
 # AI libs
@@ -274,75 +272,36 @@ def make_xarray(pred, forecast_datetime, lat, lon, conf):
     return darray_upper_air, darray_single_level
 
 
-def merge_netcdf_files(nc_filename_base, conf):
-    """
-    Merge all individual NetCDF files into one consolidated file, sorted by forecast_hour.
-    """
-    save_location = conf["predict"]["save_forecast"]
-    file_pattern = os.path.join(save_location, f"pred_{nc_filename_base}_*.nc")
-    file_list = sorted(glob.glob(file_pattern), key=lambda x: int(x.split('_fh')[-1].split('.nc')[0]))
-
-    logger.info(f"Merging files: {file_list}")
-
-    datasets = []
-    for file in tqdm.tqdm(file_list):
-        ds = xr.open_dataset(file, chunks={'datetime': 1})
-        datasets.append(ds)
-
-    # Concatenate all datasets along the forecast_hour dimension
-    ds_merged = xr.concat(datasets, dim='forecast_hour')
-
-    # Define the output filename
-    merged_filename = os.path.join(save_location, f"{nc_filename_base}.zarr")
-
-    # Define encoding for compression
-    encoding = {variable: {"compressor": None} for variable in ds.data_vars}
-
-    # Use Dask to write the concatenated dataset in parallel
-    with ProgressBar():
-        delayed_obj = ds_merged.to_zarr(merged_filename, mode='w', compute=False, encoding=encoding)
-        da.compute(delayed_obj)
-
-    logger.info(f"Merged file saved as {merged_filename}")
-
-    # Delete excess files
-    for file in file_list:
-        os.remove(file)
-        # logger.info(f"Deleted file: {file}")
-
-    return merged_filename
-
-
 def save_netcdf_increment(darray_upper_air, darray_single_level, nc_filename, forecast_hour, conf):
-    """
-    Save increment to a unique NetCDF file using Dask for parallel processing.
-    """
-    # Convert DataArrays to Datasets
-    ds_upper = darray_upper_air.to_dataset(dim="vars")
-    ds_single = darray_single_level.to_dataset(dim="vars")
+    try:
+        """
+        Save increment to a unique NetCDF file using Dask for parallel processing.
+        """
+        # Convert DataArrays to Datasets
+        ds_upper = darray_upper_air.to_dataset(dim="vars")
+        ds_single = darray_single_level.to_dataset(dim="vars")
 
-    # Merge datasets
-    ds_merged = xr.merge([ds_upper, ds_single])
+        # Merge datasets
+        ds_merged = xr.merge([ds_upper, ds_single])
 
-    # Add forecast_hour coordinate
-    ds_merged['forecast_hour'] = forecast_hour
+        # Add forecast_hour coordinate
+        ds_merged['forecast_hour'] = forecast_hour
 
-    logger.info(f"Trying to save forecast hour {forecast_hour} to {nc_filename}")
+        logger.info(f"Trying to save forecast hour {forecast_hour} to {nc_filename}")
 
-    save_location = conf["predict"]["save_forecast"]
-    unique_filename = os.path.join(save_location, f"pred_{nc_filename}_fh{forecast_hour}.nc")
+        save_location = os.path.join(conf["predict"]["save_forecast"], nc_filename)
+        os.makedirs(save_location, exist_ok=True)
+        unique_filename = os.path.join(save_location, f"pred_{nc_filename}_{forecast_hour:03d}.nc")
 
-    # Convert to Dask array if not already
-    ds_merged = ds_merged.chunk({'datetime': 1})
+        # Convert to Dask array if not already
+        ds_merged = ds_merged.chunk({'datetime': 1})
 
-    # Define encoding for compression
-    encoding = {variable: {"zlib": True, "complevel": 5} for variable in ds_merged.data_vars}
+        # Use Dask to write the dataset in parallel
+        ds_merged.to_netcdf(unique_filename, mode='w')
 
-    # Use Dask to write the dataset in parallel
-    delayed_obj = ds_merged.to_netcdf(unique_filename, mode='w', compute=False, encoding=encoding)
-    da.compute(delayed_obj)
-
-    logger.info(f"Saved forecast hour {forecast_hour} to {unique_filename}")
+        logger.info(f"Saved forecast hour {forecast_hour} to {unique_filename}")
+    except Exception:
+        print(traceback.format_exc())
 
 
 def predict(rank, world_size, conf, p):
@@ -450,7 +409,7 @@ def predict(rank, world_size, conf, p):
                 x = model.concat_and_reshape(batch["x"], batch["x_surf"]).to(device)
 
                 init_datetime_str = datetime.datetime.utcfromtimestamp(date_time)
-                init_datetime_str = str(init_datetime_str).replace(" ", "_")
+                init_datetime_str = init_datetime_str.strftime('%Y-%m-%dT%HZ')
 
             # Add statics
             if "static" in batch:
@@ -527,7 +486,7 @@ def predict(rank, world_size, conf, p):
                     result.get()
 
                 # Now merge all the files into one and delete leftovers
-                merge_netcdf_files(init_datetime_str, conf)
+                # merge_netcdf_files(init_datetime_str, conf)
 
                 # forecast count = a constant for each run
                 forecast_count += 1
@@ -608,6 +567,13 @@ if __name__ == "__main__":
         default=False,
         help="Break the forecasts list into X subsets to be processed by X GPUs",
     )
+    parser.add_argument(
+        "-cpus",
+        "--num_cpus",
+        type=int,
+        default=8,
+        help="Number of CPU workers to use per GPU",
+    )
 
     # parse
     args = parser.parse_args()
@@ -618,6 +584,7 @@ if __name__ == "__main__":
     no_data = 0 if "no-data" not in args_dict else int(args_dict.pop("no-data"))
     subset = int(args_dict.pop("subset"))
     number_of_subsets = int(args_dict.pop("no_subset"))
+    num_cpus = int(args_dict.pop("num_cpus"))
 
     # Set up logger to print stuff
     root = logging.getLogger()
@@ -672,8 +639,7 @@ if __name__ == "__main__":
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
 
-    import multiprocessing as mp
-    with mp.Pool(8) as p:
+    with mp.Pool(num_cpus) as p:
         if conf["trainer"]["mode"] in ["fsdp", "ddp"]:  # multi-gpu inference
             _ = predict(int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf, p=p)
         else:  # single device inference
