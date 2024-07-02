@@ -1,32 +1,38 @@
-save_loc: "/glade/work/$USER/repos/global/miles-credit/results/fuxi_norm/"
+# This is an example config file for testing the data loader and model training steps.  
+# Yingkai Sha <ksha@ucar.edu>
+
+save_loc: "/glade/work/$USER/repos/global/miles-credit/results/fuxi_new/"
 seed: 1000
 
 data:
     variables: ['U','V','T','Q']
     surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
-    static_variables: ['Z_GDS4_SFC','LSM','tsi'] # []
+    forcing_variables: ['TSI'] #
+    static_variables: ['Z_GDS4_SFC','LSM'] #
     save_loc: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
+    save_loc_forcing: '/glade/campaign/cisl/aiml/ksha/CREDIT/forcing_norm.nc'
+    save_loc_static: '/glade/campaign/cisl/aiml/ksha/CREDIT/static_norm.nc'
     mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
     std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
     quant_path: '/glade/campaign/cisl/aiml/credit_scalers/era5_quantile_scalers_2024-02-13_07:33.parquet'
     TOA_forcing_path: '/glade/derecho/scratch/dgagne/credit_scalers/solar_radiation_2024-03-29_0204.nc' 
-    scaler_type: 'std' # 'std'
+    scaler_type: 'std_new' # 'std'
     history_len: 2 
-    forecast_len: 6 # larger than 0 for multi step
+    forecast_len: 2 # larger than 0 for multi step
     valid_history_len: 2
-    valid_forecast_len: 6 # 
+    valid_forecast_len: 2 # 
     one_shot: True
     skip_periods: null
     
 trainer:
-    mode: fsdp
+    mode: none
     train_batch_size: 1
     valid_batch_size: 1
-    batches_per_epoch: 2400 # Set to 0 to use len(dataloader)
-    valid_batches_per_epoch: 20
+    batches_per_epoch: 5 # Set to 0 to use len(dataloader)
+    valid_batches_per_epoch: 5
     learning_rate: 1.0e-07
     weight_decay: 1.0e-05
-    start_epoch: 1
+    start_epoch: 0
     epochs: 20 # train_one_epoch: True
     amp: False
     grad_accum_every: 1
@@ -36,7 +42,7 @@ trainer:
     stopping_patience: 50
     teacher_forcing_ratio: 0.5 #0.9886539666794065
     stop_rollout: 0.9
-    skip_validation: True
+    skip_validation: False
     load_weights: True
     load_optimizer: False
     use_scheduler: False
@@ -60,9 +66,7 @@ model:
     static_channels: 3   #
     num_heads: 8         # Number of heads (default: 8)
     window_size: 7       # Window size (default: 7)
-    depth: 16            # Depth of the swin transformer (default: 48)
-    pad_lon: 80
-    pad_lat: 80
+    depth: 8             # Depth of the swin transformer (default: 48)
     use_spectral_norm: True
     
 loss: 
@@ -91,7 +95,7 @@ loss:
 predict:
     forecasts: [
         #["1989-12-31 00:00:00", "1990-01-02 00:00:00"],
-        ["2018-06-01 00:00:00", "2018-06-01 23:00:00"]
+        ["2018-06-01 00:00:00", "2018-06-01 02:00:00"]
     ]
     use_laplace_filter: True
     save_format: "nc"
@@ -142,7 +146,7 @@ visualization:
 pbs: #derecho
     conda: "/glade/work/ksha/miniconda3/envs/credit"
     project: "NAML0001"
-    job_name: "fuxi"
+    job_name: "fuxi_norm"
     walltime: "12:00:00"
     nodes: 8
     ncpus: 64
