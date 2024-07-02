@@ -6,6 +6,8 @@ Content:
     - get_forward_data_netCDF4(filename) -> xr.DataArray
     - ERA5_Static_Dataset(torch.utils.data.Dataset)
 
+Yingkai Sha
+ksha@ucar.edu
 '''
 
 # system tools

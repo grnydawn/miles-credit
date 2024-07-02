@@ -1,4 +1,7 @@
-import warnings
+'''
+train.py 
+-------------------------------------------------------
+'''
 import os
 import sys
 import glob
@@ -7,6 +10,7 @@ import wandb
 import optuna
 import shutil
 import logging
+import warnings
 
 from pathlib import Path
 from argparse import ArgumentParser
@@ -19,15 +23,19 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from credit.distributed import distributed_model_wrapper
 
-from credit.models import load_model
+from credit.seed import seed_everything
 from credit.loss import VariableTotalLoss2D
-from credit.data import ERA5Dataset, Dataset_BridgeScaler
+from credit.data import ERA5Dataset, ERA5_and_Forcing_Dataset, Dataset_BridgeScaler
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
+
 from credit.trainer import Trainer
+# <-------------- the new pipeline
+from credit.trainer_new import Trainer as Trainer_New
+
 from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
-from credit.seed import seed_everything
+from credit.models import load_model
 from credit.models.checkpoint import (
     FSDPOptimizerWrapper,
     TorchFSDPCheckpointIO
@@ -113,6 +121,93 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
         shuffle=shuffle,
         drop_last=True
     )
+    logging.info(f" Loaded a {name} ERA dataset, and a distributed sampler (forecast length = {forecast_len + 1})")
+
+    return dataset, sampler
+
+def load_dataset_and_sampler_zscore_only(conf, files, world_size, rank, is_train, seed=42):
+
+    # convert $USER to the actual user name
+    conf['save_loc'] = os.path.expandvars(conf['save_loc'])
+
+    # ======================================================== #
+    # parse intputs
+    
+    if ('forcing_variables' in conf['data']) and (len(conf['data']['forcing_variables']) > 0):
+        forcing_files = conf['data']['save_loc_forcing']
+    else:
+        forcing_files = None
+    
+    if ('static_variables' in conf['data']) and (len(conf['data']['static_variables']) > 0):
+        static_files = conf['data']['save_loc_static']
+    else:
+        static_files = None
+    
+    # number of previous lead time inputs
+    history_len = conf["data"]["history_len"]
+    valid_history_len = conf["data"]["valid_history_len"]
+
+    # number of lead times to forecast
+    forecast_len = conf["data"]["forecast_len"]
+    valid_forecast_len = conf["data"]["valid_forecast_len"]
+    
+    if is_train:
+        history_len = history_len
+        forecast_len = forecast_len
+        # print out training / validation
+        name = "training"
+    else:
+        history_len = valid_history_len
+        forecast_len = valid_forecast_len
+        name = 'validation'
+        
+    # max_forecast_len
+    if "max_forecast_len" not in conf["data"]:
+        max_forecast_len = None
+    else:
+        max_forecast_len = conf["data"]["max_forecast_len"]
+
+    # skip_periods
+    if "skip_periods" not in conf["data"]:
+        skip_periods = None
+    else:
+        skip_periods = conf["data"]["skip_periods"]
+        
+    # one_shot
+    if "one_shot" not in conf["data"]:
+        one_shot = None
+    else:
+        one_shot = conf["data"]["one_shot"]
+
+    # shufle
+    shuffle = is_train
+    
+    # data preprocessing utils
+    transforms = load_transforms(conf)
+
+    # Z-score
+    dataset = ERA5_and_Forcing_Dataset(
+        filenames=files,
+        filename_forcing=forcing_files,
+        filename_static=static_files,
+        history_len=history_len,
+        forecast_len=forecast_len,
+        skip_periods=skip_periods,
+        one_shot=one_shot,
+        max_forecast_len=max_forecast_len,
+        transform=transforms
+    )
+
+    # Pytorch sampler
+    sampler = DistributedSampler(
+        dataset,
+        num_replicas=world_size,
+        rank=rank,
+        seed=seed,
+        shuffle=shuffle,
+        drop_last=True
+    )
+    
     logging.info(f" Loaded a {name} ERA dataset, and a distributed sampler (forecast length = {forecast_len + 1})")
 
     return dataset, sampler
@@ -205,36 +300,26 @@ def main(rank, world_size, conf, trial=False):
     thread_workers = conf['trainer']['thread_workers']
     valid_thread_workers = conf['trainer']['valid_thread_workers'] if 'valid_thread_workers' in conf['trainer'] else thread_workers
 
-    # datasets (zarr reader)
-
+    # Training
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
-    # filenames = list(map(os.path.basename, all_ERA_files))
-    # all_years = sorted([re.findall(r'(?:_)(\d{4})', fn)[0] for fn in filenames])
-
-    # Specify the years for each set
-    # if conf["data"][train_test_split]:
-    #    normalized_split = conf["data"][train_test_split] / sum(conf["data"][train_test_split])
-    #    n_years = len(all_years)
-    #    train_years, sklearn.model_selection.train_test_split¶
 
     train_years = [str(year) for year in range(1979, 2014)]
-    valid_years = [str(year) for year in range(2014, 2018)]  # can make CV splits if we want to later on
-    test_years = [str(year) for year in range(2018, 2022)]  # same as graphcast -- always hold out
+    valid_years = [str(year) for year in range(2014, 2018)]
+    test_years = [str(year) for year in range(2018, 2022)]
 
-    # train_years = [str(year) for year in range(1995, 2013) if year != 2007]
-    # valid_years = [str(year) for year in range(2014, 2015)]  # can make CV splits if we want to later on
-    # test_years = [str(year) for year in range(2015, 2016)]  # same as graphcast -- always hold out
-
-    # Filter the files for each set
-
+    # Filter the files for training/validation/testing set
     train_files = [file for file in all_ERA_files if any(year in file for year in train_years)]
     valid_files = [file for file in all_ERA_files if any(year in file for year in valid_years)]
     test_files = [file for file in all_ERA_files if any(year in file for year in test_years)]
 
     # load dataset and sampler
-
-    train_dataset, train_sampler = load_dataset_and_sampler(conf, train_files, world_size, rank, is_train=True)
-    valid_dataset, valid_sampler = load_dataset_and_sampler(conf, valid_files, world_size, rank, is_train=False)
+    # <----------------------------------- replace
+    if conf['data']['scaler_type'] == 'std_new':
+        train_dataset, train_sampler = load_dataset_and_sampler_zscore_only(conf, train_files, world_size, rank, is_train=True)
+        valid_dataset, valid_sampler = load_dataset_and_sampler_zscore_only(conf, valid_files, world_size, rank, is_train=False)
+    else:
+        train_dataset, train_sampler = load_dataset_and_sampler(conf, train_files, world_size, rank, is_train=True)
+        valid_dataset, valid_sampler = load_dataset_and_sampler(conf, valid_files, world_size, rank, is_train=False)
 
     # setup the dataloder for this process
 
@@ -288,8 +373,11 @@ def main(rank, world_size, conf, trial=False):
     metrics = LatWeightedMetrics(conf)
 
     # Initialize a trainer object
-
-    trainer = Trainer(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
+    # <----------------------------------- replace
+    if conf['data']['scaler_type'] == 'std_new':
+        trainer = Trainer_New(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
+    else:
+        trainer = Trainer(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
 
     # Fit the model
 
