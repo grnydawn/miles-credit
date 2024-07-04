@@ -34,6 +34,8 @@ from torch.utils.data.distributed import DistributedSampler
 #
 Array = Union[np.ndarray, xr.DataArray]
 IMAGE_ATTR_NAMES = ('historical_ERA5_images', 'target_ERA5_images')
+
+
 #
 
 def get_forward_data(filename) -> xr.DataArray:
@@ -42,11 +44,13 @@ def get_forward_data(filename) -> xr.DataArray:
     dataset = xr.open_zarr(filename, consolidated=True)
     return dataset
 
+
 def get_forward_data_netCDF4(filename) -> xr.DataArray:
     """Lazily opens netCDF4 files.
     """
     dataset = xr.open_dataset(filename)
     return dataset
+
 
 class Sample(TypedDict):
     """Simple class for structuring data for the ML model.
@@ -145,8 +149,7 @@ def get_zarr_chunk_sequences(
         n_chunks_per_disk_load: int,
         zarr_chunk_boundaries: Iterable[int],
         contiguous_segments: Iterable[Segment]
-        ) -> Iterable[Segment]:
-
+) -> Iterable[Segment]:
     """
 
     Args:
@@ -274,18 +277,19 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
     - filename_static: None /or a netCDF4 file that contains all the static variables.
     
     '''
+
     def __init__(
-        self,
-        filenames,
-        filename_forcing=None,
-        filename_static=None,
-        history_len=2,
-        forecast_len=0,
-        transform=None,
-        seed=42,
-        skip_periods=None,
-        one_shot=None,
-        max_forecast_len=None
+            self,
+            filenames,
+            filename_forcing=None,
+            filename_static=None,
+            history_len=2,
+            forecast_len=0,
+            transform=None,
+            seed=42,
+            skip_periods=None,
+            one_shot=None,
+            max_forecast_len=None
     ):
         self.history_len = history_len
         self.forecast_len = forecast_len
@@ -304,7 +308,7 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
 
         # set random seed
         self.rng = np.random.default_rng(seed=seed)
-        
+
         # max possible forecast len
         self.max_forecast_len = max_forecast_len
 
@@ -315,22 +319,21 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         for fn in filenames:
             all_fils.append(get_forward_data(filename=fn))
         self.all_fils = all_fils
-        
+
         # get sample indices for all ERA5 files:
         ind_start = 0
-        self.ERA5_indices = {} # <------ change
+        self.ERA5_indices = {}  # <------ change
         for ind_file, ERA5_xarray in enumerate(self.all_fils):
-            
             # [number of samples, ind_start, ind_end]
-            self.ERA5_indices[str(ind_file)] = [len(ERA5_xarray['time']), 
-                                                  ind_start, 
-                                                  ind_start+len(ERA5_xarray['time'])]
-            ind_start += len(ERA5_xarray['time'])+1
-            
+            self.ERA5_indices[str(ind_file)] = [len(ERA5_xarray['time']),
+                                                ind_start,
+                                                ind_start + len(ERA5_xarray['time'])]
+            ind_start += len(ERA5_xarray['time']) + 1
+
         # ======================================================== #
         # forcing file
         self.filename_forcing = filename_forcing
-        
+
         if self.filename_forcing is not None:
             assert os.path.isfile(filename_forcing), 'Cannot find forcing file [{}]'.format(filename_forcing)
             self.xarray_forcing = get_forward_data_netCDF4(filename_forcing)
@@ -340,7 +343,7 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         # ======================================================== #
         # static file
         self.filename_static = filename_static
-        
+
         if self.filename_static is not None:
             assert os.path.isfile(filename_static), 'Cannot find static file [{}]'.format(filename_forcing)
             self.xarray_static = get_forward_data_netCDF4(filename_static)
@@ -361,7 +364,7 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         # ========================================================================== #
         # cross-year indices --> the index of the year + indices within that year
-        
+
         # select the ind_file based on the iter index 
         ind_file = find_key_for_number(index, self.ERA5_indices)
 
@@ -370,17 +373,17 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         ind_start_in_file = index - ind_start
 
         # handle out-of-bounds
-        ind_largest = len(self.all_fils[int(ind_file)]['time'])-(self.history_len+self.forecast_len+1)
+        ind_largest = len(self.all_fils[int(ind_file)]['time']) - (self.history_len + self.forecast_len + 1)
         if ind_start_in_file > ind_largest:
             ind_start_in_file = ind_largest
         # ========================================================================== #
         # subset xarray on time dimension & load it to the memory
-        
+
         ## ERA5_subset: a xarray dataset that contains training input and target (for the current index)
-        ind_end_in_file = ind_start_in_file+self.history_len+self.forecast_len
+        ind_end_in_file = ind_start_in_file + self.history_len + self.forecast_len
         ERA5_subset = self.all_fils[int(ind_file)].isel(
-            time=slice(ind_start_in_file, ind_end_in_file+1)).load()
-        
+            time=slice(ind_start_in_file, ind_end_in_file + 1)).load()
+
         # ==================================================== #
         # split ERA5_subset into training inputs and targets + merge with forcing and static
 
@@ -393,23 +396,23 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         # ==================================================== #
         # xarray dataset as input
         ## historical_ERA5_images: the final input
-        
+
         historical_ERA5_images = ERA5_subset.isel(time=slice(0, self.history_len, self.skip_periods))
-            
+
         # merge forcing inputs
         if self.xarray_forcing:
             # slice + load to the GPU
             forcing_subset_input = self.xarray_forcing.isel(
-                time=slice(ind_start_in_file, ind_end_in_file+1))
+                time=slice(ind_start_in_file, ind_end_in_file + 1))
             forcing_subset_input = forcing_subset_input.isel(time=slice(0, self.history_len, self.skip_periods)).load()
-            
+
             # update
-            
+
             forcing_subset_input['time'] = historical_ERA5_images['time']
-            
+
             # merge
             historical_ERA5_images = historical_ERA5_images.merge(forcing_subset_input)
-            
+
         # merge static inputs
         if self.xarray_static:
             # expand static var on time dim
@@ -417,22 +420,22 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
             static_subset_input = self.xarray_static.expand_dims(dim={"time": N_time_dims})
             # assign coords 'time'
             static_subset_input = static_subset_input.assign_coords({'time': ERA5_subset['time']})
-            
+
             # slice + load to the GPU
             static_subset_input = static_subset_input.isel(time=slice(0, self.history_len, self.skip_periods)).load()
-            
+
             # update 
             static_subset_input['time'] = historical_ERA5_images['time']
-            
+
             # merge
             historical_ERA5_images = historical_ERA5_images.merge(static_subset_input)
 
         # ==================================================== #
         # xarray dataset as target
         ## target_ERA5_images: the final input
-        
+
         target_ERA5_images = ERA5_subset.isel(time=slice(self.history_len, ind_end_time, self.skip_periods))
-        
+
         if self.one_shot is not None:
             # get the final state of the target as one-shot
             target_ERA5_images = target_ERA5_images.isel(time=slice(0, 1))
@@ -443,7 +446,7 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
             target_ERA5_images=target_ERA5_images,
             datetime_index=datetime_as_number
         )
-        
+
         # ==================================== #
         # data normalization
         if self.transform:
@@ -455,19 +458,19 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         return sample
 
 
-
 class ERA5Dataset(torch.utils.data.Dataset):
 
     def __init__(
-        self,
-        filenames: list = ['/glade/derecho/scratch/wchapman/STAGING/TOTAL_2012-01-01_2012-12-31_staged.zarr', '/glade/derecho/scratch/wchapman/STAGING/TOTAL_2013-01-01_2013-12-31_staged.zarr'],
-        history_len: int = 1,
-        forecast_len: int = 2,
-        transform: Optional[Callable] = None,
-        seed=42,
-        skip_periods=None,
-        one_shot=None,
-        max_forecast_len=None
+            self,
+            filenames: list = ['/glade/derecho/scratch/wchapman/STAGING/TOTAL_2012-01-01_2012-12-31_staged.zarr',
+                               '/glade/derecho/scratch/wchapman/STAGING/TOTAL_2013-01-01_2013-12-31_staged.zarr'],
+            history_len: int = 1,
+            forecast_len: int = 2,
+            transform: Optional[Callable] = None,
+            seed=42,
+            skip_periods=None,
+            one_shot=None,
+            max_forecast_len=None
     ):
         self.history_len = history_len
         self.forecast_len = forecast_len
@@ -488,8 +491,8 @@ class ERA5Dataset(torch.utils.data.Dataset):
         indo = 0
         self.meta_data_dict = {}
         for ee, bb in enumerate(self.all_fils):
-            self.meta_data_dict[str(ee)] = [len(bb['time']), indo, indo+len(bb['time'])]
-            indo += len(bb['time'])+1
+            self.meta_data_dict[str(ee)] = [len(bb['time']), indo, indo + len(bb['time'])]
+            indo += len(bb['time']) + 1
 
         # set out of bounds indexes...
         OOB = []
@@ -512,12 +515,13 @@ class ERA5Dataset(torch.utils.data.Dataset):
         result_key = find_key_for_number(index, self.meta_data_dict)
 
         # get the data selection:
-        true_ind = index-self.meta_data_dict[result_key][1]
+        true_ind = index - self.meta_data_dict[result_key][1]
 
-        if true_ind > (len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+1)):
-            true_ind = len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+1)
+        if true_ind > (len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 1)):
+            true_ind = len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 1)
 
-        datasel = self.all_fils[int(result_key)].isel(time=slice(true_ind, true_ind+self.history_len+self.forecast_len+1))
+        datasel = self.all_fils[int(result_key)].isel(
+            time=slice(true_ind, true_ind + self.history_len + self.forecast_len + 1))
 
         if (self.skip_periods is not None) and (self.one_shot is None):
             sample = Sample(
@@ -545,7 +549,7 @@ class ERA5Dataset(torch.utils.data.Dataset):
                 target_ERA5_images=target_data,
                 datetime_index=[int(historical_data.time.values[0].astype('datetime64[s]').astype(int)),
                                 int(target_data.time.values[0].astype('datetime64[s]').astype(int))]
-                )
+            )
         else:
             sample = Sample(
                 historical_ERA5_images=datasel.isel(time=slice(0, self.history_len)),
@@ -564,15 +568,16 @@ class ERA5Dataset(torch.utils.data.Dataset):
 class ERA5(torch.utils.data.Dataset):
 
     def __init__(
-        self,
-        filenames: list = ['/glade/derecho/scratch/wchapman/STAGING/TOTAL_2012-01-01_2012-12-31_staged.zarr', '/glade/derecho/scratch/wchapman/STAGING/TOTAL_2013-01-01_2013-12-31_staged.zarr'],
-        history_len: int = 1,
-        forecast_len: int = 2,
-        transform: Optional[Callable] = None,
-        seed=42,
-        skip_periods=None,
-        one_shot=None,
-        max_forecast_len=None
+            self,
+            filenames: list = ['/glade/derecho/scratch/wchapman/STAGING/TOTAL_2012-01-01_2012-12-31_staged.zarr',
+                               '/glade/derecho/scratch/wchapman/STAGING/TOTAL_2013-01-01_2013-12-31_staged.zarr'],
+            history_len: int = 1,
+            forecast_len: int = 2,
+            transform: Optional[Callable] = None,
+            seed=42,
+            skip_periods=None,
+            one_shot=None,
+            max_forecast_len=None
     ):
         self.history_len = history_len
         self.forecast_len = forecast_len
@@ -593,8 +598,8 @@ class ERA5(torch.utils.data.Dataset):
         indo = 0
         self.meta_data_dict = {}
         for ee, bb in enumerate(self.all_fils):
-            self.meta_data_dict[str(ee)] = [len(bb['time']), indo, indo+len(bb['time'])]
-            indo += len(bb['time'])+1
+            self.meta_data_dict[str(ee)] = [len(bb['time']), indo, indo + len(bb['time'])]
+            indo += len(bb['time']) + 1
 
         # set out of bounds indexes...
         OOB = []
@@ -630,12 +635,13 @@ class ERA5(torch.utils.data.Dataset):
         # find the result key:
         result_key = find_key_for_number(index, self.meta_data_dict)
         # get the data selection:
-        true_ind = index-self.meta_data_dict[result_key][1]
+        true_ind = index - self.meta_data_dict[result_key][1]
 
-        if true_ind > (len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+1)):
-            true_ind = len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+1)
+        if true_ind > (len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 1)):
+            true_ind = len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 1)
 
-        datasel = self.all_fils[int(result_key)].isel(time=slice(true_ind, true_ind+self.history_len+self.forecast_len+1))
+        datasel = self.all_fils[int(result_key)].isel(
+            time=slice(true_ind, true_ind + self.history_len + self.forecast_len + 1))
 
         if (self.skip_periods is not None) and (self.one_shot is None):
             sample = Sample(
@@ -662,7 +668,7 @@ class ERA5(torch.utils.data.Dataset):
                 target_ERA5_images=target_data,
                 datetime_index=[int(historical_data.time.values[0].astype('datetime64[s]').astype(int)),
                                 int(target_data.time.values[0].astype('datetime64[s]').astype(int))]
-                )
+            )
         else:
             sample = Sample(
                 historical_ERA5_images=datasel.isel(time=slice(0, self.history_len)),
@@ -684,7 +690,7 @@ class ERA5(torch.utils.data.Dataset):
 
 # flatten list-of-list
 def flatten(array):
-    return reduce(lambda a, b: a+b, array)
+    return reduce(lambda a, b: a + b, array)
 
 
 def lazymerge(zlist, rename=None):
@@ -723,14 +729,14 @@ class CONUS404Dataset(torch.utils.data.Dataset):
 
     """
 
-    zarrpath:     str = "/glade/campaign/ral/risc/DATA/conus404/zarr"
-    varnames:     List[str] = field(default_factory=list)
-    history_len:  int = 2
+    zarrpath: str = "/glade/campaign/ral/risc/DATA/conus404/zarr"
+    varnames: List[str] = field(default_factory=list)
+    history_len: int = 2
     forecast_len: int = 1
-    transform:    Optional[Callable] = None
-    seed:         int = 22
+    transform: Optional[Callable] = None
+    seed: int = 22
     skip_periods: int = None
-    one_shot:     bool = False
+    one_shot: bool = False
 
     def __post_init__(self):
         super().__init__()
@@ -749,7 +755,7 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         # get file paths
         zdict = {}
         for v in self.varnames:
-            zdict[v] = sorted(glob(os.path.join(self.zarrpath, v, v+".*.zarr")))
+            zdict[v] = sorted(glob(os.path.join(self.zarrpath, v, v + ".*.zarr")))
 
         # check that lists align
         zlen = [len(z) for z in zdict.values()]
@@ -816,16 +822,16 @@ def testC4loader():
         "worktest": "/glade/work/mcginnis/ML/GWC/testdata/zarr",
         "scratch": "/glade/derecho/scratch/mcginnis/conus404/zarr",
         "campaign": "/glade/campaign/ral/risc/DATA/conus404/zarr"
-        }
+    }
     for zk in zdirs.keys():
         src = zdirs[zk]
-        print("######## "+zk+" ########")
+        print("######## " + zk + " ########")
         svars = os.listdir(src)
-        for i in range(1, len(svars)+1):
+        for i in range(1, len(svars) + 1):
             testvars = svars[slice(0, i)]
             print(testvars)
-            cmd = 'c4 = CONUS404Dataset("'+src+'",varnames='+str(testvars)+')'
-            print(cmd+"\t"+str(timeit(cmd, globals=globals(), number=1)))
+            cmd = 'c4 = CONUS404Dataset("' + src + '",varnames=' + str(testvars) + ')'
+            print(cmd + "\t" + str(timeit(cmd, globals=globals(), number=1)))
 
 
 # Note: DistributedSequentialDataset & DistributedSequentialDataset
@@ -836,10 +842,10 @@ def testC4loader():
 
 class Dataset_BridgeScaler(torch.utils.data.Dataset):
     def __init__(
-        self,
-        conf,
-        conf_dataset,
-        transform: Optional[Callable] = None,
+            self,
+            conf,
+            conf_dataset,
+            transform: Optional[Callable] = None,
     ):
         years_do = list(conf["data"][conf_dataset])
         self.available_dates = pd.date_range(str(years_do[0]), str(years_do[1]), freq='1H')
@@ -889,13 +895,13 @@ class Dataset_BridgeScaler(torch.utils.data.Dataset):
                 [index]
                 + [index + (i) + 1 for i in range(self.forecast_len)]
                 + [index - i - 1 for i in range(self.history_len)]
-                )
+            )
 
             if np.min(indlist) < 0:
-                indlist = list(np.array(indlist)+np.abs(np.min(indlist)))
+                indlist = list(np.array(indlist) + np.abs(np.min(indlist)))
                 index += np.abs(np.min(indlist))
             if np.max(indlist) >= self.__len__():
-                indlist = list(np.array(indlist)-np.abs(np.max(indlist))+self.__len__()-1)
+                indlist = list(np.array(indlist) - np.abs(np.max(indlist)) + self.__len__() - 1)
                 index -= np.abs(np.max(indlist))
             date_index = self.available_dates[indlist]
             str_tot_find = f'%Y/%m/%d/{self.file_format}'
@@ -928,14 +934,14 @@ class Dataset_BridgeScaler(torch.utils.data.Dataset):
                 [index] +
                 [index + (i) + 1 for i in range(self.forecast_len)] +
                 [index - i - 1 for i in range(self.history_len)]
-                )
+            )
             # indlist.append(index+self.one_shot)
 
             if np.min(indlist) < 0:
-                indlist = list(np.array(indlist)+np.abs(np.min(indlist)))
+                indlist = list(np.array(indlist) + np.abs(np.min(indlist)))
                 index += np.abs(np.min(indlist))
             if np.max(indlist) >= self.__len__():
-                indlist = list(np.array(indlist)-np.abs(np.max(indlist))+self.__len__()-1)
+                indlist = list(np.array(indlist) - np.abs(np.max(indlist)) + self.__len__() - 1)
                 index -= np.abs(np.max(indlist))
 
             date_index = self.available_dates[indlist]
@@ -969,10 +975,10 @@ class Dataset_BridgeScaler(torch.utils.data.Dataset):
             indlist = self.evenly_spaced_indlist(index, self.skip_periods, self.forecast_len, self.history_len)
 
             if np.min(indlist) < 0:
-                indlist = list(np.array(indlist)+np.abs(np.min(indlist)))
+                indlist = list(np.array(indlist) + np.abs(np.min(indlist)))
                 index += np.abs(np.min(indlist))
             if np.max(indlist) >= self.__len__():
-                indlist = list(np.array(indlist)-np.abs(np.max(indlist))+self.__len__()-1)
+                indlist = list(np.array(indlist) - np.abs(np.max(indlist)) + self.__len__() - 1)
                 index -= np.abs(np.max(indlist))
 
             date_index = self.available_dates[indlist]
@@ -989,7 +995,7 @@ class Dataset_BridgeScaler(torch.utils.data.Dataset):
                 raise "weve left the training dataset, check your dataloader logic"
 
             DShist = xr.open_mfdataset(fs[:self.history_len]).load()
-            DSfor = xr.open_mfdataset(fs[self.history_len:self.history_len+self.forecast_len]).load()
+            DSfor = xr.open_mfdataset(fs[self.history_len:self.history_len + self.forecast_len]).load()
 
             sample = Sample(
                 historical_ERA5_images=DShist,
@@ -1046,7 +1052,8 @@ class SequentialDataset(torch.utils.data.Dataset):
         index = (index + self.adjust_forecast) % self.__len__()
         file_id, slice_idx = self.index_list[index]
 
-        dataset = xr.open_zarr(self.filenames[file_id], consolidated=True).isel(time=slice(slice_idx, slice_idx + self.skip_periods + 1, self.skip_periods))
+        dataset = xr.open_zarr(self.filenames[file_id], consolidated=True).isel(
+            time=slice(slice_idx, slice_idx + self.skip_periods + 1, self.skip_periods))
 
         sample = {
             'x': dataset.isel(time=slice(0, 1, 1)),
@@ -1072,7 +1079,8 @@ class SequentialDataset(torch.utils.data.Dataset):
 class DistributedSequentialDataset(torch.utils.data.IterableDataset):
     # https://colab.research.google.com/drive/1OFLZnX9y5QUFNONuvFsxOizq4M-tFvk-?usp=sharing#scrollTo=CxSCQPOMHgwo
 
-    def __init__(self, filenames, history_len, forecast_len, skip_periods, rank, world_size, shuffle=False, transform=None, rollout_p=0.0):
+    def __init__(self, filenames, history_len, forecast_len, skip_periods, rank, world_size, shuffle=False,
+                 transform=None, rollout_p=0.0):
 
         self.dataset = ERA5Dataset(
             filenames=filenames,
@@ -1110,26 +1118,28 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
         worker_info = get_worker_info()
         num_workers = worker_info.num_workers if worker_info is not None else 1
         worker_id = worker_info.id if worker_info is not None else 0
-        sampler = DistributedSampler(self, num_replicas=num_workers*self.world_size, rank=self.rank*num_workers+worker_id, shuffle=self.shuffle)
+        sampler = DistributedSampler(self, num_replicas=num_workers * self.world_size,
+                                     rank=self.rank * num_workers + worker_id, shuffle=self.shuffle)
         sampler.set_epoch(self.current_epoch)
 
         for index in iter(sampler):
             result_key = find_key_for_number(index, self.meta_data_dict)
             true_ind = index - self.meta_data_dict[result_key][1]
 
-            if true_ind > (len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+1)):
-                true_ind = len(self.all_fils[int(result_key)]['time'])-(self.history_len+self.forecast_len+3)
+            if true_ind > (len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 1)):
+                true_ind = len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 3)
 
-            indices = list(range(true_ind, true_ind+self.history_len+self.forecast_len))
+            indices = list(range(true_ind, true_ind + self.history_len + self.forecast_len))
             stop_forecast = False
 
             for k, ind in enumerate(indices):
 
                 concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': [], "static": [], "TOA": []}
-                sliced = xr.open_zarr(self.filenames[int(result_key)], consolidated=True).isel(time=slice(ind, ind+self.history_len+self.forecast_len+1, self.skip_periods))
+                sliced = xr.open_zarr(self.filenames[int(result_key)], consolidated=True).isel(
+                    time=slice(ind, ind + self.history_len + self.forecast_len + 1, self.skip_periods))
                 sample = {
-                    'x': sliced.isel(time=slice(k, k+self.history_len, 1)),
-                    'y': sliced.isel(time=slice(k+self.history_len, k+self.history_len+1, 1)),
+                    'x': sliced.isel(time=slice(k, k + self.history_len, 1)),
+                    'y': sliced.isel(time=slice(k + self.history_len, k + self.history_len + 1, 1)),
                     't': sliced.time.values.astype('datetime64[s]').astype(int),
                 }
 
@@ -1218,7 +1228,7 @@ class PredictForecast(torch.utils.data.IterableDataset):
                 # Start time is in this file, use start time index
                 dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
                 start_idx = np.searchsorted(dataset, self.start_time)
-                start_idx = max(0, min(start_idx, len(dataset)-1))
+                start_idx = max(0, min(start_idx, len(dataset) - 1))
                 track_start = True
 
             elif start_time < self.stop_time and stop_time > self.start_time:
@@ -1233,7 +1243,7 @@ class PredictForecast(torch.utils.data.IterableDataset):
                 else:
                     dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
                 stop_idx = np.searchsorted(dataset, self.stop_time)
-                stop_idx = max(0, min(stop_idx, len(dataset)-1))
+                stop_idx = max(0, min(stop_idx, len(dataset) - 1))
                 track_stop = True
 
             elif start_time < self.stop_time and stop_time > self.start_time:
@@ -1247,7 +1257,7 @@ class PredictForecast(torch.utils.data.IterableDataset):
 
         indices = []
         for dataset_idx, (start, stop) in info.items():
-            for i in range(start[1], stop[1]+1):
+            for i in range(start[1], stop[1] + 1):
                 indices.append((start[0], i))
         return indices
 
@@ -1258,7 +1268,8 @@ class PredictForecast(torch.utils.data.IterableDataset):
         worker_info = get_worker_info()
         num_workers = worker_info.num_workers if worker_info is not None else 1
         worker_id = worker_info.id if worker_info is not None else 0
-        sampler = DistributedSampler(self, num_replicas=num_workers*self.world_size, rank=self.rank*num_workers+worker_id, shuffle=self.shuffle)
+        sampler = DistributedSampler(self, num_replicas=num_workers * self.world_size,
+                                     rank=self.rank * num_workers + worker_id, shuffle=self.shuffle)
 
         for index in sampler:
 
@@ -1266,7 +1277,8 @@ class PredictForecast(torch.utils.data.IterableDataset):
 
             for k, (file_key, time_key) in enumerate(data_lookup):
                 concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
-                sliced_x = xr.open_zarr(self.filenames[file_key], consolidated=True).isel(time=slice(time_key, time_key+self.history_len+1))
+                sliced_x = xr.open_zarr(self.filenames[file_key], consolidated=True).isel(
+                    time=slice(time_key, time_key + self.history_len + 1))
 
                 # Check if additional data from the next file is needed
                 if len(sliced_x['time']) < self.history_len + 1:
@@ -1276,14 +1288,14 @@ class PredictForecast(torch.utils.data.IterableDataset):
                         raise OSError("You have reached the end of the available data. Exiting.")
                     sliced_x_next = xr.open_zarr(
                         self.filenames[next_file_idx],
-                        consolidated=True).isel(time=slice(0, self.history_len+1-len(sliced_x['time'])))
+                        consolidated=True).isel(time=slice(0, self.history_len + 1 - len(sliced_x['time'])))
 
                     # Concatenate excess data from the next file with the current data
                     sliced_x = xr.concat([sliced_x, sliced_x_next], dim='time')
 
                 sample_x = {
                     'x': sliced_x.isel(time=slice(0, self.history_len)),
-                    'y': sliced_x.isel(time=slice(self.history_len, self.history_len+1))  # Fetch y data for t(i+1)
+                    'y': sliced_x.isel(time=slice(self.history_len, self.history_len + 1))  # Fetch y data for t(i+1)
                 }
 
                 if self.transform:
@@ -1298,14 +1310,14 @@ class PredictForecast(torch.utils.data.IterableDataset):
                     concatenated_samples[key] = sample_x[key].squeeze(0) if self.history_len == 1 else sample_x[key]
 
                 concatenated_samples['forecast_hour'] = k + 1
-                concatenated_samples['stop_forecast'] = (k == (len(data_lookup)-self.history_len-1))  # Adjust stopping condition
+                concatenated_samples['stop_forecast'] = (
+                            k == (len(data_lookup) - self.history_len - 1))  # Adjust stopping condition
                 concatenated_samples['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[-1]
 
                 yield concatenated_samples
 
                 if concatenated_samples['stop_forecast']:
                     break
-
 
 
 class PredictForecastRollout(torch.utils.data.IterableDataset):
@@ -1371,7 +1383,7 @@ class PredictForecastRollout(torch.utils.data.IterableDataset):
                 # Start time is in this file, use start time index
                 dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
                 start_idx = np.searchsorted(dataset, self.start_time)
-                start_idx = max(0, min(start_idx, len(dataset)-1))
+                start_idx = max(0, min(start_idx, len(dataset) - 1))
                 track_start = True
 
             elif start_time < self.stop_time and stop_time > self.start_time:
@@ -1386,7 +1398,7 @@ class PredictForecastRollout(torch.utils.data.IterableDataset):
                 else:
                     dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
                 stop_idx = np.searchsorted(dataset, self.stop_time)
-                stop_idx = max(0, min(stop_idx, len(dataset)-1))
+                stop_idx = max(0, min(stop_idx, len(dataset) - 1))
                 track_stop = True
 
             elif start_time < self.stop_time and stop_time > self.start_time:
@@ -1400,7 +1412,7 @@ class PredictForecastRollout(torch.utils.data.IterableDataset):
 
         indices = []
         for dataset_idx, (start, stop) in info.items():
-            for i in range(start[1], stop[1]+1):
+            for i in range(start[1], stop[1] + 1):
                 indices.append((start[0], i))
         return indices
 
@@ -1411,7 +1423,8 @@ class PredictForecastRollout(torch.utils.data.IterableDataset):
         worker_info = get_worker_info()
         num_workers = worker_info.num_workers if worker_info is not None else 1
         worker_id = worker_info.id if worker_info is not None else 0
-        sampler = DistributedSampler(self, num_replicas=num_workers*self.world_size, rank=self.rank*num_workers+worker_id, shuffle=self.shuffle)
+        sampler = DistributedSampler(self, num_replicas=num_workers * self.world_size,
+                                     rank=self.rank * num_workers + worker_id, shuffle=self.shuffle)
 
         for index in sampler:
 
@@ -1419,7 +1432,8 @@ class PredictForecastRollout(torch.utils.data.IterableDataset):
 
             for k, (file_key, time_key) in enumerate(data_lookup):
                 concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
-                sliced_x = xr.open_zarr(self.filenames[file_key], consolidated=True).isel(time=slice(time_key, time_key+self.history_len+1))
+                sliced_x = xr.open_zarr(self.filenames[file_key], consolidated=True).isel(
+                    time=slice(time_key, time_key + self.history_len + 1))
 
                 # Check if additional data from the next file is needed
                 if len(sliced_x['time']) < self.history_len + 1:
@@ -1429,14 +1443,14 @@ class PredictForecastRollout(torch.utils.data.IterableDataset):
                         raise OSError("You have reached the end of the available data. Exiting.")
                     sliced_x_next = xr.open_zarr(
                         self.filenames[next_file_idx],
-                        consolidated=True).isel(time=slice(0, self.history_len+1-len(sliced_x['time'])))
+                        consolidated=True).isel(time=slice(0, self.history_len + 1 - len(sliced_x['time'])))
 
                     # Concatenate excess data from the next file with the current data
                     sliced_x = xr.concat([sliced_x, sliced_x_next], dim='time')
 
                 sample_x = {
                     'x': sliced_x.isel(time=slice(0, self.history_len)),
-                    'y': sliced_x.isel(time=slice(self.history_len, self.history_len+1))  # Fetch y data for t(i+1)
+                    'y': sliced_x.isel(time=slice(self.history_len, self.history_len + 1))  # Fetch y data for t(i+1)
                 }
 
                 if self.transform:
@@ -1451,13 +1465,13 @@ class PredictForecastRollout(torch.utils.data.IterableDataset):
                     concatenated_samples[key] = sample_x[key].squeeze(0) if self.history_len == 1 else sample_x[key]
 
                 concatenated_samples['forecast_hour'] = k + 1
-                concatenated_samples['stop_forecast'] = (k == (len(data_lookup)-self.history_len-1))  # Adjust stopping condition
+                concatenated_samples['stop_forecast'] = (
+                            k == (len(data_lookup) - self.history_len - 1))  # Adjust stopping condition
                 concatenated_samples['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[-1]
 
                 yield concatenated_samples
 
                 break
-
 
 
 class PredictForecastQuantile(PredictForecast):
@@ -1485,7 +1499,7 @@ class PredictForecastQuantile(PredictForecast):
             conf,
             conf_dataset='bs_years_test',
             transform=transform
-            )
+        )
 
         # Need information on the saved files
         self.all_files = [get_forward_data(filename=fn) for fn in sorted(filenames)]
@@ -1533,7 +1547,7 @@ class PredictForecastQuantile(PredictForecast):
                 # Start time is in this file, use start time index
                 dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
                 start_idx = np.searchsorted(dataset, self.start_time)
-                start_idx = max(0, min(start_idx, len(dataset)-1))
+                start_idx = max(0, min(start_idx, len(dataset) - 1))
                 track_start = True
 
             elif start_time < self.stop_time and stop_time > self.start_time:
@@ -1548,7 +1562,7 @@ class PredictForecastQuantile(PredictForecast):
                 else:
                     dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
                 stop_idx = np.searchsorted(dataset, self.stop_time)
-                stop_idx = max(0, min(stop_idx, len(dataset)-1))
+                stop_idx = max(0, min(stop_idx, len(dataset) - 1))
                 track_stop = True
 
             elif start_time < self.stop_time and stop_time > self.start_time:
@@ -1562,7 +1576,7 @@ class PredictForecastQuantile(PredictForecast):
 
         indices = []
         for dataset_idx, (start, stop) in info.items():
-            for i in range(start[1], stop[1]+1):
+            for i in range(start[1], stop[1] + 1):
                 indices.append((start[0], i))
         return indices
 
@@ -1573,7 +1587,8 @@ class PredictForecastQuantile(PredictForecast):
         worker_info = get_worker_info()
         num_workers = worker_info.num_workers if worker_info is not None else 1
         worker_id = worker_info.id if worker_info is not None else 0
-        sampler = DistributedSampler(self, num_replicas=num_workers*self.world_size, rank=self.rank*num_workers+worker_id, shuffle=self.shuffle)
+        sampler = DistributedSampler(self, num_replicas=num_workers * self.world_size,
+                                     rank=self.rank * num_workers + worker_id, shuffle=self.shuffle)
 
         for index in sampler:
 
@@ -1581,7 +1596,8 @@ class PredictForecastQuantile(PredictForecast):
 
             for k, (file_key, time_key) in enumerate(data_lookup):
                 concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
-                sliced_x = xr.open_zarr(self.filenames[file_key], consolidated=True).isel(time=slice(time_key, time_key+self.history_len+1))
+                sliced_x = xr.open_zarr(self.filenames[file_key], consolidated=True).isel(
+                    time=slice(time_key, time_key + self.history_len + 1))
 
                 # Check if additional data from the next file is needed
                 if len(sliced_x['time']) < self.history_len + 1:
@@ -1591,14 +1607,14 @@ class PredictForecastQuantile(PredictForecast):
                         raise OSError("You have reached the end of the available data. Exiting.")
                     sliced_x_next = xr.open_zarr(
                         self.filenames[next_file_idx],
-                        consolidated=True).isel(time=slice(0, self.history_len+1-len(sliced_x['time'])))
+                        consolidated=True).isel(time=slice(0, self.history_len + 1 - len(sliced_x['time'])))
 
                     # Concatenate excess data from the next file with the current data
                     sliced_x = xr.concat([sliced_x, sliced_x_next], dim='time')
 
                 sample_x = {
                     'x': sliced_x.isel(time=slice(0, self.history_len)),
-                    'y': sliced_x.isel(time=slice(self.history_len, self.history_len+1))  # Fetch y data for t(i+1)
+                    'y': sliced_x.isel(time=slice(self.history_len, self.history_len + 1))  # Fetch y data for t(i+1)
                 }
 
                 if self.transform:
@@ -1613,7 +1629,8 @@ class PredictForecastQuantile(PredictForecast):
                     concatenated_samples[key] = sample_x[key].squeeze(0) if self.history_len == 1 else sample_x[key]
 
                 concatenated_samples['forecast_hour'] = k + 1
-                concatenated_samples['stop_forecast'] = (k == (len(data_lookup)-self.history_len-1))  # Adjust stopping condition
+                concatenated_samples['stop_forecast'] = (
+                            k == (len(data_lookup) - self.history_len - 1))  # Adjust stopping condition
                 concatenated_samples['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[-1]
 
                 yield concatenated_samples

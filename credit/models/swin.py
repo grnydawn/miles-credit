@@ -2,8 +2,7 @@ import logging
 import math
 from typing import Tuple, Optional, List, Union, Any, Type
 from types import SimpleNamespace
-from ruamel.yaml import YAML
-
+import yaml
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -54,9 +53,8 @@ def bhwc_to_bchw(x: torch.Tensor) -> torch.Tensor:
 
 
 def swin_from_yaml(fname, checkpoint_stages=False):
-    yaml = YAML()
     with open(fname) as f:
-        hparams = yaml.load(f)
+        hparams = yaml.load(f, Loader=yaml.FullLoader)
     params = SimpleNamespace()
     for k,v in hparams.items():
         setattr(params, k, v)
