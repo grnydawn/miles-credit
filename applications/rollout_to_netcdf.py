@@ -38,6 +38,7 @@ from credit.forecast import load_forecasts
 from credit.distributed import distributed_model_wrapper
 from credit.models.checkpoint import load_model_state
 from credit.solar import TOADataLoader
+from credit.output import split_and_reshape, load_metadata, make_xarray, save_netcdf_increment
 from torch.utils.data import get_worker_info
 from torch.utils.data.distributed import DistributedSampler
 
@@ -207,103 +208,6 @@ def setup(rank, world_size, mode):
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
 
-def split_and_reshape(tensor, conf):
-    """
-    Split the output tensor of the model to upper air variables and diagnostics/surface variables.
-
-    tensor size: (variables, latitude, longitude)
-    Upperair level arrangement: top-of-atmosphere--> near-surface --> single layer
-    An example: U (top-of-atmosphere) --> U (near-surface) --> V (top-of-atmosphere) --> V (near-surface)
-    """
-
-    # get the number of levels
-    levels = conf["model"]["levels"]
-
-    # get number of channels
-    channels = len(conf["data"]["variables"])
-    single_level_channels = len(conf["data"]["surface_variables"])
-
-    # subset upper air variables
-    tensor_upper_air = tensor[:, : int(channels * levels), :, :]
-
-    shape_upper_air = tensor_upper_air.shape
-    tensor_upper_air = tensor_upper_air.view(
-        shape_upper_air[0], channels, levels, shape_upper_air[-2], shape_upper_air[-1]
-    )
-
-    # subset surface variables
-    tensor_single_level = tensor[:, -int(single_level_channels):, :, :]
-
-    # return x, surf for B, c, lat, lon output
-    return tensor_upper_air, tensor_single_level
-
-
-def make_xarray(pred, forecast_datetime, lat, lon, conf):
-
-    # subset upper air and surface variables
-    tensor_upper_air, tensor_single_level = split_and_reshape(pred, conf)
-
-    # save upper air variables
-    darray_upper_air = xr.DataArray(
-        tensor_upper_air,
-        dims=["datetime", "vars", "level", "lat", "lon"],
-        coords=dict(
-            vars=conf["data"]["variables"],
-            datetime=[forecast_datetime],
-            level=range(conf["model"]["levels"]),
-            lat=lat,
-            lon=lon,
-        ),
-    )
-
-    # save diagnostics and surface variables
-    darray_single_level = xr.DataArray(
-        tensor_single_level.squeeze(2),
-        dims=["datetime", "vars", "lat", "lon"],
-        coords=dict(
-            vars=conf["data"]["surface_variables"],
-            datetime=[forecast_datetime],
-            lat=lat,
-            lon=lon,
-        ),
-    )
-
-    # return x-arrays as outputs
-    return darray_upper_air, darray_single_level
-
-
-def save_netcdf_increment(darray_upper_air, darray_single_level, nc_filename, forecast_hour, conf):
-    try:
-        """
-        Save increment to a unique NetCDF file using Dask for parallel processing.
-        """
-        # Convert DataArrays to Datasets
-        ds_upper = darray_upper_air.to_dataset(dim="vars")
-        ds_single = darray_single_level.to_dataset(dim="vars")
-
-        # Merge datasets
-        ds_merged = xr.merge([ds_upper, ds_single])
-
-        # Add forecast_hour coordinate
-        ds_merged['forecast_hour'] = forecast_hour
-
-        logger.info(f"Trying to save forecast hour {forecast_hour} to {nc_filename}")
-
-        save_location = os.path.join(conf["predict"]["save_forecast"], nc_filename)
-        os.makedirs(save_location, exist_ok=True)
-        unique_filename = os.path.join(save_location, f"pred_{nc_filename}_{forecast_hour:03d}.nc")
-
-        # Convert to Dask array if not already
-        ds_merged = ds_merged.chunk({'datetime': 1})
-
-        # Use Dask to write the dataset in parallel
-        ds_merged.to_netcdf(unique_filename, mode='w')
-
-        logger.info(f"Saved forecast hour {forecast_hour} to {unique_filename}")
-    except Exception:
-        print(traceback.format_exc())
-
-
 def predict(rank, world_size, conf, p):
 
     if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
@@ -374,6 +278,8 @@ def predict(rank, world_size, conf, p):
 
     # get lat/lons from x-array
     latlons = xr.open_dataset(conf["loss"]["latitude_weights"])
+
+    meta_data = load_metadata("era5")
 
     # Set up the diffusion and pole filters
     if (
@@ -460,7 +366,7 @@ def predict(rank, world_size, conf, p):
             # Save the current forecast hour data in parallel
             result = p.apply_async(
                 save_netcdf_increment,
-                (darray_upper_air, darray_single_level, init_datetime_str, forecast_hour, conf)
+                (darray_upper_air, darray_single_level, init_datetime_str, forecast_hour, meta_data, conf)
             )
             results.append(result)
 
