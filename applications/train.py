@@ -305,12 +305,12 @@ def main(rank, world_size, conf, trial=False):
 
     train_years = [str(year) for year in range(1979, 2014)]
     valid_years = [str(year) for year in range(2014, 2018)]
-    test_years = [str(year) for year in range(2018, 2022)]
+    #test_years = [str(year) for year in range(2018, 2022)]
 
-    # Filter the files for training/validation/testing set
+    # Filter the files for training/validation set
     train_files = [file for file in all_ERA_files if any(year in file for year in train_years)]
     valid_files = [file for file in all_ERA_files if any(year in file for year in valid_years)]
-    test_files = [file for file in all_ERA_files if any(year in file for year in test_years)]
+    #test_files = [file for file in all_ERA_files if any(year in file for year in test_years)]
 
     # load dataset and sampler
     # <----------------------------------- replace
