@@ -306,19 +306,19 @@ def main(rank, world_size, conf, trial=False):
 
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
-
+    
     if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
         setup(rank, world_size, conf["trainer"]["mode"])
-
+    
     # infer device id from rank
-
+    
     device = torch.device(f"cuda:{rank % torch.cuda.device_count()}") if torch.cuda.is_available() else torch.device("cpu")
     torch.cuda.set_device(rank % torch.cuda.device_count())
-
+    
     # Config settings
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
-
+    
     train_batch_size = conf['trainer']['train_batch_size']
     valid_batch_size = conf['trainer']['valid_batch_size']
     thread_workers = conf['trainer']['thread_workers']
@@ -339,7 +339,7 @@ def main(rank, world_size, conf, trial=False):
             diagnostic_files = sorted(glob.glob(conf["data"]["save_loc_diagnostic"]))
         else:
             diagnostic_files = None
-
+    
     
     # -------------------------------------------------- #
     # import training / validation years from conf
@@ -348,12 +348,12 @@ def main(rank, world_size, conf, trial=False):
         train_years_range = conf['data']['train_years']
     else:
         train_years_range = [1979, 2014]
-
+    
     if 'valid_years' in conf['data']:
         valid_years_range = conf['data']['valid_years']
     else:
         valid_years_range = [2014, 2018]
-
+    
     # convert year info to str for file name search
     train_years = [str(year) for year in range(train_years_range[0], train_years_range[1])]
     valid_years = [str(year) for year in range(valid_years_range[0], valid_years_range[1])]
@@ -361,7 +361,7 @@ def main(rank, world_size, conf, trial=False):
     # Filter the files for training / validation
     train_files = [file for file in all_ERA_files if any(year in file for year in train_years)]
     valid_files = [file for file in all_ERA_files if any(year in file for year in valid_years)]
-
+    
     # <----------------------------------- std_new
     if conf['data']['scaler_type'] == 'std_new':
         train_surface_files = [file for file in surface_files if any(year in file for year in train_years)]
@@ -388,9 +388,9 @@ def main(rank, world_size, conf, trial=False):
     else:
         train_dataset, train_sampler = load_dataset_and_sampler(conf, train_files, world_size, rank, is_train=True)
         valid_dataset, valid_sampler = load_dataset_and_sampler(conf, valid_files, world_size, rank, is_train=False)
-
+    
     # setup the dataloder for this process
-
+    
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=train_batch_size,
@@ -401,7 +401,7 @@ def main(rank, world_size, conf, trial=False):
         num_workers=thread_workers,
         drop_last=True
     )
-
+    
     valid_loader = torch.utils.data.DataLoader(
         valid_dataset,
         batch_size=valid_batch_size,
