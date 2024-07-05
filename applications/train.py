@@ -125,7 +125,7 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
 
     return dataset, sampler
 
-def load_dataset_and_sampler_zscore_only(conf, files, world_size, rank, is_train, seed=42):
+def load_dataset_and_sampler_zscore_only(conf, all_ERA_files, surface_files, diagnostic_files, world_size, rank, is_train, seed=42):
 
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
@@ -133,16 +133,33 @@ def load_dataset_and_sampler_zscore_only(conf, files, world_size, rank, is_train
     # ======================================================== #
     # parse intputs
     
+    # file names
+    varname_upper_air = conf['data']['variables']
+    
     if ('forcing_variables' in conf['data']) and (len(conf['data']['forcing_variables']) > 0):
         forcing_files = conf['data']['save_loc_forcing']
+        varname_forcing = conf['data']['forcing_variables']
     else:
         forcing_files = None
+        varname_forcing = None
     
     if ('static_variables' in conf['data']) and (len(conf['data']['static_variables']) > 0):
         static_files = conf['data']['save_loc_static']
+        varname_static = conf['data']['static_variables']
     else:
         static_files = None
+        varname_static = None
     
+    if surface_files is not None:
+        varname_surface = conf['data']['surface_variables']
+    else:
+        varname_surface = None
+        
+    if diagnostic_files is not None:
+        varname_diagnostic = conf['data']['diagnostic_variables']
+    else:
+        varname_diagnostic = None
+        
     # number of previous lead time inputs
     history_len = conf["data"]["history_len"]
     valid_history_len = conf["data"]["valid_history_len"]
@@ -187,9 +204,16 @@ def load_dataset_and_sampler_zscore_only(conf, files, world_size, rank, is_train
 
     # Z-score
     dataset = ERA5_and_Forcing_Dataset(
-        filenames=files,
+        varname_upper_air=varname_upper_air,
+        varname_surface=varname_surface,
+        varname_forcing=varname_forcing,
+        varname_static=varname_static,
+        varname_diagnostic=varname_diagnostic,
+        filenames=all_ERA_files,
+        filename_surface=surface_files,
         filename_forcing=forcing_files,
         filename_static=static_files,
+        filename_diagnostic=diagnostic_files,
         history_len=history_len,
         forecast_len=forecast_len,
         skip_periods=skip_periods,
@@ -197,7 +221,7 @@ def load_dataset_and_sampler_zscore_only(conf, files, world_size, rank, is_train
         max_forecast_len=max_forecast_len,
         transform=transforms
     )
-
+    
     # Pytorch sampler
     sampler = DistributedSampler(
         dataset,
@@ -299,24 +323,68 @@ def main(rank, world_size, conf, trial=False):
     valid_batch_size = conf['trainer']['valid_batch_size']
     thread_workers = conf['trainer']['thread_workers']
     valid_thread_workers = conf['trainer']['valid_thread_workers'] if 'valid_thread_workers' in conf['trainer'] else thread_workers
-
-    # Training
+    
+    # get file names
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
+    
+    # <------------------------------------------ std_new
+    if conf['data']['scaler_type'] == 'std_new':
+    
+        if "save_loc_surface" in conf["data"]:
+            surface_files = sorted(glob.glob(conf["data"]["save_loc_surface"]))
+        else:
+            surface_files = None
+    
+        if "save_loc_diagnostic" in conf["data"]:
+            diagnostic_files = sorted(glob.glob(conf["data"]["save_loc_diagnostic"]))
+        else:
+            diagnostic_files = None
 
-    train_years = [str(year) for year in range(1979, 2014)]
-    valid_years = [str(year) for year in range(2014, 2018)]
-    #test_years = [str(year) for year in range(2018, 2022)]
+    
+    # -------------------------------------------------- #
+    # import training / validation years from conf
+    
+    if 'train_years' in conf['data']:
+        train_years_range = conf['data']['train_years']
+    else:
+        train_years_range = [1979, 2014]
 
-    # Filter the files for training/validation set
+    if 'valid_years' in conf['data']:
+        valid_years_range = conf['data']['valid_years']
+    else:
+        valid_years_range = [2014, 2018]
+
+    # convert year info to str for file name search
+    train_years = [str(year) for year in range(train_years_range[0], train_years_range[1])]
+    valid_years = [str(year) for year in range(valid_years_range[0], valid_years_range[1])]
+    
+    # Filter the files for training / validation
     train_files = [file for file in all_ERA_files if any(year in file for year in train_years)]
     valid_files = [file for file in all_ERA_files if any(year in file for year in valid_years)]
-    #test_files = [file for file in all_ERA_files if any(year in file for year in test_years)]
 
-    # load dataset and sampler
-    # <----------------------------------- replace
+    # <----------------------------------- std_new
     if conf['data']['scaler_type'] == 'std_new':
-        train_dataset, train_sampler = load_dataset_and_sampler_zscore_only(conf, train_files, world_size, rank, is_train=True)
-        valid_dataset, valid_sampler = load_dataset_and_sampler_zscore_only(conf, valid_files, world_size, rank, is_train=False)
+        train_surface_files = [file for file in surface_files if any(year in file for year in train_years)]
+        valid_surface_files = [file for file in surface_files if any(year in file for year in valid_years)]
+        
+        train_diagnostic_files = [file for file in diagnostic_files if any(year in file for year in train_years)]
+        valid_diagnostic_files = [file for file in diagnostic_files if any(year in file for year in valid_years)]
+    
+    # load dataset and sampler
+    # <----------------------------------- std_new
+    if conf['data']['scaler_type'] == 'std_new':
+        # training set and sampler
+        train_dataset, train_sampler = load_dataset_and_sampler_zscore_only(conf, 
+                                                                            train_files, 
+                                                                            train_surface_files, 
+                                                                            train_diagnostic_files, 
+                                                                            world_size, rank, is_train=True)
+        # validation set and sampler
+        valid_dataset, valid_sampler = load_dataset_and_sampler_zscore_only(conf, 
+                                                                            valid_files, 
+                                                                            valid_surface_files, 
+                                                                            valid_diagnostic_files,
+                                                                            world_size, rank, is_train=False)
     else:
         train_dataset, train_sampler = load_dataset_and_sampler(conf, train_files, world_size, rank, is_train=True)
         valid_dataset, valid_sampler = load_dataset_and_sampler(conf, valid_files, world_size, rank, is_train=False)
