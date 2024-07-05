@@ -87,6 +87,9 @@ class Trainer:
         else:
             total_time_steps = forecast_len
 
+        if 'diagnostic_variables' in conf["data"]:
+            varnum_diag = len(conf["data"]['diagnostic_variables'])
+            
         # update the learning rate if epoch-by-epoch updates that dont depend on a metric
         if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "lambda":
             scheduler.step()
@@ -118,25 +121,41 @@ class Trainer:
             with autocast(enabled=amp):
 
                 # --------------------------------------------------------------------------------- #
-                # combine x and x_surf
-                # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon) 
-                # output: (batch_num, var, time, lat, lon), 'x' first and then 'x_surf' 
-                x = self.model.concat_and_reshape(batch["x"], batch["x_surf"]).to(self.device).float()               
+
+                if "x_surf" in batch:
+                    # combine x and x_surf
+                    # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon) 
+                    # output: (batch_num, var, time, lat, lon), 'x' first and then 'x_surf'
+                    x = self.model.concat_and_reshape(batch["x"], batch["x_surf"]).to(self.device).float()
+                else:
+                    # no x_surf
+                    x = self.model.reshape_only(batch["x"]).to(self.device).float()
 
                 # --------------------------------------------------------------------------------- #
                 # add forcing and static variables
-                if 'forcing_static' in batch:
+                if 'x_forcing_static' in batch:
                     
                     # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
-                    x_forcing_batch = batch['forcing_static'].to(self.device).permute(0, 2, 1, 3, 4).float()
+                    x_forcing_batch = batch['x_forcing_static'].to(self.device).permute(0, 2, 1, 3, 4).float()
 
                     # concat on var dimension
                     x = torch.cat((x, x_forcing_batch), dim=1)
                     
                 # --------------------------------------------------------------------------------- #
                 # combine y and y_surf
-                y = self.model.concat_and_reshape(batch["y"], batch["y_surf"]).to(self.device)
+                if "y_surf" in batch:
+                    y = self.model.concat_and_reshape(batch["y"], batch["y_surf"]).to(self.device)
+                else:
+                    y = self.model.reshape_only(batch["y"]).to(self.device)
+                
+                if 'y_diag' in batch:
 
+                    # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
+                    y_diag_batch = batch['y_diag'].to(self.device).permute(0, 2, 1, 3, 4).float()
+                    
+                    # concat on var dimension
+                    y = torch.cat((y, y_diag_batch), dim=1)
+                
                 k = 0
                 while True:
 
@@ -160,8 +179,13 @@ class Trainer:
                             # detach and throw away the oldest time dim
                             x_detach = x.detach()[:, :, 1:, ...]
                             
+                            # use y_pred as the next-hour input
+                            if 'y_diag' in batch:
+                                # drop diagnostic variables
+                                y_pred = y_pred.detach()[:, :-varnum_diag, ...]
+
                             # add forcing and static vars to y_pred
-                            if 'forcing_static' in batch:
+                            if 'x_forcing_static' in batch:
 
                                 # detach and throw away the oldest time dim (same idea as x_detach)
                                 x_forcing_detach = x_forcing_batch.detach()[:, :, 1:, ...]
@@ -169,15 +193,17 @@ class Trainer:
                                 # concat forcing and static to y_pred, y_pred will be the next input
                                 y_pred = torch.cat((y_pred, x_forcing_detach), dim=1)
                             
-                            # use y_pred as the next-hour input
                             x = torch.cat([x_detach, y_pred], dim=2).detach()
                             
                         else:
                             # use y_pred as the next-hour inputs
                             x = y_pred.detach()
                             
+                            if 'y_diag' in batch:
+                                x = x[:, :-varnum_diag, ...]
+                                
                             # add forcing and static vars to y_pred
-                            if 'forcing_static' in batch:
+                            if 'x_forcing_static' in batch:
                                 x = torch.cat((x, x_forcing_batch), dim=1)
 
                 y = y.to(device=self.device, dtype=y_pred.dtype)
@@ -276,6 +302,9 @@ class Trainer:
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
         total_time_steps = conf["data"]["total_time_steps"] if "total_time_steps" in conf["data"] else forecast_len
 
+        if 'diagnostic_variables' in conf["data"]:
+            varnum_diag = len(conf["data"]['diagnostic_variables'])
+        
         results_dict = defaultdict(list)
 
         # set up a custom tqdm
@@ -299,23 +328,39 @@ class Trainer:
 
                 commit_loss = 0.0
 
-                # --------------------------------------------------------------------------------- #
-                # combine x and x_surf
-                x = self.model.concat_and_reshape(batch["x"], batch["x_surf"]).to(self.device).float()              
+                if "x_surf" in batch:
+                    # combine x and x_surf
+                    # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon) 
+                    # output: (batch_num, var, time, lat, lon), 'x' first and then 'x_surf'
+                    x = self.model.concat_and_reshape(batch["x"], batch["x_surf"]).to(self.device).float()
+                else:
+                    # no x_surf
+                    x = self.model.reshape_only(batch["x"]).to(self.device).float()
 
                 # --------------------------------------------------------------------------------- #
                 # add forcing and static variables
-                if 'forcing_static' in batch:
+                if 'x_forcing_static' in batch:
                     
                     # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
-                    x_forcing_batch = batch['forcing_static'].to(self.device).permute(0, 2, 1, 3, 4).float()
+                    x_forcing_batch = batch['x_forcing_static'].to(self.device).permute(0, 2, 1, 3, 4).float()
 
                     # concat on var dimension
                     x = torch.cat((x, x_forcing_batch), dim=1)
                     
                 # --------------------------------------------------------------------------------- #
                 # combine y and y_surf
-                y = self.model.concat_and_reshape(batch["y"], batch["y_surf"]).to(self.device)
+                if "y_surf" in batch:
+                    y = self.model.concat_and_reshape(batch["y"], batch["y_surf"]).to(self.device)
+                else:
+                    y = self.model.reshape_only(batch["y"]).to(self.device)
+                
+                if 'y_diag' in batch:
+
+                    # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
+                    y_diag_batch = batch['y_diag'].to(self.device).permute(0, 2, 1, 3, 4).float()
+                    
+                    # concat on var dimension
+                    y = torch.cat((y, y_diag_batch), dim=1)
 
                 k = 0
                 while True:
@@ -335,24 +380,31 @@ class Trainer:
                         # detach and throw away the oldest time dim
                         x_detach = x.detach()[:, :, 1:, ...]
                         
+                        # use y_pred as the next-hour input
+                        if 'y_diag' in batch:
+                            # drop diagnostic variables
+                            y_pred = y_pred.detach()[:, :-varnum_diag, ...]
+
                         # add forcing and static vars to y_pred
-                        if 'forcing_static' in batch:
-    
+                        if 'x_forcing_static' in batch:
+
                             # detach and throw away the oldest time dim (same idea as x_detach)
                             x_forcing_detach = x_forcing_batch.detach()[:, :, 1:, ...]
-    
+
                             # concat forcing and static to y_pred, y_pred will be the next input
                             y_pred = torch.cat((y_pred, x_forcing_detach), dim=1)
                         
-                        # use y_pred as the next-hour input
                         x = torch.cat([x_detach, y_pred], dim=2).detach()
                         
                     else:
                         # use y_pred as the next-hour inputs
                         x = y_pred.detach()
                         
+                        if 'y_diag' in batch:
+                            x = x[:, :-varnum_diag, ...]
+                            
                         # add forcing and static vars to y_pred
-                        if 'forcing_static' in batch:
+                        if 'x_forcing_static' in batch:
                             x = torch.cat((x, x_forcing_batch), dim=1)
                             
                 loss = criterion(y.to(y_pred.dtype), y_pred)
