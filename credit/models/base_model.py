@@ -15,6 +15,10 @@ class BaseModel(nn.Module):
         x_concat = torch.cat((x1, x2), dim=2)
         return x_concat.permute(0, 2, 1, 3, 4)
 
+    def reshape_only(self, x1):
+        x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
+        return x1.permute(0, 2, 1, 3, 4)
+    
     def split_and_reshape(self, tensor):
         tensor1 = tensor[:, :int(self.channels * self.levels), :, :, :]
         tensor2 = tensor[:, -int(self.surface_channels):, :, :, :]
