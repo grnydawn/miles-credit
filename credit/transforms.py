@@ -705,10 +705,13 @@ class ToTensor_ERA5_and_Forcing:
                         # assuming 
                         # [time, lat, lon] --> [time, 1, lat, lon]
                         x_static = x_static.unsqueeze(1)
+                        
+                    return_dict['x_forcing_static'] = x_static
                 
-                return_dict['x_surf'] = x_surf
+                if self.flag_surface:
+                    return_dict['x_surf'] = x_surf
+                    
                 return_dict['x'] = x_upper_air
-                return_dict['x_forcing_static'] = x_static
                 
             elif key == 'target_ERA5_images' or key == 'y':
 
@@ -733,8 +736,11 @@ class ToTensor_ERA5_and_Forcing:
                     else:
                         y_diag = y_diag.unsqueeze(0).unsqueeze(0)
                 
-                return_dict['y_diag'] = y_diag
-                return_dict['y_surf'] = x_surf
+                    return_dict['y_diag'] = y_diag
+                    
+                if self.flag_surface:    
+                    return_dict['y_surf'] = x_surf
+                    
                 return_dict['y'] = x_upper_air
                 
         return return_dict
