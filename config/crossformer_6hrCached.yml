@@ -5,12 +5,12 @@ data:
     variables: ['U','V','T','Q']
     surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500','Z_GDS4_SFC','LSM','tsi']
     static_variables: []
-    save_loc: '/glade/derecho/scratch/dgagne/STAGING/TOTAL_*'
+    save_loc: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/STD_SixHourly_TOTAL_*'
     mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
     std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
     quant_path: '/glade/derecho/scratch/dgagne/credit_scalers/era5_quantile_scalers_2024-03-30_00:28.parquet'
     TOA_forcing_path: '/glade/derecho/scratch/dgagne/credit_scalers/solar_radiation_2024-03-29_0204.nc' 
-    scaler_type: 'quantile-cached' #'std', 'quantile'
+    scaler_type: 'sixhour-cached' #'std', 'quantile'
     history_len: 2
     forecast_len: 0
     valid_history_len: 2
@@ -56,7 +56,7 @@ model:
     levels: 15           # Number of levels (default: 15)
     frames: 2            # Number of frames (default: 2)
     channels: 4          # Channels (default: 4)
-    surface_channels: 7  # Surface channels (default: 7)
+    surface_channels: 10  # Surface channels (default: 7)
     static_channels: 3   # Static channels (default: 3)
     dim: [96, 192, 384, 768] #[288, 576, 1152, 2304]           # Dimensionality of each layer (default: [64, 128, 256, 512])
     depth: [1, 1, 2, 1] #[2, 2, 5, 2]                    # Depth of each layer (default: [2, 2, 8, 2])
