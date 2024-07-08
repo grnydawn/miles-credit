@@ -303,6 +303,7 @@ class CrossFormer(BaseModel):
         channels=4,
         surface_channels=7,
         static_channels=3,
+        diagnostic_channels=0,
         levels=15,
         dim=(64, 128, 256, 512),
         depth=(2, 2, 8, 2),
@@ -336,8 +337,12 @@ class CrossFormer(BaseModel):
         self.pad_lon = pad_lon
         self.pad_lat = pad_lat
         self.use_spectral_norm = use_spectral_norm
+
+        # input channels
         input_channels = channels * levels + surface_channels + static_channels
-        output_channels = channels * levels + surface_channels
+
+        # output channels
+        output_channels = channels * levels + surface_channels + diagnostic_channels
 
         dim = cast_tuple(dim, 4)
         depth = cast_tuple(depth, 4)
