@@ -252,7 +252,8 @@ def load_model_states_and_optimizer(conf, model, device):
     load_weights = False if 'load_weights' not in conf['trainer'] else conf['trainer']['load_weights']
 
     #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
-    if start_epoch == 0 and not load_weights:  # Loaded after loading model weights when reloading
+    #if start_epoch == 0 and not load_weights: 
+    if not load_weights:  # Loaded after loading model weights when reloading
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
         if conf["trainer"]["mode"] == "fsdp":
             optimizer = FSDPOptimizerWrapper(optimizer, model)
