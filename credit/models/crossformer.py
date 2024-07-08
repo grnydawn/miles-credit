@@ -50,10 +50,15 @@ class CubeEmbedding(nn.Module):
 
     def forward(self, x: torch.Tensor):
         B, T, C, Lat, Lon = x.shape
-        x = self.proj(x).reshape(B, self.embed_dim, -1).transpose(1, 2)  # B T*Lat*Lon C
+        x = self.proj(x)
+        
+        # ----------------------------------- #
+        # Layer norm on T*lat*lon
+        x = x.reshape(B, self.embed_dim, -1).transpose(1, 2)  # B T*Lat*Lon C
         if self.norm is not None:
             x = self.norm(x)
         x = x.transpose(1, 2).reshape(B, self.embed_dim, *self.patches_resolution)
+        
         return x.squeeze(2)
 
 
