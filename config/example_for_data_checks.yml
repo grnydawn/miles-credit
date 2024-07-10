@@ -6,21 +6,24 @@ seed: 1000
 
 data:
     variables: ['U','V','T','Q']
-    surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
+    surface_variables: []
     forcing_variables: ['TSI'] #
-    static_variables: ['Z_GDS4_SFC','LSM'] #
-    save_loc: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
+    static_variables: ['Z_GDS4_SFC','LSM']
+    diagnostic_variables: ['tp']
+    save_loc: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/TOTAL_*'
+    save_loc_surface: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/ERA5_regrid_tp_*'
     save_loc_forcing: '/glade/campaign/cisl/aiml/ksha/CREDIT/forcing_norm.nc'
     save_loc_static: '/glade/campaign/cisl/aiml/ksha/CREDIT/static_norm.nc'
-    mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
-    std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
-    quant_path: '/glade/campaign/cisl/aiml/credit_scalers/era5_quantile_scalers_2024-02-13_07:33.parquet'
-    TOA_forcing_path: '/glade/derecho/scratch/dgagne/credit_scalers/solar_radiation_2024-03-29_0204.nc' 
+    save_loc_diagnostic: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/ERA5_regrid_tp_*'
+    train_years: [1979, 2014]
+    valid_years: [2014, 2018]
+    mean_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/All_2010_staged.mean.Lev.SLO.nc'
+    std_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/All_2010_staged.std.Lev.SLO.nc'
     scaler_type: 'std_new' # 'std'
     history_len: 2 
-    forecast_len: 2 # larger than 0 for multi step
+    forecast_len: 0 # larger than 0 for multi step
     valid_history_len: 2
-    valid_forecast_len: 2 # 
+    valid_forecast_len: 0 # 
     one_shot: True
     skip_periods: null
     
@@ -30,7 +33,7 @@ trainer:
     valid_batch_size: 1
     batches_per_epoch: 5 # Set to 0 to use len(dataloader)
     valid_batches_per_epoch: 5
-    learning_rate: 1.0e-07
+    learning_rate: 1.0e-03
     weight_decay: 1.0e-05
     start_epoch: 0
     epochs: 20 # train_one_epoch: True
@@ -62,8 +65,9 @@ model:
     dim: 1024            # Dimension (default: 1536)
     num_groups: 32       # Number of groups (default: 32)
     channels: 4          # Channels (default: 4)
-    surface_channels: 7  # Surface channels (default: 7)
+    surface_channels: 0  # Surface channels (default: 7)
     static_channels: 3   #
+    diagnostic_channels: 1 #
     num_heads: 8         # Number of heads (default: 8)
     window_size: 7       # Window size (default: 7)
     depth: 8             # Depth of the swin transformer (default: 48)
