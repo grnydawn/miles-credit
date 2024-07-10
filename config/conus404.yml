@@ -1,13 +1,39 @@
-save_loc: '/glade/work/mcginnis/ML/GWC/results/unet-03-winds'
+save_loc: '/glade/work/mcginnis/ML/GWC/results/unet-09-uvt-lint'
 seed: 2222
 
 data:
-    variables: ['U10','U1000','U250','U500','U850','V10','V1000','V250','V500','V850']
-    #variables: ['PSFC','Q500','Q850','T2','T500','T850','totalVap','U10','U1000','U250','U500','U850','V10','V1000','V250','V500','V850','Z050','Z1000','Z500','Z850']
-    #variables: ['U850','V850','Q850']
+    variables:
+#    - ACSWDNLSM
+#    - COSZEN
+#    - PREC_ACC_NC
+#    - PSFC
+#    - Q2
+#    - SNOW
+#    - TD2
+    - T2
+#    - totalVap
+#    - Q500
+#    - Q850
+    - T500
+    - T850
+    - U10
+#    - U250
+    - U500
+    - U850
+#    - U1000
+    - V10
+#    - V250
+    - V500
+    - V850
+#    - V1000
+#    - Z050
+#    - Z500
+#    - Z850
+#    - Z1000
     static_variables: []
     scaler_type: "std"
-#    save_loc: '/glade/work/mcginnis/ML/GWC/results/dummy'
+    zarrpath: '/glade/campaign/ral/risc/DATA/conus404/zarr'
+    save_loc: './'
     mean_path: '/glade/derecho/scratch/mcginnis/conus404/stats/all.avg.C404.nc'
     std_path: '/glade/derecho/scratch/mcginnis/conus404/stats/all.std.C404.nc'
     history_len: 2 
@@ -15,12 +41,14 @@ data:
     valid_history_len: 2
     valid_forecast_len: 1
     time_step: 1
+    start: "1979-10-01"
+    finish: "2012-09-30"
 
 model:
-    type: "unet"
+    type: "unet404"
     image_height: 512
     image_width: 512
-    frames: 2
+    frames: 3
     architecture:
         name: "unet"
         encoder_name: "resnet34"
@@ -35,7 +63,7 @@ trainer:
     learning_rate: 1.0e-04
     weight_decay: 1.0e-05
     start_epoch: 0
-    epochs: 1000
+    epochs: 4  # 30 years hourly = 262,980; 66 x 1000-batch epoch =~ 1 full pass
     amp: False
     grad_accum_every: 1
     grad_max_norm: 1.0
@@ -63,6 +91,25 @@ loss:
    use_variable_weights: False
    latitude_weights: False
 
+
+predict:
+    start: "2017-11-01"
+    finish: "2017-11-03"
+#    finish: "2022-09-30"
+    autoregressive: False
+    use_laplace_filter: False
+    save_format: "nc"
+
+
+#visualization:
+#    surface_visualize: 
+#        variable_keys: ['U10','U1000','U250','U500','U850','V10','V1000','V250','V500','V850']
+#        variable_names: ['U10','U1000','U250','U500','U850','V10','V1000','V250','V500','V850']
+#        file_name_prefix: "unet-03-wind"
+#    save_options: {'dpi': 250,
+#                   'format':'png'}
+#    video_format: 'none'
+
 #pbs: #derecho
 #    conda: "holodec"
 #    project: "NAML0001"
@@ -76,13 +123,14 @@ loss:
     
 pbs: # casper
     conda: "credit"
-    job_name: 'unet-winds'
+    job_name: 'unet-uvt-lint'
     nodes: 1
     ncpus: 8
     ngpus: 1
     mem: '128GB'
-    walltime: '24:00:00'
-    gpu_type: 'a100'
+    walltime: '4:00:00'
+#    walltime: '24:00:00'
+    gpu_type: 'v100'
 #    cpu_type: 'milan'
     project: 'NRIS0001'
     queue: 'casper'

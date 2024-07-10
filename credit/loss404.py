@@ -95,7 +95,6 @@ class SpectralLoss2D(torch.nn.Module):
         target_fft_abs = torch.abs(target_fft)
 
         if weights is not None:
-            #weights.shape = (1, lat, 1)
             weights = weights.permute(0, 2, 1).to(device=device, dtype=dtype)
             # (1, 1, lat), matmul will broadcast as long as last dim is lat
             out_fft_abs = torch.matmul(weights, out_fft_abs)
@@ -112,7 +111,7 @@ class SpectralLoss2D(torch.nn.Module):
             out_fft_mean = (out_fft_abs / weights.shape[-1]).squeeze(fft_dim - 1)
             target_fft_mean = (target_fft_abs / weights.shape[-1]).squeeze(fft_dim - 1)
             # (B, c, T, wavenum)
-        else: # do regular average over latitudes
+        else:  # do regular average over latitudes
             out_fft_mean = torch.mean(out_fft_abs, dim=(fft_dim - 1))
             target_fft_mean = torch.mean(target_fft_abs, dim=(fft_dim - 1))
 
