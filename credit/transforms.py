@@ -53,13 +53,20 @@ def load_transforms(conf):
     else:
         to_tensor_scaler = ToTensor(conf=conf)
 
-    transforms = [
-        transform_scaler,
-        to_tensor_scaler
-    ]
+    if transform_scaler is not None:
+        # transform --> ToTensor
+        transforms = [
+            transform_scaler,
+            to_tensor_scaler
+        ]
+    else:
+        # 'sixhour-cached' needs ToTensor only
+        transforms = [
+            to_tensor_scaler
+        ]
     
-    # Filter out None values from the transforms list
-    transforms = [t for t in transforms if t is not None]
+    # # Filter out None values from the transforms list
+    # transforms = [t for t in transforms if t is not None]
 
     return tforms.Compose(transforms)
 
