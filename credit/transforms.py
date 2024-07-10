@@ -38,6 +38,8 @@ def load_transforms(conf):
         # --------------------------------------------------- #
         # the new pipeline
         transform_scaler = Normalize_ERA5_and_Forcing(conf)
+    elif conf["data"]["scaler_type"] == 'sixhour-cached':
+        transform_scaler = None
     else:
         logger.log('scaler type not supported check data: scaler_type in config file')
         raise
@@ -51,10 +53,22 @@ def load_transforms(conf):
     else:
         to_tensor_scaler = ToTensor(conf=conf)
 
-    return tforms.Compose([
+    if transform_scaler is not None:
+        # transform --> ToTensor
+        transforms = [
             transform_scaler,
-            to_tensor_scaler,
-        ])
+            to_tensor_scaler
+        ]
+    else:
+        # 'sixhour-cached' needs ToTensor only
+        transforms = [
+            to_tensor_scaler
+        ]
+    
+    # # Filter out None values from the transforms list
+    # transforms = [t for t in transforms if t is not None]
+
+    return tforms.Compose(transforms)
 
 
 class NormalizeState:
