@@ -549,8 +549,8 @@ if __name__ == "__main__":
     save_loc = os.path.expandvars(conf["save_loc"])
     os.makedirs(save_loc, exist_ok=True)
     
-    print('Copy and over-write *.yml to {}'.format(save_loc))   
-    shutil.copy(config, os.path.join(save_loc, "model.yml"))
+    if not os.path.exists(os.path.join(save_loc, "model.yml")):
+        shutil.copy(config, os.path.join(save_loc, "model.yml"))
 
     # Launch PBS jobs
     if launch:
