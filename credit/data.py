@@ -266,7 +266,7 @@ def find_key_for_number(input_number, data_dict):
 def drop_var_from_dataset(xarray_dataset, varname_keep):
     '''
     Preserve a given set of variables from an xarray.Dataset, and drop the rest.
-    It will raise if xarray.Dataset.keys() != varname_keep.
+    It will raise if xarray.Dataset.variables() != varname_keep.
     '''
     varname_all = list(xarray_dataset.keys())
 
