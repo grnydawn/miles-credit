@@ -279,7 +279,7 @@ def predict(rank, world_size, conf, p):
     # get lat/lons from x-array
     latlons = xr.open_dataset(conf["loss"]["latitude_weights"])
 
-    meta_data = load_metadata("era5")
+    meta_data = load_metadata(conf)
 
     # Set up the diffusion and pole filters
     if (
@@ -506,10 +506,25 @@ if __name__ == "__main__":
     # Load the configuration and get the relevant variables
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
+        
     # create a save location for rollout
-    forecast_save_loc = os.path.join(os.path.expandvars(conf['save_loc']), 'forecasts')
-    os.makedirs(forecast_save_loc, exist_ok=True)
+    # ---------------------------------------------------- #
+    # choose model weights dir if save_forecast not given
+    # if 'save_forecast' in conf['predict']:
+    #     forecast_save_loc = conf['predict']['save_forecast']
+    # else:
+    #     print('Roll-out target dir not specified. Outputs will be saved to the model weights folder')
+        
+    #     conf['predict']['save_forecast'] = os.path.join(os.path.expandvars(conf['save_loc']), 'forecasts')
+    #     forecast_save_loc = conf['predict']['save_forecast']
 
+    assert 'save_forecast' in conf['predict'], "Please specify the output dir through conf['predict']['save_forecast']"
+    
+    forecast_save_loc = conf['predict']['save_forecast']
+    os.makedirs(forecast_save_loc, exist_ok=True)
+    
+    print('Save roll-outs to {}'.format(forecast_save_loc))
+    
     # Update config using override options
     if mode in ["none", "ddp", "fsdp"]:
         logger.info(f"Setting the running mode to {mode}")
