@@ -78,12 +78,12 @@ Z:
   ecmwf_parameter: 129
   _FillValue: 9.999e+20
   missing_value: 9.999e+20
-lat:
+latitude:
   long_name: "latitude"
   short_name: "lat"
   units: "degrees_north"
   qualifier: "Gaussian"
-lon:
+longitude:
   long_name: "longitude"
   short_name: "lon"
   units: "degrees_east"
