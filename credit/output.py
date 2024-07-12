@@ -1,9 +1,20 @@
-import xarray as xr
-import yaml
-from os.path import join
+'''
+output.py 
+-------------------------------------------------------
+Content:
+    - load_metadata()
+    - make_xarray()
+    - save_netcdf_increment()
+'''
+
 import os
-import traceback
+from os.path import join
+
+import yaml
 import logging
+import traceback
+import xarray as xr
+
 logger = logging.getLogger(__name__)
 
 from datetime import datetime
