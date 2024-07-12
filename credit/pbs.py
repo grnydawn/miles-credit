@@ -56,7 +56,7 @@ def launch_script(config_file, script_path, launch=True):
 
 
 def launch_script_mpi(config_file, script_path, launch=True):
-
+    
     with open(config_file) as cf:
         config = yaml.load(cf, Loader=yaml.FullLoader)
 
@@ -73,6 +73,13 @@ def launch_script_mpi(config_file, script_path, launch=True):
     save_loc = os.path.expandvars(config["save_loc"])
 
     config_save_path = os.path.join(save_loc, "model.yml")
+    
+    if os.path.exists(config_save_path):
+        os.remove(config_save_path)
+        print('Remove the old model.yml at {}'.format(config_save_path))
+
+    shutil.copy(config_file, config_save_path)
+    print('Copy the new {} to {}'.format(config_file, config_save_path))
 
     # Generate the PBS script
     script = f'''#!/bin/bash
@@ -126,8 +133,18 @@ def launch_script_mpi(config_file, script_path, launch=True):
         ).communicate()[0]
         jobid = jobid.decode("utf-8").strip("\n")
         print(jobid)
-        if not os.path.exists(os.path.join(save_loc, "launch.sh")):
-            shutil.copy("launch.sh", os.path.join(save_loc, "launch.sh"))
+
+        # copy launch.sh to the design location
+        launch_path = os.path.join(save_loc, "launch.sh")
+        
+        if os.path.exists(launch_path):
+            os.remove(launch_path)
+            print('Remove the old launch.sh at {}'.format(launch_path))
+            
+        shutil.copy("launch.sh", os.path.join(save_loc, "launch.sh"))
+        print('Generating the new script at {}'.format(launch_path))
+
+        # remove the one from local space
         os.remove("launch.sh")
 
 
