@@ -137,7 +137,8 @@ def save_netcdf_increment(darray_upper_air, darray_single_level, nc_filename, fo
         # ---------------------------------------------------- #
         # If conf['predict']['save_vars'] provided --> drop useless vars
         if 'save_vars' in conf['predict']:
-            ds_merged = drop_var_from_dataset(ds_merged, conf['predict']['save_vars'])
+            if len(conf['predict']['save_vars']) > 0:
+                ds_merged = drop_var_from_dataset(ds_merged, conf['predict']['save_vars'])
 
         # when there's no metafile --> meta_data = False
         if meta_data is not False:
