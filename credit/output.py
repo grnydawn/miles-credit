@@ -133,15 +133,15 @@ def save_netcdf_increment(darray_upper_air, darray_single_level, nc_filename, fo
             # Add metadata attributes to every model variable if available
             for var in ds_merged.variables:
                 if var in meta_data.keys():
-                    ds_merged[var].attrs.update(meta_data[var])
-        
-        # np.datetime64 --> float to avoid netCDF4 encoding error
-        ds_merged['time'] = ds_merged['time'].astype("float")
+                    if var != 'time':
+                        # use attrs.update for non-datetime variables
+                        ds_merged[var].attrs.update(meta_data[var])
+                    else:
+                        # use time.encoding for datetime variables/coords
+                        for metadata_time in meta_data['time']:
+                            ds_merged.time.encoding[metadata_time] = meta_data['time'][metadata_time]
         
         # Convert to Dask array if not already
-        # =========================================== #
-        # Based on make_xarray(), it should be time
-        #ds_merged = ds_merged.chunk({'datetime': 1})
         ds_merged = ds_merged.chunk({'time': 1})
         
         # Use Dask to write the dataset in parallel
