@@ -120,6 +120,9 @@ predict:
     #     ["2020-12-01 00:00:00", "2020-12-10 23:00:00"]
     # ]
     use_laplace_filter: True
+    metadata: '/glade/u/home/ksha/miles-credit/credit/metadata/era5.yaml'
+    save_forecast: '/glade/derecho/scratch/ksha/CREDIT/fuxi/'
+    save_vars: ['SP','t2m','V500','U500','T500','Z500','Q500']
     save_format: "nc"
 
 visualization:
