@@ -25,6 +25,7 @@ from torch.cuda.amp import autocast
 from torch.utils.data import IterableDataset
 
 import optuna
+from credit.data import concat_and_reshape, reshape_only
 from credit.models.checkpoint import TorchFSDPCheckpointIO
 
 logger = logging.getLogger(__name__)
@@ -126,10 +127,10 @@ class Trainer:
                     # combine x and x_surf
                     # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon) 
                     # output: (batch_num, var, time, lat, lon), 'x' first and then 'x_surf'
-                    x = self.model.concat_and_reshape(batch["x"], batch["x_surf"]).to(self.device).float()
+                    x = concat_and_reshape(batch["x"], batch["x_surf"]).to(self.device).float()
                 else:
                     # no x_surf
-                    x = self.model.reshape_only(batch["x"]).to(self.device).float()
+                    x = reshape_only(batch["x"]).to(self.device).float()
 
                 # --------------------------------------------------------------------------------- #
                 # add forcing and static variables
@@ -144,9 +145,9 @@ class Trainer:
                 # --------------------------------------------------------------------------------- #
                 # combine y and y_surf
                 if "y_surf" in batch:
-                    y = self.model.concat_and_reshape(batch["y"], batch["y_surf"]).to(self.device)
+                    y = concat_and_reshape(batch["y"], batch["y_surf"]).to(self.device)
                 else:
-                    y = self.model.reshape_only(batch["y"]).to(self.device)
+                    y = reshape_only(batch["y"]).to(self.device)
                 
                 if 'y_diag' in batch:
 
@@ -332,10 +333,10 @@ class Trainer:
                     # combine x and x_surf
                     # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon) 
                     # output: (batch_num, var, time, lat, lon), 'x' first and then 'x_surf'
-                    x = self.model.concat_and_reshape(batch["x"], batch["x_surf"]).to(self.device).float()
+                    x = concat_and_reshape(batch["x"], batch["x_surf"]).to(self.device).float()
                 else:
                     # no x_surf
-                    x = self.model.reshape_only(batch["x"]).to(self.device).float()
+                    x = reshape_only(batch["x"]).to(self.device).float()
 
                 # --------------------------------------------------------------------------------- #
                 # add forcing and static variables
@@ -350,9 +351,9 @@ class Trainer:
                 # --------------------------------------------------------------------------------- #
                 # combine y and y_surf
                 if "y_surf" in batch:
-                    y = self.model.concat_and_reshape(batch["y"], batch["y_surf"]).to(self.device)
+                    y = concat_and_reshape(batch["y"], batch["y_surf"]).to(self.device)
                 else:
-                    y = self.model.reshape_only(batch["y"]).to(self.device)
+                    y = reshape_only(batch["y"]).to(self.device)
                 
                 if 'y_diag' in batch:
 
