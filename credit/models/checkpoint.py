@@ -1,6 +1,7 @@
 import os
 import torch
 import torch.nn as nn
+import logging
 
 from torch.distributed.fsdp import FullStateDictConfig
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
@@ -18,6 +19,24 @@ from torch.utils._pytree import tree_map
 
 
 # utils
+
+def load_model_state(conf, model, device):
+    save_loc = os.path.expandvars(conf['save_loc'])
+    #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
+    ckpt = os.path.join(save_loc, "checkpoint.pt")
+    checkpoint = torch.load(ckpt, map_location=device)
+    if conf["trainer"]["mode"] == "fsdp":
+        logging.info(f"Loading FSDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+        checkpoint_io = TorchFSDPCheckpointIO()
+        checkpoint_io.load_unsharded_model(model, os.path.join(save_loc, "model_checkpoint.pt"))
+    else:
+        if conf["trainer"]["mode"] == "ddp":
+            logging.info(f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+            model.module.load_state_dict(checkpoint["model_state_dict"])
+        else:
+            logging.info(f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+            model.load_state_dict(checkpoint["model_state_dict"])
+    return model
 
 
 def save_state_dict(state_dict: dict, checkpoint_file_path: str, use_safetensors: bool) -> None:
@@ -197,6 +216,13 @@ class TorchFSDPModel(ModelWrapper):
         x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
         x_concat = torch.cat((x1, x2), dim=2)
         return x_concat.permute(0, 2, 1, 3, 4)
+
+    def reshape_only(self, x1):
+        '''
+        As in "concat_and_reshape", but for upper-air variables only.
+        '''
+        x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
+        return x1.permute(0, 2, 1, 3, 4)
 
 
 class OptimizerWrapper:

@@ -5,10 +5,8 @@ import os
 import sys
 import yaml
 import glob
-import copy
 import logging
 import warnings
-import functools
 import subprocess
 from pathlib import Path
 from functools import partial
@@ -21,7 +19,6 @@ from argparse import ArgumentParser
 # ---------- #
 # Numerics
 import datetime
-import numpy as np
 import pandas as pd
 import xarray as xr
 
@@ -29,41 +26,24 @@ import xarray as xr
 # AI libs
 import torch
 import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision import transforms
 # import wandb
-
-from torch.distributed.fsdp.fully_sharded_data_parallel import (
-    MixedPrecision,
-    CPUOffload
-)
-from torch.distributed.fsdp.wrap import (
-    transformer_auto_wrap_policy,
-    size_based_auto_wrap_policy,
-)
-from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-   checkpoint_wrapper,
-   CheckpointImpl,
-   apply_activation_checkpointing,
-)
 
 # ---------- #
 # credit
 from credit.data import PredictForecast
 from credit.loss import VariableTotalLoss2D
 from credit.models import load_model
-from credit.models.crossformer_may1 import CrossFormer
 from credit.metrics import LatWeightedMetrics
 from credit.transforms import ToTensor, NormalizeState, NormalizeState_Quantile
 from credit.seed import seed_everything
 from credit.pbs import launch_script, launch_script_mpi
 from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
 from credit.forecast import load_forecasts
-from credit.models.checkpoint import (
-    TorchFSDPModel,
-    TorchFSDPCheckpointIO
-)
-from credit.mixed_precision import parse_dtype
+from credit.data_conversions import dataConverter
+from credit.distributed import distributed_model_wrapper
+from credit.models.checkpoint import load_model_state
+from credit.solar import TOADataLoader
 
 # ---------- #
 from credit.visualization_tools import shared_mem_draw_wrapper
@@ -117,111 +97,6 @@ def split_and_reshape(tensor, conf):
     return tensor_upper_air, tensor_single_level
 
 
-def make_xarray(pred, forecast_datetime, lat, lon, conf):
-
-    # subset upper air and surface variables
-    tensor_upper_air, tensor_single_level = split_and_reshape(pred, conf)
-
-    # save upper air variables
-    darray_upper_air = xr.DataArray(
-        tensor_upper_air,
-        dims=["datetime", "vars", "level", "lat", "lon"],
-        coords=dict(
-            vars=conf["data"]["variables"],
-            datetime=[forecast_datetime],
-            level=range(conf["model"]["levels"]),
-            lat=lat,
-            lon=lon,
-        ),
-    )
-
-    # save diagnostics and surface variables
-    darray_single_level = xr.DataArray(
-        tensor_single_level.squeeze(2),
-        dims=["datetime", "vars", "lat", "lon"],
-        coords=dict(
-            vars=conf["data"]["surface_variables"],
-            datetime=[forecast_datetime],
-            lat=lat,
-            lon=lon,
-        ),
-    )
-
-    # return x-arrays as outputs
-    return darray_upper_air, darray_single_level
-
-
-def save_netcdf(list_darray_upper_air, list_darray_single_level, conf):
-    """
-    Save netCDF files from x-array inputs
-    """
-    # concat full upper air variables from a list of x-arrays
-    darray_upper_air_merge = xr.concat(list_darray_upper_air, dim="datetime")
-
-    # concat full single level variables from a list of x-arrays
-    darray_single_level_merge = xr.concat(list_darray_single_level, dim="datetime")
-
-    # produce datetime string
-    init_datetime_str = np.datetime_as_string(
-        darray_upper_air_merge.datetime[0], unit="h", timezone="UTC"
-    )
-
-    # create save directory for xarrays
-    save_location = os.path.join(os.path.expandvars(conf["save_loc"]), "forecasts", "netcdf")
-    os.makedirs(save_location, exist_ok=True)
-
-    # create file name to save upper air variables
-    # nc_filename_upper_air = os.path.join(
-    #     save_location, f"pred_x_{init_datetime_str}.nc"
-    # )
-
-    # # create file name to save surface variables
-    # nc_filename_single_level = os.path.join(
-    #     save_location, f"pred_surf_{init_datetime_str}.nc"
-    # )
-
-    nc_filename_all = os.path.join(
-        save_location, f"pred_{init_datetime_str}.nc"
-    )
-    ds_x = darray_upper_air_merge.to_dataset(dim="vars")
-    ds_surf = darray_single_level_merge.to_dataset(dim="vars")
-    ds = xr.merge([ds_x, ds_surf])
-
-    ds.to_netcdf(
-        path=nc_filename_all,
-        format="NETCDF4",
-        engine="netcdf4",
-        encoding={variable: {"zlib": True, "complevel": 1} for variable in ds.data_vars}
-    )
-    logger.info(
-        f"wrote .nc file for prediction: \n{nc_filename_all}"
-    )
-
-    # # save x-arrays to netCDF
-    # darray_upper_air_merge.name = "upper_air"
-    # darray_upper_air_merge.to_netcdf(
-    #     path=nc_filename_upper_air,
-    #     format="NETCDF4",
-    #     engine="netcdf4",
-    #     encoding=dict(upper_air={"zlib": True, "complevel": 1}),
-    # )
-    # darray_single_level_merge.name = "single_level"
-    # darray_single_level_merge.to_netcdf(
-    #     path=nc_filename_single_level,
-    #     format="NETCDF4",
-    #     engine="netcdf4",
-    #     encoding=dict(single_level={"zlib": True, "complevel": 1}),
-    # )
-
-    # # print out the saved file names
-    # logger.info(
-    #     f"wrote .nc files for upper air and surface vars:\n{nc_filename_upper_air}\n{nc_filename_single_level}"
-    # )
-
-    # return saved file names
-    return nc_filename_all
-
-
 def make_video(video_name_prefix, save_location, image_file_names, format="gif"):
     """
     make videos based on images. MP4 format requires ffmpeg.
@@ -265,113 +140,6 @@ def create_shared_mem(da, smm):
     shm = smm.SharedMemory(da_mem.nbytes)
     shm.buf[:] = da_mem
     return shm
-
-
-def distributed_model_wrapper(conf, neural_network, device):
-
-    if conf["trainer"]["mode"] == "fsdp":
-
-        # Define the sharding policies
-
-        if "crossformer" in conf["model"]["type"]:
-            from credit.models.crossformer_skip import Attention as Attend
-        elif "fuxi" in conf["model"]["type"]:
-            from credit.models.fuxi import UTransformer as Attend
-        else:
-            raise OSError("You asked for FSDP but only crossformer and fuxi are currently supported.")
-
-        auto_wrap_policy1 = functools.partial(
-            transformer_auto_wrap_policy,
-            transformer_layer_cls={Attend}
-        )
-
-        auto_wrap_policy2 = functools.partial(
-            size_based_auto_wrap_policy, min_num_params=1_000
-        )
-
-        def combined_auto_wrap_policy(module, recurse, nonwrapped_numel):
-            # Define a new policy that combines policies
-            p1 = auto_wrap_policy1(module, recurse, nonwrapped_numel)
-            p2 = auto_wrap_policy2(module, recurse, nonwrapped_numel)
-            return p1 or p2
-
-        # Mixed precision
-
-        use_mixed_precision = conf["trainer"]["use_mixed_precision"] if "use_mixed_precision" in conf["trainer"] else False
-
-        logging.info(f"Using mixed_precision: {use_mixed_precision}")
-
-        if use_mixed_precision:
-            for key, val in conf["trainer"]["mixed_precision"].items():
-                conf["trainer"]["mixed_precision"][key] = parse_dtype(val)
-            mixed_precision_policy = MixedPrecision(**conf["trainer"]["mixed_precision"])
-        else:
-            mixed_precision_policy = None
-
-        # CPU offloading
-
-        cpu_offload = conf["trainer"]["cpu_offload"] if "cpu_offload" in conf["trainer"] else False
-
-        logging.info(f"Using CPU offloading: {cpu_offload}")
-
-        # FSDP module
-
-        model = TorchFSDPModel(
-            neural_network,
-            use_orig_params=True,
-            auto_wrap_policy=combined_auto_wrap_policy,
-            mixed_precision=mixed_precision_policy,
-            cpu_offload=CPUOffload(offload_params=cpu_offload)
-        )
-
-        # activation checkpointing on the transformer blocks
-
-        activation_checkpoint = conf["trainer"]["activation_checkpoint"] if "activation_checkpoint" in conf["trainer"] else False
-
-        logging.info(f"Activation checkpointing: {activation_checkpoint}")
-
-        if activation_checkpoint:
-
-            # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
-
-            non_reentrant_wrapper = functools.partial(
-                checkpoint_wrapper,
-                checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-            )
-
-            check_fn = lambda submodule: isinstance(submodule, Attend)
-
-            apply_activation_checkpointing(
-                model,
-                checkpoint_wrapper_fn=non_reentrant_wrapper,
-                check_fn=check_fn
-            )
-
-    elif conf["trainer"]["mode"] == "ddp":
-        model = DDP(neural_network, device_ids=[device])
-    else:
-        model = neural_network
-
-    return model
-
-
-def load_model_state(conf, model, device):
-    save_loc = os.path.expandvars(conf['save_loc'])
-    #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
-    ckpt = os.path.join(save_loc, "checkpoint.pt")
-    checkpoint = torch.load(ckpt, map_location=device)
-    if conf["trainer"]["mode"] == "fsdp":
-        logging.info(f"Loading FSDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-        checkpoint_io = TorchFSDPCheckpointIO()
-        checkpoint_io.load_unsharded_model(model, os.path.join(save_loc, "model_checkpoint.pt"))
-    else:
-        if conf["trainer"]["mode"] == "ddp":
-            logging.info(f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-            model.module.load_state_dict(checkpoint["model_state_dict"])
-        else:
-            logging.info(f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-            model.load_state_dict(checkpoint["model_state_dict"])
-    return model
 
 
 def predict(rank, world_size, conf, pool, smm):
@@ -445,9 +213,12 @@ def predict(rank, world_size, conf, pool, smm):
     model.eval()
 
     # Set up metrics and containers
-    metrics = LatWeightedMetrics(conf)
+    metrics = LatWeightedMetrics(conf, predict_mode=True)
     metrics_results = defaultdict(list)
     loss_fn = VariableTotalLoss2D(conf, validation=True)
+
+    # set up data converter to convert to xarray
+    data_converter = dataConverter(conf)
 
     # get lat/lons from x-array
     latlons = xr.open_dataset(conf["loss"]["latitude_weights"])
@@ -493,7 +264,7 @@ def predict(rank, world_size, conf, pool, smm):
         static = None
 
         # model inference loop
-        for batch in data_loader:
+        for k, batch in enumerate(data_loader):
 
             # get the datetime and forecasted hours
             date_time = batch["datetime"].item()
@@ -504,16 +275,30 @@ def predict(rank, world_size, conf, pool, smm):
                 # Initialize x and x_surf with the first time step
                 x = model.concat_and_reshape(batch["x"], batch["x_surf"]).to(device)
 
+                list_datasets = []
                 # setup save directory for images
+                # !!! not actually the init time, it is the first FORECAST time
                 init_time = datetime.datetime.utcfromtimestamp(date_time).strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+                svloc_init_time = datetime.datetime.utcfromtimestamp(date_time).strftime(
                     "%Y-%m-%dT%HZ"
                 )
+
                 img_save_loc = os.path.join(
                     os.path.expandvars(conf["save_loc"]),
-                    f"forecasts/images_{init_time}",
+                    "forecasts/images_{svloc_init_time}",
                 )
+                dataset_save_loc = os.path.join(
+                    os.path.expandvars(conf["save_loc"]),
+                    "forecasts/netcdf",
+                )
+                os.makedirs(dataset_save_loc, exist_ok=True)
                 if N_vars > 0:
                     os.makedirs(img_save_loc, exist_ok=True)
+
+                # initialize diagnostics
+                # diagnostics = Diagnostics(conf, init_time, data_converter)
 
             # Add statics
             if "static" in batch:
@@ -522,23 +307,28 @@ def predict(rank, world_size, conf, pool, smm):
                 x = torch.cat((x, static.clone()), dim=1)
 
             # Add solar "statics"
-            if "TOA" in batch:
-                toa = batch["TOA"].to(device)
-                x = torch.cat([x, toa.unsqueeze(1)], dim=1)
+            if "static_variables" in conf["data"] and "tsi" in conf["data"]["static_variables"]:
+                if k == 0:
+                    toaDL = TOADataLoader(conf)
+                elapsed_time = pd.Timedelta(hours=k)
+                tnow = pd.to_datetime(datetime.datetime.utcfromtimestamp(batch["datetime"]))
+                tnow = tnow + elapsed_time
+                if history_len == 1:
+                    current_times = [pd.to_datetime(datetime.datetime.utcfromtimestamp(_t)) + elapsed_time for _t in tnow]
+                else:
+                    current_times = [tnow if hl == 0 else tnow - pd.Timedelta(hours=hl) for hl in range(history_len)]
+
+                toa = torch.cat([toaDL(_t) for _t in current_times], dim=0).to(device)
+                toa = toa.squeeze().unsqueeze(0)
+                x = torch.cat([x, toa.unsqueeze(1).to(device).float()], dim=1)
 
             y = model.concat_and_reshape(batch["y"], batch["y_surf"]).to(device)
-
-            # Predict
+            # Predict and convert to real space for laplace filter and metrics
             y_pred = model(x)
-
-            # convert to real space for laplace filter and metrics
             y_pred = state_transformer.inverse_transform(y_pred.cpu())
             y = state_transformer.inverse_transform(y.cpu())
 
-            if (
-                "use_laplace_filter" in conf["predict"]
-                and conf["predict"]["use_laplace_filter"]
-            ):
+            if ("use_laplace_filter" in conf["predict"] and conf["predict"]["use_laplace_filter"]):
                 y_pred = (
                     dpf.diff_lap2d_filt(y_pred.to(device).squeeze())
                     .unsqueeze(0)
@@ -546,34 +336,48 @@ def predict(rank, world_size, conf, pool, smm):
                     .cpu()
                 )
 
-            # Compute metrics
+            # for debugging, save tensors
+            # save_ = os.path.expandvars(conf["save_loc"])
+            # torch.save(y, os.path.join(save_, 'y.pt'))
+            # torch.save(y_pred, os.path.join(save_, 'pred.pt'))
+
+            # Compute metrics ##############################
+            utc_datetime = datetime.datetime.utcfromtimestamp(date_time)
+
             mae = loss_fn(y, y_pred)
-            metrics_dict = metrics(y_pred.float(), y.float())
+            metrics_dict = metrics(y_pred.float(), y.float(), forecast_datetime=forecast_hour)
             for k, m in metrics_dict.items():
                 metrics_results[k].append(m.item())
             metrics_results["forecast_hour"].append(forecast_hour)
             metrics_results["datetime"].append(date_time)
 
-            utc_datetime = datetime.datetime.utcfromtimestamp(date_time)
             print_str = f"Forecast: {forecast_count} "
             print_str += f"Date: {utc_datetime.strftime('%Y-%m-%d %H:%M:%S')} "
             print_str += f"Hour: {batch['forecast_hour'].item()} "
             print_str += f"MAE: {mae.item()} "
-            print_str += f"ACC: {metrics_dict['acc']}"
-            logger.info(print_str)
+            print_str += f"ACC: {metrics_dict['acc']} "
+            # print_str += f"spectrumMSE: {metrics_dict['spectrum_mse']}" #WEC limiting spectrum shit cause weather bench2 not installed.
 
             # convert the current step result as x-array
-            darray_upper_air, darray_single_level = make_xarray(
-                y_pred,
-                utc_datetime,
-                latlons.latitude.values,
-                latlons.longitude.values,
-                conf,
-            )
-
+            darray_upper_air, darray_single_level = (
+                data_converter.tensor_to_dataArray(y_pred.float(), [utc_datetime]))
             # collect x-arrays for upper air and surface variables
             list_darray_upper_air.append(darray_upper_air)
             list_darray_single_level.append(darray_single_level)
+
+            # convert to datasets and save out
+            pred_ds = data_converter.dataArrays_to_dataset(darray_upper_air, darray_single_level)
+            y_ds = data_converter.tensor_to_dataset(y.float(), [utc_datetime])
+
+            list_datasets.append(pred_ds)
+
+            # Compute KE/spectra Diagnostics ###############
+            # diag_metrics = diagnostics(pred_ds, y_ds, forecast_hour) #WEC limiting spectrum shit cause weather bench2 not installed.
+            # metrics_dict = metrics_dict | diag_metrics #WEC limiting spectrum shit cause weather bench2 not installed.
+            # for key,value in diag_metrics.items(): # add metrics to the print str #WEC limiting spectrum shit cause weather bench2 not installed.
+            #     print_str += f"{key}: {value}"
+
+            logger.info(print_str)
 
             # ---------------------------------------------------------------------------------- #
             # Draw upper air variables
@@ -669,7 +473,7 @@ def predict(rank, world_size, conf, pool, smm):
             else:
                 # use multiple past forecast steps as inputs
                 static_dim_size = abs(x.shape[1] - y_pred.shape[1])  # static channels will get updated on next pass
-                x_detach = x[:, :-static_dim_size, 1:].detach()
+                x_detach = x[:, :-static_dim_size, 1:].detach() if static_dim_size else x[:, :, 1:].detach()  # if static_dim_size=0 then :0 gives empty range
                 x = torch.cat([x_detach, y_pred.detach()], dim=2)
 
             # Explicitly release GPU memory
@@ -686,9 +490,12 @@ def predict(rank, world_size, conf, pool, smm):
                 # save forecast results to file
                 if "save_format" in conf["predict"] and conf["predict"]["save_format"] == "nc":
                     logger.info("Save forecasts as netCDF format")
-                    filename_netcdf = save_netcdf(
-                        list_darray_upper_air, list_darray_single_level, conf
-                    )
+                    xr.merge(list_datasets).to_netcdf(
+                                path=os.path.join(dataset_save_loc, f"pred_{init_time}-{utc_datetime.strftime('%Y-%m-%d %H:%M:%S')}.nc"),
+                                format="NETCDF4",
+                                engine="netcdf4",
+                                encoding={variable: {"zlib": True, "complevel": 1} for variable in pred_ds.data_vars}
+                        )
                 else:
                     logger.info("Warning: forecast results will not be saved")
 
@@ -803,6 +610,9 @@ if __name__ == "__main__":
     # Load the configuration and get the relevant variables
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
+    # create a save location for rollout
+    forecast_save_loc = os.path.join(os.path.expandvars(conf['save_loc']), 'forecasts')
+    os.makedirs(forecast_save_loc, exist_ok=True)
 
     # Update config using override options
     if mode in ["none", "ddp", "fsdp"]:
@@ -835,7 +645,7 @@ if __name__ == "__main__":
     num_cpus = get_num_cpus()
     logger.info(f"using {num_cpus} cpus for image generation")
     with Pool(processes=num_cpus - 1) as pool, SharedMemoryManager() as smm:
-        if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
+        if conf["trainer"]["mode"] in ["fsdp", "ddp"]:  # multi-gpu inference
             (
                 list_darray_upper_air,
                 list_darray_single_level,
@@ -845,7 +655,7 @@ if __name__ == "__main__":
             ) = predict(
                 int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf, pool, smm
             )
-        else:
+        else:  # single device inference
             (
                 list_darray_upper_air,
                 list_darray_single_level,
@@ -854,7 +664,7 @@ if __name__ == "__main__":
                 filename_bundle,
             ) = predict(0, 1, conf, pool, smm)
 
-        # # save forecast results to file
+        # # save forecast results to file DEPRECATED - saving in predict loop now
         # if "save_format" in conf["predict"] and conf["predict"]["save_format"] == "nc" and not no_data:
         #     logger.info("Save forecasts as netCDF format")
         #     filename_netcdf = save_netcdf(

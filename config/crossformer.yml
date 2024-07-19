@@ -52,12 +52,9 @@ trainer:
 model:
     type: "crossformer"
     image_height: 640    # Image height (default: 640)
-    patch_height: 1      # Patch height (default: 2)
     image_width: 1280    # Image width (default: 1280)
-    patch_width: 1       # Patch width (default: 2)
     levels: 15           # Number of levels (default: 15)
     frames: 2            # Number of frames (default: 2)
-    frame_patch_size: 1  # Frame patch size (default: 2)
     channels: 4          # Channels (default: 4)
     surface_channels: 7  # Surface channels (default: 7)
     static_channels: 3   # Static channels (default: 3)
@@ -166,7 +163,19 @@ visualization:
                    'transparent':False,
                    'format':'png'}
     video_format: 'mp4' # gif, mp4, none
-
+diagnostics:
+    summary_plot_fhs: [1, 20, 60, 120] # what forecast hours to plot as a summary plot
+    use_spectrum_vis: False
+    spectrum_vis:
+        atmos_variables: ["U", "V", "T", "Q"]
+        atmos_levels: [8, 10]
+        single_level_variables: ["SP", "t2m", "Z500"]
+        figsize: () # empty tuple for auto
+    plev_summary_only: True  # pressure level conversion is really slow, use this option to compute pressure level diagnostics only at summary fhs (above), will disable KE metrics output
+    use_KE_diagnostics: True # disable all KE diagnostics including KE metrics
+    ke_vis:
+        use_KE_spectrum_vis: True
+        use_KE_difference_vis: True
 
 pbs: #derecho
     conda: "holodec"

@@ -18,6 +18,13 @@ mamba env create -f environment.yml
 conda activate credit
 ```
 
+Some metrics use WeatherBench2 for computation. Install with:
+```bash
+git clone git@github.com:google-research/weatherbench2.git
+cd weatherbench2
+pip install .
+````
+
 To enable GPU support, install pytorch-cuda:
 ```bash
 mamba install pytorch-cuda=12.1 -c pytorch -c nvidia
@@ -29,24 +36,24 @@ pip install .
 ```
 
 ## Train a Segmentation Model (like a U-Net)
-```python
+```bash
 python applications/train.py -c config/unet.yml
 ```
  ## Train a Vision Transformer
-```python
+```bash
 python applications/train.py -c config/vit.yml
 ```
 
 Or use a fancier [variation](https://github.com/lucidrains/vit-pytorch/blob/main/vit_pytorch/rvt.py)
 
-```python
+```bash
 python applications/train.py -c config/rvt.yml
 ```
 
 ## Launch with PBS on Casper or Derecho
  
 Adjust the PBS settings in a configuration file for either casper or derecho. Then, submit the job via
-```python
+```bash
 python applications/train.py -c config/vit.yml -l 1
 ```
 The launch script may be found in the save location that you set in the configation file. The automatic launch script generation will take care of MPI calls and other complexities if you are using more than 1 GPU.
@@ -55,6 +62,6 @@ The launch script may be found in the save location that you set in the configat
 
 The predict field in the config file allows one to speficy start and end dates to roll-out a trained model. To generate a forecast,
 
-```python
+```bash
 python applications/predict.py -c config/vit.yml
 ```
