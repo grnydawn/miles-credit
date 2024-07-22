@@ -1,4 +1,4 @@
-save_loc: "/glade/work/$USER/repos/global/miles-credit/results/test_quantile/"
+save_loc: "/glade/derecho/scratch/$USER/STAGING/miles-credit/results/test_sixhour/"
 seed: 1000
 
 data:
@@ -6,8 +6,8 @@ data:
     surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500','Z_GDS4_SFC','LSM','tsi']
     static_variables: []
     save_loc: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/STD_SixHourly_TOTAL_*'
-    mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
-    std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
+    mean_path: '/glade/u/home/wchapman/MLWPS/All_2010_staged.mean.Lev.SLO.nc'
+    std_path: '/glade/u/home/wchapman/MLWPS/All_2010_staged.std.Lev.SLO.nc'
     quant_path: '/glade/derecho/scratch/dgagne/credit_scalers/era5_quantile_scalers_2024-03-30_00:28.parquet'
     TOA_forcing_path: '/glade/derecho/scratch/dgagne/credit_scalers/solar_radiation_2024-03-29_0204.nc' 
     scaler_type: 'sixhour-cached' #'std', 'quantile'
@@ -24,10 +24,10 @@ data:
     bs_file_format: 'TOTAL_%Y-%m-%dT%H:%M:%S_quantile.nc' #only used with bridgescalar developed datasets
     
 trainer:
-    mode: fsdp # none, ddp, fsdp
+    mode: none # none, ddp, fsdp
     train_batch_size: 1
     valid_batch_size: 1
-    batches_per_epoch: 0 # Set to 0 to use len(dataloader)
+    batches_per_epoch: 20 # Set to 0 to use len(dataloader)
     valid_batches_per_epoch: 100
     learning_rate: 5.0e-04
     weight_decay: 1.0e-05
@@ -41,9 +41,9 @@ trainer:
     stopping_patience: 50
     teacher_forcing_ratio: 0.5 #0.9886539666794065
     stop_rollout: 0.9
-    skip_validation: True
-    load_weights: True
-    load_optimizer: True
+    skip_validation: False
+    load_weights: False
+    load_optimizer: False
     use_scheduler: False
     #scheduler: {'scheduler_type': 'cosine-annealing', first_cycle_steps: 500, cycle_mult: 6.0, max_lr: 5.0e-04, min_lr: 5.0e-07, warmup_steps: 499, gamma: 0.7}
     # scheduler: {scheduler_type: plateau, mode: min, factor: 0.1, patience: 5, cooldown: 2, min_lr: 1e-6, epsilon: 1e-8, verbose: true, threshold: 1e-4}
@@ -57,9 +57,9 @@ model:
     frames: 2            # Number of frames (default: 2)
     channels: 4          # Channels (default: 4)
     surface_channels: 10  # Surface channels (default: 7)
-    static_channels: 3   # Static channels (default: 3)
-    dim: [96, 192, 384, 768] #[288, 576, 1152, 2304]           # Dimensionality of each layer (default: [64, 128, 256, 512])
-    depth: [1, 1, 2, 1] #[2, 2, 5, 2]                    # Depth of each layer (default: [2, 2, 8, 2])
+    static_channels: 0   # Static channels (default: 3)
+    dim: [64, 128, 256, 512] #[288, 576, 1152, 2304]           # Dimensionality of each layer (default: [64, 128, 256, 512])
+    depth: [2, 2, 5, 2] #[2, 2, 5, 2]                    # Depth of each layer (default: [2, 2, 8, 2])
     global_window_size: [2, 2, 2, 1]      # Global window size for each layer (default: [10, 5, 2, 1])
     local_window_size: 2                  # Local window size (default: 10)
     cross_embed_kernel_sizes:             # Kernel sizes for cross-embedding (default: [[4, 8, 16, 32], [2, 4], [2, 4], [2, 4]])
@@ -178,15 +178,15 @@ diagnostics:
         use_KE_difference_vis: True
 
 pbs: #derecho
-    conda: "holodec"
+    conda: "MILES"
     project: "NAML0001"
     job_name: "xformer"
-    walltime: "24:00:00"
-    nodes: 8
-    ncpus: 64
-    ngpus: 4
-    mem: '480GB'
-    queue: 'preempt'
+    walltime: "01:00:00"
+    nodes: 1
+    ncpus: 2
+    ngpus: 1
+    mem: '128GB'
+    queue: 'premium'
     
 # pbs: # casper
 #     conda: "/glade/work/schreck/miniconda3/envs/evidential"
