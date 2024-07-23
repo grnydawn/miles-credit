@@ -8,12 +8,12 @@ data:
     static_variables: ['Z_GDS4_SFC','LSM']
     save_loc: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/STD_SixHourly_TOTAL_*'
     save_loc_surface: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/STD_SixHourly_TOTAL_*'
-    save_loc_forcing: '/glade/campaign/cisl/aiml/ksha/CREDIT/forcing_norm_6h.nc'
-    save_loc_static: '/glade/campaign/cisl/aiml/ksha/CREDIT/static_norm_old.nc'
+    save_loc_forcing: '/glade/u/home/ksha/CREDIT/data/forcing_norm_6h.nc'
+    save_loc_static: '/glade/u/home/ksha/CREDIT/data/static_norm_old.nc'
     train_years: [1979, 2014]
     valid_years: [2014, 2018]
-    mean_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/mean_zero.nc'
-    std_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/std_one.nc'
+    mean_path: '/glade/u/home/ksha/CREDIT/data/mean_zero.nc'
+    std_path: '/glade/u/home/ksha/CREDIT/data/std_one.nc'
     scaler_type: 'std_new'
     history_len: 2 
     forecast_len: 0 # larger than 0 for multi step
