@@ -1,47 +1,43 @@
-save_loc: "/glade/work/$USER/repos/global/miles-credit/results/wxformer_6h/"
+save_loc: "/glade/work/$USER/repos/global/miles-credit/results/fuxi_norm/"
 seed: 1000
 
 data:
     variables: ['U','V','T','Q']
     surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
-    forcing_variables: ['TSI'] #
-    static_variables: ['Z_GDS4_SFC','LSM']
-    save_loc: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/STD_SixHourly_TOTAL_*'
-    save_loc_surface: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/STD_SixHourly_TOTAL_*'
-    save_loc_forcing: '/glade/campaign/cisl/aiml/ksha/CREDIT/forcing_norm_6h.nc'
-    save_loc_static: '/glade/campaign/cisl/aiml/ksha/CREDIT/static_norm_old.nc'
-    train_years: [1979, 2014]
-    valid_years: [2014, 2018]
-    mean_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/mean_zero.nc'
-    std_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/std_one.nc'
-    scaler_type: 'std_new'
+    static_variables: ['Z_GDS4_SFC','LSM','tsi'] # []
+    save_loc: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
+    mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
+    std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
+    quant_path: '/glade/campaign/cisl/aiml/credit_scalers/era5_quantile_scalers_2024-02-13_07:33.parquet'
+    TOA_forcing_path: '/glade/derecho/scratch/dgagne/credit_scalers/solar_radiation_2024-03-29_0204.nc' 
+    scaler_type: 'std' # 'std'
     history_len: 2 
-    forecast_len: 0 # larger than 0 for multi step
+    forecast_len: 2 # larger than 0 for multi step
     valid_history_len: 2
-    valid_forecast_len: 0 # 
+    valid_forecast_len: 2 # 
     one_shot: True
     skip_periods: null
     
 trainer:
-    mode: none # none, ddp, fsdp
+    mode: none
     train_batch_size: 1
     valid_batch_size: 1
-    batches_per_epoch: 1000 # Set to 0 to use len(dataloader)
-    valid_batches_per_epoch: 100
-    learning_rate: 5.0e-04
+    batches_per_epoch: 2500 # Set to 0 to use len(dataloader)
+    valid_batches_per_epoch: 20
+    learning_rate: 1.0e-07
     weight_decay: 1.0e-05
-    start_epoch: 0
-    epochs: 1
+    start_epoch: 1
+    epochs: 20 # train_one_epoch: True
     amp: False
     grad_accum_every: 1
     grad_max_norm: 1.0
     thread_workers: 4
-    valid_thread_workers: 4
+    valid_thread_workers: 0
     stopping_patience: 50
     teacher_forcing_ratio: 0.5 #0.9886539666794065
     stop_rollout: 0.9
-    skip_validation: False
-    load_weights: False
+    skip_validation: True
+    load_weights: True
     load_optimizer: False
     use_scheduler: False
     #scheduler: {'scheduler_type': 'cosine-annealing', first_cycle_steps: 500, cycle_mult: 6.0, max_lr: 5.0e-04, min_lr: 5.0e-07, warmup_steps: 499, gamma: 0.7}
@@ -49,26 +45,22 @@ trainer:
     scheduler: {'scheduler_type': 'lambda'}
   
 model:
-    type: "crossformer"
+    type: "fuxi"
     image_height: 640    # Image height (default: 640)
+    patch_height: 4     # Patch height (default: 16)
     image_width: 1280    # Image width (default: 1280)
+    patch_width: 4      # Patch width (default: 16)
     levels: 15           # Number of levels (default: 15)
     frames: 2            # Number of frames (default: 2)
+    frame_patch_size: 2  # Frame patch size (default: 2)
+    dim: 1024            # Dimension (default: 1536)
+    num_groups: 32       # Number of groups (default: 32)
     channels: 4          # Channels (default: 4)
     surface_channels: 7  # Surface channels (default: 7)
-    static_channels: 3   # Static channels (default: 3)
-    dim: [64, 128, 256, 512] #[288, 576, 1152, 2304]           # Dimensionality of each layer (default: [64, 128, 256, 512])
-    depth: [2, 2, 5, 2] #[2, 2, 5, 2]                    # Depth of each layer (default: [2, 2, 8, 2])
-    global_window_size: [2, 2, 2, 1]      # Global window size for each layer (default: [10, 5, 2, 1])
-    local_window_size: 2                  # Local window size (default: 10)
-    cross_embed_kernel_sizes:             # Kernel sizes for cross-embedding (default: [[4, 8, 16, 32], [2, 4], [2, 4], [2, 4]])
-    - [4, 8, 16, 32]
-    - [2, 4]
-    - [2, 4]
-    - [2, 4]
-    cross_embed_strides: [2, 2, 2, 2]     # Strides for cross-embedding (default: [4, 2, 2, 2])
-    attn_dropout: 0.                      # Dropout probability for attention layers (default: 0.0)
-    ff_dropout: 0.                        # Dropout probability for feed-forward layers (default: 0.0)
+    static_channels: 3   #
+    num_heads: 8         # Number of heads (default: 8)
+    window_size: 7       # Window size (default: 7)
+    depth: 16            # Depth of the swin transformer (default: 48)
     pad_lon: 80
     pad_lat: 80
     use_spectral_norm: True
@@ -76,7 +68,7 @@ model:
 loss: 
     training_loss: "mse"
     use_vgg: False
-    use_power_loss: False # use either power or spectral loss
+    use_power_loss: True # use either power or spectral loss
     use_spectral_loss: False
     spectral_wavenum_init: 20
     spectral_lambda_reg: 0.1 # power loss is order of 1e1 (usually between 1-10)
@@ -97,27 +89,10 @@ loss:
         Q500: 0.1
 
 predict:
-    forecasts: 
-        type: "custom"
-        start_year: 2020
-        start_month: 6
-        start_day: 1
-        days: 10
-        duration: 32
-    # forecasts: [
-    #     ["2020-01-01 00:00:00", "2020-01-10 23:00:00"],
-    #     ["2020-02-01 00:00:00", "2020-02-10 23:00:00"],
-    #     ["2020-03-01 00:00:00", "2020-03-10 23:00:00"],
-    #     ["2020-04-01 00:00:00", "2020-04-10 23:00:00"],
-    #     ["2020-05-01 00:00:00", "2020-05-10 23:00:00"],
-    #     ["2020-06-01 00:00:00", "2020-06-10 23:00:00"],
-    #     ["2020-07-01 00:00:00", "2020-07-10 23:00:00"],
-    #     ["2020-08-01 00:00:00", "2020-08-10 23:00:00"],
-    #     ["2020-09-01 00:00:00", "2020-09-10 23:00:00"],
-    #     ["2020-10-01 00:00:00", "2020-10-10 23:00:00"],
-    #     ["2020-11-01 00:00:00", "2020-11-10 23:00:00"],
-    #     ["2020-12-01 00:00:00", "2020-12-10 23:00:00"]
-    # ]
+    forecasts: [
+        #["1989-12-31 00:00:00", "1990-01-02 00:00:00"],
+        ["2018-06-01 00:00:00", "2018-06-01 02:00:00"]
+    ]
     use_laplace_filter: True
     save_format: "nc"
 
@@ -162,40 +137,28 @@ visualization:
                    'transparent':False,
                    'format':'png'}
     video_format: 'mp4' # gif, mp4, none
-diagnostics:
-    summary_plot_fhs: [1, 20, 60, 120] # what forecast hours to plot as a summary plot
-    use_spectrum_vis: False
-    spectrum_vis:
-        atmos_variables: ["U", "V", "T", "Q"]
-        atmos_levels: [8, 10]
-        single_level_variables: ["SP", "t2m", "Z500"]
-        figsize: () # empty tuple for auto
-    plev_summary_only: True  # pressure level conversion is really slow, use this option to compute pressure level diagnostics only at summary fhs (above), will disable KE metrics output
-    use_KE_diagnostics: True # disable all KE diagnostics including KE metrics
-    ke_vis:
-        use_KE_spectrum_vis: True
-        use_KE_difference_vis: True
+
 
 pbs: #derecho
-    conda: "MILES"
+    conda: "/glade/work/ksha/miniconda3/envs/credit"
     project: "NAML0001"
-    job_name: "xformer"
-    walltime: "01:00:00"
-    nodes: 1
-    ncpus: 2
-    ngpus: 1
-    mem: '128GB'
-    queue: 'premium'
-    
+    job_name: "fuxi"
+    walltime: "12:00:00"
+    nodes: 8
+    ncpus: 64
+    ngpus: 4
+    mem: '480GB'
+    queue: 'main'
+
 # pbs: # casper
-#     conda: "/glade/work/schreck/miniconda3/envs/evidential"
-#     job_name: 'latlon'
+#     conda: "/glade/work/ksha/miniconda3/envs/credit"
+#     project: "NAML0001"
+#     job_name: 'FuXi_Lite'
 #     nodes: 1
-#     ncpus: 8
+#     ncpus: 16
 #     ngpus: 1
 #     mem: '128GB'
-#     walltime: '12:00:00'
+#     walltime: '24:00:00'
 #     gpu_type: 'a100'
 #     cpu_type: 'milan'
-#     project: 'NAML0001'
 #     queue: 'casper'
