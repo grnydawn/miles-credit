@@ -476,9 +476,10 @@ class Trainer:
         start_epoch = conf['trainer']['start_epoch']
         epochs = conf['trainer']['epochs']
         skip_validation = conf['trainer']['skip_validation'] if 'skip_validation' in conf['trainer'] else False
-
+        flag_load_weights = conf['trainer']['load_weights']
+        
         # Reload the results saved in the training csv if continuing to train
-        if start_epoch == 0:
+        if (start_epoch == 0) or (flag_load_weights is False):
             results_dict = defaultdict(list)
         else:
             results_dict = defaultdict(list)
