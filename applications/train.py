@@ -125,7 +125,11 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
 
     return dataset, sampler
 
-def load_dataset_and_sampler_zscore_only(conf, all_ERA_files, surface_files, diagnostic_files, world_size, rank, is_train, seed=42):
+def load_dataset_and_sampler_zscore_only(conf, 
+                                         all_ERA_files, 
+                                         surface_files, 
+                                         diagnostic_files, 
+                                         world_size, rank, is_train, seed=42):
 
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
@@ -368,8 +372,12 @@ def main(rank, world_size, conf, trial=False):
         train_surface_files = [file for file in surface_files if any(year in file for year in train_years)]
         valid_surface_files = [file for file in surface_files if any(year in file for year in valid_years)]
         
-        train_diagnostic_files = [file for file in diagnostic_files if any(year in file for year in train_years)]
-        valid_diagnostic_files = [file for file in diagnostic_files if any(year in file for year in valid_years)]
+        if diagnostic_files is not None:
+            train_diagnostic_files = [file for file in diagnostic_files if any(year in file for year in train_years)]
+            valid_diagnostic_files = [file for file in diagnostic_files if any(year in file for year in valid_years)]
+        else:
+            train_diagnostic_files = None
+            valid_diagnostic_files = None
     
     # load dataset and sampler
     # <----------------------------------- std_new
@@ -548,7 +556,7 @@ if __name__ == "__main__":
     # Create directories if they do not exist and copy yml file
     save_loc = os.path.expandvars(conf["save_loc"])
     os.makedirs(save_loc, exist_ok=True)
-
+    
     if not os.path.exists(os.path.join(save_loc, "model.yml")):
         shutil.copy(config, os.path.join(save_loc, "model.yml"))
 

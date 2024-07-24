@@ -28,7 +28,7 @@ from torchvision import transforms
 
 # ---------- #
 # credit
-from credit.data import ERA5Dataset
+from credit.data import ERA5Dataset, concat_and_reshape
 from credit.models import load_model
 from credit.transforms import ToTensor, NormalizeState, NormalizeState_Quantile
 from credit.seed import seed_everything
@@ -279,7 +279,7 @@ def predict(rank, world_size, conf, p):
     # get lat/lons from x-array
     latlons = xr.open_dataset(conf["loss"]["latitude_weights"])
 
-    meta_data = load_metadata("era5")
+    meta_data = load_metadata(conf)
 
     # Set up the diffusion and pole filters
     if (
@@ -312,8 +312,9 @@ def predict(rank, world_size, conf, p):
             # initialization on the first forecast hour
             if forecast_hour == 1:
                 # Initialize x and x_surf with the first time step
-                x = model.concat_and_reshape(batch["x"], batch["x_surf"]).to(device)
-
+                #x = model.concat_and_reshape(batch["x"], batch["x_surf"]).to(device)
+                x = concat_and_reshape(batch["x"], batch["x_surf"]).to(device)
+                
                 init_datetime_str = datetime.datetime.utcfromtimestamp(date_time)
                 init_datetime_str = init_datetime_str.strftime('%Y-%m-%dT%HZ')
 
@@ -506,10 +507,25 @@ if __name__ == "__main__":
     # Load the configuration and get the relevant variables
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
+        
     # create a save location for rollout
-    forecast_save_loc = os.path.join(os.path.expandvars(conf['save_loc']), 'forecasts')
-    os.makedirs(forecast_save_loc, exist_ok=True)
+    # ---------------------------------------------------- #
+    # choose model weights dir if save_forecast not given
+    # if 'save_forecast' in conf['predict']:
+    #     forecast_save_loc = conf['predict']['save_forecast']
+    # else:
+    #     print('Roll-out target dir not specified. Outputs will be saved to the model weights folder')
+        
+    #     conf['predict']['save_forecast'] = os.path.join(os.path.expandvars(conf['save_loc']), 'forecasts')
+    #     forecast_save_loc = conf['predict']['save_forecast']
 
+    assert 'save_forecast' in conf['predict'], "Please specify the output dir through conf['predict']['save_forecast']"
+    
+    forecast_save_loc = conf['predict']['save_forecast']
+    os.makedirs(forecast_save_loc, exist_ok=True)
+    
+    print('Save roll-outs to {}'.format(forecast_save_loc))
+    
     # Update config using override options
     if mode in ["none", "ddp", "fsdp"]:
         logger.info(f"Setting the running mode to {mode}")

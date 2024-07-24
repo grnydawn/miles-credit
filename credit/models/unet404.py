@@ -38,11 +38,11 @@ def load_premade_encoder_model(model_conf):
             f"Model name {name} not recognized. Please choose from {supported_models.keys()}")
 
 
-class SegmentationModel(torch.nn.Module):
+class SegmentationModel404(torch.nn.Module):
 
     def __init__(self, conf):
 
-        super(SegmentationModel, self).__init__()
+        super(SegmentationModel404, self).__init__()
 
         self.variables = conf["data"]["variables"]
         self.frames = conf["model"]["frames"]
