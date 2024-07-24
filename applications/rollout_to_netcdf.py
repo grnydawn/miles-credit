@@ -28,7 +28,7 @@ from torchvision import transforms
 
 # ---------- #
 # credit
-from credit.data import ERA5Dataset
+from credit.data import ERA5Dataset, concat_and_reshape
 from credit.models import load_model
 from credit.transforms import ToTensor, NormalizeState, NormalizeState_Quantile
 from credit.seed import seed_everything
@@ -312,8 +312,9 @@ def predict(rank, world_size, conf, p):
             # initialization on the first forecast hour
             if forecast_hour == 1:
                 # Initialize x and x_surf with the first time step
-                x = model.concat_and_reshape(batch["x"], batch["x_surf"]).to(device)
-
+                #x = model.concat_and_reshape(batch["x"], batch["x_surf"]).to(device)
+                x = concat_and_reshape(batch["x"], batch["x_surf"]).to(device)
+                
                 init_datetime_str = datetime.datetime.utcfromtimestamp(date_time)
                 init_datetime_str = init_datetime_str.strftime('%Y-%m-%dT%HZ')
 
