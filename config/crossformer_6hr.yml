@@ -15,9 +15,9 @@ data:
     mean_path: '/glade/u/home/ksha/CREDIT/data/mean_zero.nc'
     std_path: '/glade/u/home/ksha/CREDIT/data/std_one.nc'
     scaler_type: 'std_new'
-    history_len: 2 
+    history_len: 1 
     forecast_len: 0 # larger than 0 for multi step
-    valid_history_len: 2
+    valid_history_len: 1
     valid_forecast_len: 0 # 
     one_shot: True
     skip_periods: null
@@ -30,8 +30,8 @@ trainer:
     valid_batches_per_epoch: 100
     learning_rate: 5.0e-04
     weight_decay: 1.0e-05
-    start_epoch: 0
-    epochs: 1
+    start_epoch: 1
+    epochs: 20
     amp: False
     grad_accum_every: 1
     grad_max_norm: 1.0
@@ -44,23 +44,26 @@ trainer:
     load_weights: False
     load_optimizer: False
     use_scheduler: False
-    #scheduler: {'scheduler_type': 'cosine-annealing', first_cycle_steps: 500, cycle_mult: 6.0, max_lr: 5.0e-04, min_lr: 5.0e-07, warmup_steps: 499, gamma: 0.7}
-    # scheduler: {scheduler_type: plateau, mode: min, factor: 0.1, patience: 5, cooldown: 2, min_lr: 1e-6, epsilon: 1e-8, verbose: true, threshold: 1e-4}
+    cpu_offload: True
+    update_learning_rate: True
+    train_one_epoch: False
     scheduler: {'scheduler_type': 'lambda'}
-  
+    
 model:
     type: "crossformer"
     image_height: 640    # Image height (default: 640)
+    patch_height: 1      # Patch height (default: 2)
     image_width: 1280    # Image width (default: 1280)
+    patch_width: 1       # Patch width (default: 2)
     levels: 15           # Number of levels (default: 15)
-    frames: 2            # Number of frames (default: 2)
+    frames: 1            # Number of frames (default: 2)
+    frame_patch_size: 2  # Frame patch size (default: 2)
     channels: 4          # Channels (default: 4)
     surface_channels: 7  # Surface channels (default: 7)
-    static_channels: 3   # Static channels (default: 3)
-    dim: [64, 128, 256, 512] #[288, 576, 1152, 2304]           # Dimensionality of each layer (default: [64, 128, 256, 512])
-    depth: [2, 2, 5, 2] #[2, 2, 5, 2]                    # Depth of each layer (default: [2, 2, 8, 2])
-    global_window_size: [2, 2, 2, 1]      # Global window size for each layer (default: [10, 5, 2, 1])
-    local_window_size: 2                  # Local window size (default: 10)
+    dim: [128, 256, 512, 1024]              # Dimensionality of each layer (default: [64, 128, 256, 512])
+    depth: [2, 2, 8, 2]                    # Depth of each layer (default: [2, 2, 8, 2])
+    global_window_size: [10, 5, 2, 1]      # Global window size for each layer (default: [10, 5, 2, 1])
+    local_window_size: 10                  # Local window size (default: 10)
     cross_embed_kernel_sizes:             # Kernel sizes for cross-embedding (default: [[4, 8, 16, 32], [2, 4], [2, 4], [2, 4]])
     - [4, 8, 16, 32]
     - [2, 4]
@@ -177,15 +180,15 @@ diagnostics:
         use_KE_difference_vis: True
 
 pbs: #derecho
-    conda: "MILES"
+    conda: "/glade/work/ksha/miniconda3/envs/credit"
     project: "NAML0001"
-    job_name: "xformer"
-    walltime: "01:00:00"
-    nodes: 1
-    ncpus: 2
-    ngpus: 1
-    mem: '128GB'
-    queue: 'premium'
+    job_name: "wxformer"
+    walltime: "12:00:00"
+    nodes: 8
+    ncpus: 64
+    ngpus: 4
+    mem: '480GB'
+    queue: 'main'
     
 # pbs: # casper
 #     conda: "/glade/work/schreck/miniconda3/envs/evidential"
