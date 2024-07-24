@@ -263,12 +263,32 @@ def find_key_for_number(input_number, data_dict):
     # Return None if the number is not within any range
     return None
 
+def drop_var_from_dataset(xarray_dataset, varname_keep):
+    '''
+    Preserve a given set of variables from an xarray.Dataset, and drop the rest.
+    It will raise if xarray.Dataset.keys() != varname_keep.
+    '''
+    varname_all = list(xarray_dataset.keys())
+
+    for varname in varname_all:
+        if varname not in varname_keep:
+            xarray_dataset = xarray_dataset.drop_vars(varname)
+
+    varname_clean = list(xarray_dataset.keys())
+    
+    varname_diff = list(set(varname_keep) - set(varname_clean))
+    assert len(varname_diff)==0, 'Variable name: {} missing'.format(varname_diff) 
+    
+    return xarray_dataset
+    
 
 class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
     '''
     A Pytorch Dataset class that works on:
-        - ERA5 variables (time, level, lat, lon)
+        - upper-air variables (time, level, lat, lon)
+        - surface variables (time, lat, lon)
         - foring variables (time, lat, lon)
+        - diagnostic variables (time, lat, lon)
         - static variables (lat, lon)
         
     Parameters:
@@ -279,17 +299,24 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
     '''
 
     def __init__(
-            self,
-            filenames,
-            filename_forcing=None,
-            filename_static=None,
-            history_len=2,
-            forecast_len=0,
-            transform=None,
-            seed=42,
-            skip_periods=None,
-            one_shot=None,
-            max_forecast_len=None
+        self,
+        varname_upper_air,
+        varname_surface,
+        varname_forcing,
+        varname_static,
+        varname_diagnostic,
+        filenames,
+        filename_surface=None,
+        filename_forcing=None,
+        filename_static=None,
+        filename_diagnostic=None,
+        history_len=2,
+        forecast_len=0,
+        transform=None,
+        seed=42,
+        skip_periods=None,
+        one_shot=None,
+        max_forecast_len=None
     ):
         self.history_len = history_len
         self.forecast_len = forecast_len
@@ -314,16 +341,23 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
 
         # ======================================================== #
         # ERA5 operations
-        all_fils = []
+        all_files = []
         filenames = sorted(filenames)
+        
         for fn in filenames:
-            all_fils.append(get_forward_data(filename=fn))
-        self.all_fils = all_fils
+            # drop variables if they are not in the config
+            xarray_dataset = get_forward_data(filename=fn)
+            xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_upper_air)
 
-        # get sample indices for all ERA5 files:
+            # collect yearly datasets within a list
+            all_files.append(xarray_dataset)
+            
+        self.all_files = all_files
+        
+        # get sample indices from ERA5 upper-air files:
         ind_start = 0
-        self.ERA5_indices = {}  # <------ change
-        for ind_file, ERA5_xarray in enumerate(self.all_fils):
+        self.ERA5_indices = {} # <------ change
+        for ind_file, ERA5_xarray in enumerate(self.all_files):
             # [number of samples, ind_start, ind_end]
             self.ERA5_indices[str(ind_file)] = [len(ERA5_xarray['time']),
                                                 ind_start,
@@ -336,7 +370,12 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
 
         if self.filename_forcing is not None:
             assert os.path.isfile(filename_forcing), 'Cannot find forcing file [{}]'.format(filename_forcing)
-            self.xarray_forcing = get_forward_data_netCDF4(filename_forcing)
+
+            # drop variables if they are not in the config
+            xarray_dataset = get_forward_data_netCDF4(filename_forcing)
+            xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_forcing)
+            
+            self.xarray_forcing = xarray_dataset
         else:
             self.xarray_forcing = False
 
@@ -345,11 +384,63 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         self.filename_static = filename_static
 
         if self.filename_static is not None:
-            assert os.path.isfile(filename_static), 'Cannot find static file [{}]'.format(filename_forcing)
-            self.xarray_static = get_forward_data_netCDF4(filename_static)
+            assert os.path.isfile(filename_static), 'Cannot find static file [{}]'.format(filename_static)
+
+            # drop variables if they are not in the config
+            xarray_dataset = get_forward_data_netCDF4(filename_static)
+            xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_static)
+            
+            self.xarray_static = xarray_dataset
         else:
             self.xarray_static = False
 
+        # ======================================================== #
+        # diagnostic file
+        self.filename_diagnostic = filename_diagnostic
+        
+        if self.filename_diagnostic is not None:
+
+            diagnostic_files = []
+            filename_diagnostic = sorted(filename_diagnostic)
+            
+            for fn in filename_diagnostic:
+
+                # drop variables if they are not in the config
+                xarray_dataset = get_forward_data(filename=fn)
+                xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_diagnostic)
+                
+                diagnostic_files.append(xarray_dataset)
+                
+            self.diagnostic_files = diagnostic_files
+            
+            assert len(self.diagnostic_files)==len(self.all_files), \
+                'Mismatch between the total number of diagnostic files and upper-air files'
+        else:
+            self.diagnostic_files = False
+            
+        # ======================================================== #
+        # surface files
+        if filename_surface is not None:
+        
+            surface_files = []
+            filename_surface = sorted(filename_surface)
+        
+            for fn in filename_surface:
+
+                # drop variables if they are not in the config
+                xarray_dataset = get_forward_data(filename=fn)
+                xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_surface)
+                
+                surface_files.append(xarray_dataset)
+                
+            self.surface_files = surface_files
+            
+            assert len(self.surface_files)==len(self.all_files), \
+                'Mismatch between the total number of surface files and upper-air files'
+        else:
+            self.surface_files = False
+            
+    
     def __post_init__(self):
         # Total sequence length of each sample.
         self.total_seq_len = self.history_len + self.forecast_len
@@ -357,7 +448,7 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
     def __len__(self):
         # compute the total number of length
         total_len = 0
-        for ERA5_xarray in self.all_fils:
+        for ERA5_xarray in self.all_files:
             total_len += len(ERA5_xarray['time']) - self.total_seq_len + 1
         return total_len
 
@@ -373,16 +464,25 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         ind_start_in_file = index - ind_start
 
         # handle out-of-bounds
-        ind_largest = len(self.all_fils[int(ind_file)]['time']) - (self.history_len + self.forecast_len + 1)
+        ind_largest = len(self.all_files[int(ind_file)]['time'])-(self.history_len+self.forecast_len+1)
         if ind_start_in_file > ind_largest:
             ind_start_in_file = ind_largest
         # ========================================================================== #
         # subset xarray on time dimension & load it to the memory
-
+        
+        ind_end_in_file = ind_start_in_file+self.history_len+self.forecast_len
+        
         ## ERA5_subset: a xarray dataset that contains training input and target (for the current index)
-        ind_end_in_file = ind_start_in_file + self.history_len + self.forecast_len
-        ERA5_subset = self.all_fils[int(ind_file)].isel(
-            time=slice(ind_start_in_file, ind_end_in_file + 1)).load()
+        ERA5_subset = self.all_files[int(ind_file)].isel(
+            time=slice(ind_start_in_file, ind_end_in_file+1)).load()
+        
+        if self.surface_files:
+            ## subset surface variables
+            surface_subset = self.surface_files[int(ind_file)].isel(
+                time=slice(ind_start_in_file, ind_end_in_file+1)).load()
+    
+            ## merge upper-air and surface here:
+            ERA5_subset = ERA5_subset.merge(surface_subset)
 
         # ==================================================== #
         # split ERA5_subset into training inputs and targets + merge with forcing and static
@@ -407,7 +507,7 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
             forcing_subset_input = forcing_subset_input.isel(time=slice(0, self.history_len, self.skip_periods)).load()
 
             # update
-
+            
             forcing_subset_input['time'] = historical_ERA5_images['time']
 
             # merge
@@ -429,13 +529,24 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
 
             # merge
             historical_ERA5_images = historical_ERA5_images.merge(static_subset_input)
-
+        
         # ==================================================== #
         # xarray dataset as target
-        ## target_ERA5_images: the final input
-
+        ## target_ERA5_images: the final target
+        
         target_ERA5_images = ERA5_subset.isel(time=slice(self.history_len, ind_end_time, self.skip_periods))
 
+        ## merge diagnoisc input here:
+        if self.diagnostic_files:
+            
+            # subset diagnostic variables
+            diagnostic_subset = self.diagnostic_files[int(ind_file)].isel(
+                time=slice(ind_start_in_file, ind_end_in_file+1)).load()
+            
+            # merge into the target dataset
+            target_diagnostic = diagnostic_subset.isel(time=slice(self.history_len, ind_end_time, self.skip_periods))
+            target_ERA5_images = target_ERA5_images.merge(target_diagnostic)
+            
         if self.one_shot is not None:
             # get the final state of the target as one-shot
             target_ERA5_images = target_ERA5_images.isel(time=slice(0, 1))
