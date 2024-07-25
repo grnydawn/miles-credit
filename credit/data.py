@@ -424,7 +424,7 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
                 
             self.diagnostic_files = diagnostic_files
             
-            assert len(self.diagnostic_files)==len(self.all_files), \
+            assert len(self.diagnostic_files) == len(self.all_files), \
                 'Mismatch between the total number of diagnostic files and upper-air files'
         else:
             self.diagnostic_files = False
@@ -446,12 +446,11 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
                 
             self.surface_files = surface_files
             
-            assert len(self.surface_files)==len(self.all_files), \
+            assert len(self.surface_files) == len(self.all_files), \
                 'Mismatch between the total number of surface files and upper-air files'
         else:
             self.surface_files = False
-            
-    
+
     def __post_init__(self):
         # Total sequence length of each sample.
         self.total_seq_len = self.history_len + self.forecast_len
