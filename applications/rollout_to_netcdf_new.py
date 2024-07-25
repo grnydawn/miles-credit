@@ -197,7 +197,7 @@ def predict(rank, world_size, conf, p):
                     x = concat_and_reshape(batch["x"], batch["x_surf"]).to(device).float()
                 else:
                     # no x_surf
-                    x = reshape_only(batch["x"]).to(self.device).float()
+                    x = reshape_only(batch["x"]).to(device).float()
 
                 init_datetime_str = datetime.datetime.utcfromtimestamp(date_time)
                 init_datetime_str = init_datetime_str.strftime('%Y-%m-%dT%HZ')
