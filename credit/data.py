@@ -642,6 +642,20 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         # other settings
         self.current_epoch = 0
         self.rollout_p = rollout_p
+        
+        if 'lead_time_periods' in conf['data']:
+            self.lead_time_periods = conf['data']['lead_time_periods']
+        else:
+            self.lead_time_periods = 1
+        
+        if 'skip_periods' in conf['data']:
+            self.skip_periods = conf['data']['skip_periods']
+        else:
+            self.skip_periods = 1
+            
+        if self.skip_periods is None:
+            self.skip_periods = 1
+            
 
     def ds_read_and_subset(self, filename, time_start, time_end, varnames):
         sliced_x = xr.open_zarr(filename, consolidated=True)
@@ -694,7 +708,10 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         # becuase their previous step forecasted time are init times of the later forecasted time
         start_time = self.fcst_datetime[index][0] # string
         date_object = datetime.datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
-        shifted_hours = self.history_len
+        # =========================================================================== #
+        # <--- !! it MAY NOT work when self.skip_period != 1
+        shifted_hours = self.lead_time_periods * self.skip_periods * self.history_len
+        # =========================================================================== # 
         date_object = date_object - datetime.timedelta(hours=shifted_hours)
         self.fcst_datetime[index][0] = date_object.strftime('%Y-%m-%d %H:%M:%S')
 
@@ -799,22 +816,18 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
                         output_dict[key] = sample_x[key]
                         
                     output_dict['forecast_hour'] = k + 1
-                    output_dict['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[-1]
-                    
                     # Adjust stopping condition
-                    output_dict['stop_forecast'] = (k == (len(data_lookup)-self.history_len-1)) 
+                    output_dict['stop_forecast'] = (k == (len(data_lookup)-self.history_len-1))
+                    output_dict['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[-1]
                 else:
                     output_dict['forecast_hour'] = k + 1
-                    # Adjust stopping condition
-                    output_dict['stop_forecast'] = (k == (len(data_lookup)-self.history_len-1))  
+                     # Adjust stopping condition
+                    output_dict['stop_forecast'] = (k == (len(data_lookup)-self.history_len-1)) 
                     
                 yield output_dict
 
                 if output_dict['stop_forecast']:
                     break
-
-
-
 
 class ERA5Dataset(torch.utils.data.Dataset):
 
