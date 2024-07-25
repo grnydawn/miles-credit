@@ -9,6 +9,23 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def load_loss(loss_type, reduction='mean'):
+    if loss_type == "mse":
+        return torch.nn.MSELoss(reduction=reduction)
+    if loss_type == "msle":
+        return MSLELoss(reduction=reduction)
+    if loss_type == "mae":
+        return torch.nn.L1Loss(reduction=reduction)
+    if loss_type == "huber":
+        return torch.nn.SmoothL1Loss(reduction=reduction)
+    if loss_type == "logcosh":
+        return LogCoshLoss(reduction=reduction)
+    if loss_type == "xtanh":
+        return XTanhLoss(reduction=reduction)
+    if loss_type == "xsigmoid":
+        return XSigmoidLoss(reduction=reduction)
+
+
 class LogCoshLoss(torch.nn.Module):
     def __init__(self, reduction='mean'):
         super().__init__()
