@@ -171,7 +171,8 @@ class Normalize_ERA5_and_Forcing:
         # get surface varnames
         if self.flag_surface:
             self.varname_surface = conf["data"]["surface_variables"]
-
+            self.num_surface = len(self.varname_surface)
+            
         # get diagnostic varnames
         if self.flag_diagnostic:
             self.varname_diagnostic = conf["data"]["diagnostic_variables"]
@@ -720,7 +721,7 @@ class ToTensor_ERA5_and_Forcing:
                         # [time, lat, lon] --> [time, 1, lat, lon]
                         x_static = x_static.unsqueeze(1)
                         
-                    return_dict['x_forcing_static'] = x_static
+                    return_dict['x_forcing_static'] = x_static.float() # <--- convert float64 to float
                 
                 if self.flag_surface:
                     return_dict['x_surf'] = x_surf
