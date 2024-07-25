@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from torch.utils.checkpoint import checkpoint
 
 from timm.layers import DropPath, Mlp, to_2tuple, _assert
+from credit.models.base_model import BaseModel
 
 """
 Adapted from timm v0.9.2:
@@ -648,7 +649,7 @@ class SwinTransformerV2CrStage(nn.Module):
         return x
 
 
-class SwinTransformerV2Cr(nn.Module):
+class SwinTransformerV2Cr(BaseModel):
     r""" Swin Transformer V2
         A PyTorch impl of : `Swin Transformer V2: Scaling Up Capacity and Resolution`  -
           https://arxiv.org/pdf/2111.09883
