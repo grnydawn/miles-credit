@@ -596,16 +596,12 @@ class ToTensor_ERA5_and_Forcing:
         # get forcing varnames
         if self.flag_forcing:
             self.varname_forcing = conf["data"]["forcing_variables"]
-            # <-- need forcing & static num for self.flag_forcing_first
-            self.num_forcing = len(self.varname_forcing) 
         else:
             self.varname_forcing = []
 
         # get static varnames:
         if self.flag_static:
             self.varname_static = conf["data"]["static_variables"]
-            # <-- need forcing & static num for self.flag_forcing_first
-            self.num_static = len(self.varname_forcing)
         else:
             self.varname_static = []
             
