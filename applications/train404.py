@@ -1,14 +1,17 @@
-import warnings
 import os
 import sys
-import yaml
-import wandb
-import optuna
 import shutil
 import logging
+import warnings
+import functools
 
 from pathlib import Path
 from argparse import ArgumentParser
+
+import yaml
+import wandb
+import optuna
+
 from echo.src.base_objective import BaseObjective
 
 import torch
@@ -18,9 +21,9 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from credit.distributed import distributed_model_wrapper
 from torchsummary import summary
-from credit.models.unet404 import SegmentationModel
+from credit.models.unet404 import SegmentationModel404
 from credit.loss404 import VariableTotalLoss2D
-from credit.data import CONUS404Dataset
+from credit.data404 import CONUS404Dataset
 from credit.transforms404 import NormalizeState, ToTensor
 from credit.scheduler import load_scheduler, annealed_probability
 from credit.trainer404 import Trainer
@@ -64,7 +67,7 @@ def load_dataset_and_sampler(conf, world_size, rank, is_train, seed=42):
     history_len = history_len if is_train else valid_history_len
     forecast_len = forecast_len if is_train else valid_forecast_len
     shuffle = is_train
-    name = "Train" if is_train else "Valid"
+    name = "train" if is_train else "validate"
 
     transforms = transforms.Compose([
         NormalizeState(conf),
@@ -76,8 +79,13 @@ def load_dataset_and_sampler(conf, world_size, rank, is_train, seed=42):
         varnames=conf['data']['variables'],
         history_len=conf['data']['history_len'],
         forecast_len=conf['data']['forecast_len'],
-        transform=transforms
+        transform=transforms,
+        start=conf['data']['start'],
+        finish=conf['data']['finish']
     )
+
+    ## todo: conf['data']['start'][name] ('train' or 'validate') here & in config
+    ## to split dataset into train and validate while training
 
     sampler = DistributedSampler(
         dataset,
@@ -162,7 +170,7 @@ def model_and_memory_summary(conf):
 
     # model
 
-    m = SegmentationModel(conf)
+    m = SegmentationModel404(conf)
     # m = load_model(conf)
 
     # send the module to the correct device first
@@ -253,8 +261,7 @@ def main(rank, world_size, conf, trial=False):
 
     # model
 
-    m = SegmentationModel(conf)
-    # m = load_model(conf)
+    m = SegmentationModel404(conf)
 
     # have to send the module to the correct device first
 

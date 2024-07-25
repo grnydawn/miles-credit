@@ -12,6 +12,7 @@ from credit.models.vit2d import ViT2D
 from credit.models.vit3d import ViT3D
 from credit.models.rvt import RViT
 from credit.models.unet import SegmentationModel
+from credit.models.unet404 import SegmentationModel404
 from credit.models.fuxi import Fuxi
 from credit.models.swin import SwinTransformerV2Cr
 
@@ -27,6 +28,7 @@ model_types = {
     "crossformer": (CrossFormer, "Loading the CrossFormer model with a conv decoder head and skip connections ..."),
     "crossformer-deprecated": (CrossFormerDep, "Loading the CrossFormer model with a conv decoder head and skip connections ..."),
     "unet": (SegmentationModel, "Loading a unet model"),
+    "unet404": (SegmentationModel404, "Loading unet404 model"),
     "fuxi": (Fuxi, "Loading Fuxi model"),
     "swin": (SwinTransformerV2Cr, "Loading the minimal Swin model")
 } 
@@ -43,7 +45,8 @@ def load_model(conf, load_weights=False):
 
     model_type = model_conf.pop("type")
 
-    if model_type == 'unet':
+    #if model_type == 'unet':
+    if model_type in ('unet', 'unet404'):
         import torch
         model, message = model_types[model_type]
         logger.info(message)

@@ -5,6 +5,7 @@ from collections import defaultdict
 
 import numpy as np
 import pandas as pd
+import datetime as dt
 import torch
 import torch.distributed as dist
 import torch.fft
@@ -412,9 +413,10 @@ class Trainer:
             results_dict["epoch"].append(epoch)
             for name in ["loss", "acc", "mae"]:
                 results_dict[f"train_{name}"].append(np.mean(train_results[f"train_{name}"]))
-                results_dict[f"valid_{name}"].append(np.mean(valid_results[f"valid_{name}"]))
-            results_dict['train_forecast_len'].append(np.mean(train_results['train_forecast_len']))
-            results_dict["lr"].append(optimizer.param_groups[0]["lr"])
+                # results_dict[f"valid_{name}"].append(np.mean(valid_results[f"valid_{name}"]))
+            # results_dict['train_forecast_len'].append(np.mean(train_results['train_forecast_len']))
+            results_dict["learn_rate"].append(optimizer.param_groups[0]["lr"])
+            results_dict["datetime"].append(dt.datetime.now().isoformat())
 
             df = pd.DataFrame.from_dict(results_dict).reset_index()
 
