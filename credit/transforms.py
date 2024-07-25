@@ -596,12 +596,16 @@ class ToTensor_ERA5_and_Forcing:
         # get forcing varnames
         if self.flag_forcing:
             self.varname_forcing = conf["data"]["forcing_variables"]
+            # <-- need forcing & static num for self.flag_forcing_first
+            self.num_forcing = len(self.varname_forcing) 
         else:
             self.varname_forcing = []
 
         # get static varnames:
         if self.flag_static:
             self.varname_static = conf["data"]["static_variables"]
+            # <-- need forcing & static num for self.flag_forcing_first
+            self.num_static = len(self.varname_forcing)
         else:
             self.varname_static = []
             
@@ -610,8 +614,12 @@ class ToTensor_ERA5_and_Forcing:
             self.has_forcing_static = True
         else:
             self.has_forcing_static = False
-            
-        #self.allvars = self.varname_upper_air + self.varname_surface
+
+        # ======================================================================================== #
+        # forcing variable first (new models) vs. static variable first (some old models)
+        # this flag makes sure that the class is compatible with some old CREDIT models
+        self.flag_static_first = ('static_first' in conf['data']) and (conf["data"]["static_first"])
+        # ======================================================================================== #
             
     def __call__(self, sample: Sample) -> Sample:
 
@@ -645,10 +653,15 @@ class ToTensor_ERA5_and_Forcing:
                     numpy_vars_surface = np.array(list_vars_surface) # [num_surf_vars, hist_len, lat, lon]
 
                 # organize forcing and static (input only)
+                if self.flag_static_first:
+                    varname_forcing_static = self.varname_static + self.varname_forcing
+                else:
+                    varname_forcing_static = self.varname_forcing + self.varname_static
+                    
                 if self.has_forcing_static:
                     if key == 'historical_ERA5_images' or key == 'x':
                         list_vars_forcing_static = []
-                        for var_name in (self.varname_forcing + self.varname_static):
+                        for var_name in varname_forcing_static:
                             var_value = value[var_name].values
                             list_vars_forcing_static.append(var_value)
     
@@ -722,6 +735,7 @@ class ToTensor_ERA5_and_Forcing:
                         x_static = x_static.unsqueeze(1)
                         
                     return_dict['x_forcing_static'] = x_static.float() # <--- convert float64 to float
+                        
                 
                 if self.flag_surface:
                     return_dict['x_surf'] = x_surf
