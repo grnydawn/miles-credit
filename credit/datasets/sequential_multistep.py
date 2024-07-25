@@ -92,6 +92,13 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
                     int(target_data.time.values[0].astype('datetime64[s]').astype(int))
                 ]
 
+                if self.history_len == 1:
+                    concatenated_samples['x'] = concatenated_samples['x'].unsqueeze(0)
+                    concatenated_samples['x_surf'] = concatenated_samples['x_surf'].unsqueeze(0)
+
+                concatenated_samples['y'] = concatenated_samples['y'].unsqueeze(0)
+                concatenated_samples['y_surf'] = concatenated_samples['y_surf'].unsqueeze(0)
+
                 yield concatenated_samples
 
                 if stop_forecast:

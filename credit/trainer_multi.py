@@ -100,19 +100,18 @@ class Trainer:
                     batch = next(dl)
 
                     for i, forecast_hour in enumerate(batch["forecast_hour"]):
-
                         if forecast_hour == 0:  # use true x -- initial condition time-step
                             x_atmo = batch["x"]
                             x_surf = batch["x_surf"]
-                            if x_atmo.dim() == 5:
-                                x_atmo = x_atmo.unsqueeze(1)
-                            if x_surf.dim() == 4:
-                                x_surf = x_surf.unsqueeze(1)
                             x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
                         else:  # use model's predictions
-                            # x_detach = x.detach() # x[:, :, 1:].detach()
-                            # x = torch.cat([x_detach, y_pred.detach()], dim=2)
-                            x = y_pred.detach()
+                            if x.shape[2] > 1:
+                                # discard any statics from x here as they will get added below from batch
+                                x_detach = x[:, :, 1:].detach()
+                                atmos_vars = y_pred.shape[1]
+                                x = torch.cat([x_detach[:, :atmos_vars], y_pred.detach()], dim=2)
+                            else:
+                                x = y_pred.detach()
 
                         if "static" in batch:
                             if static is None:
@@ -121,9 +120,11 @@ class Trainer:
 
                         if "TOA" in batch:
                             toa = batch["TOA"].to(self.device)
-                            if x.dim() == 5:
+                            if x.shape[2] == 1:  # Sequential with time = 1
+                                toa = toa.unsqueeze(1).unsqueeze(1)
+                            elif x.shape[2] == 2:  # Sequential with time = 2
                                 toa = toa.unsqueeze(1)
-                            x = torch.cat([x, toa.unsqueeze(1)], dim=1)
+                            x = torch.cat([x, toa], dim=1)
 
                         # predict with the model
                         y_pred = self.model(x)
@@ -131,10 +132,7 @@ class Trainer:
                         # calculate rolling loss
                         y_atmo = batch["y"]
                         y_surf = batch["y_surf"]
-                        if y_atmo.dim() == 5:
-                            y_atmo = y_atmo.unsqueeze(1)
-                        if y_surf.dim() == 4:
-                            y_surf = y_surf.unsqueeze(1)
+
                         y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
 
                         loss = criterion(y.to(y_pred.dtype), y_pred).mean()
