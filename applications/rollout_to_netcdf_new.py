@@ -386,15 +386,6 @@ if __name__ == "__main__":
         
     # create a save location for rollout
     # ---------------------------------------------------- #
-    # choose model weights dir if save_forecast not given
-    # if 'save_forecast' in conf['predict']:
-    #     forecast_save_loc = conf['predict']['save_forecast']
-    # else:
-    #     print('Roll-out target dir not specified. Outputs will be saved to the model weights folder')
-        
-    #     conf['predict']['save_forecast'] = os.path.join(os.path.expandvars(conf['save_loc']), 'forecasts')
-    #     forecast_save_loc = conf['predict']['save_forecast']
-
     assert 'save_forecast' in conf['predict'], "Please specify the output dir through conf['predict']['save_forecast']"
     
     forecast_save_loc = conf['predict']['save_forecast']
