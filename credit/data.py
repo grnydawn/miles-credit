@@ -4,7 +4,8 @@ data.py
 Content:
     - get_forward_data(filename) -> xr.DataArray
     - get_forward_data_netCDF4(filename) -> xr.DataArray
-    - ERA5_Static_Dataset(torch.utils.data.Dataset)
+    - drop_var_from_dataset()
+    - ERA5_and_Forcing_Dataset(torch.utils.data.Dataset)
 
 Yingkai Sha
 ksha@ucar.edu
@@ -578,6 +579,241 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         sample["index"] = index
 
         return sample
+
+class Predict_Dataset(torch.utils.data.IterableDataset):
+    '''
+    Same as ERA5_and_Forcing_Dataset() but for prediction only
+    '''
+    def __init__(self,
+                 conf, 
+                 varname_upper_air,
+                 varname_surface,
+                 varname_forcing,
+                 varname_static,
+                 filenames,
+                 filename_surface,
+                 filename_forcing,
+                 filename_static,
+                 fcst_datetime,
+                 history_len,
+                 rank,
+                 world_size,
+                 transform=None,
+                 rollout_p=0.0,
+                 which_forecast=None):
+        
+        # ------------------------------------------------------------------------------ #
+        
+        ## no diagnostics because they are output only
+        varname_diagnostic = None
+        
+        self.rank = rank
+        self.world_size = world_size
+        self.transform = transform
+        self.history_len = history_len
+        self.fcst_datetime = fcst_datetime
+        self.which_forecast = which_forecast # <-- got from the old roll-out. Dont know 
+        
+        # -------------------------------------- #
+        self.filenames = sorted(filenames) # <---------------- a list of files
+        self.filename_surface = sorted(filename_surface) # <-- a list of files
+        self.filename_forcing = filename_forcing # <-- single file
+        self.filename_static = filename_static # <---- single file
+        
+        # -------------------------------------- #
+        self.varname_upper_air = varname_upper_air
+        self.varname_surface = varname_surface
+        self.varname_forcing = varname_forcing
+        self.varname_static = varname_static
+
+        # ====================================== #
+        # import all upper air zarr files
+        all_files = []
+        for fn in self.filenames:
+            # drop variables if they are not in the config
+            xarray_dataset = get_forward_data(filename=fn)
+            xarray_dataset = drop_var_from_dataset(xarray_dataset, self.varname_upper_air)
+            # collect yearly datasets within a list
+            all_files.append(xarray_dataset)
+        self.all_files = all_files
+        # ====================================== #
+
+        # -------------------------------------- #
+        # other settings
+        self.current_epoch = 0
+        self.rollout_p = rollout_p
+
+    def ds_read_and_subset(self, filename, time_start, time_end, varnames):
+        sliced_x = xr.open_zarr(filename, consolidated=True)
+        sliced_x = sliced_x.isel(time=slice(time_start, time_end))
+        sliced_x = drop_var_from_dataset(sliced_x, varnames)
+        return sliced_x
+
+    def load_zarr_as_input(self, file_key, time_key):
+        # get the needed file from a list of zarr files
+        # open the zarr file as xr.dataset and subset based on the needed time
+        
+        # sliced_x: the final output, starts with an upper air xr.dataset
+        sliced_x = self.ds_read_and_subset(self.filenames[file_key], 
+                                           time_key, 
+                                           time_key+self.history_len+1, 
+                                           self.varname_upper_air)
+        # surface variables
+        if self.varname_surface is not None:
+            sliced_surface = self.ds_read_and_subset(self.filename_surface[file_key], 
+                                                     time_key, 
+                                                     time_key+self.history_len+1, 
+                                                     self.varname_surface)
+            # merge surface to sliced_x
+            sliced_surface['time'] = sliced_x['time']
+            sliced_x = sliced_x.merge(sliced_surface)
+            
+        # forcing / static
+        if self.filename_forcing is not None:
+            sliced_forcing = xr.open_dataset(self.filename_forcing)
+            sliced_forcing = drop_var_from_dataset(sliced_forcing, self.varname_forcing)
+            sliced_forcing = sliced_forcing.isel(time=slice(time_key, time_key+self.history_len+1))
+            sliced_forcing['time'] = sliced_x['time']
+            # merge forcing to sliced_x
+            sliced_x = sliced_x.merge(sliced_forcing)
+            
+        if self.filename_static is not None:
+            sliced_static = xr.open_dataset(self.filename_static)
+            sliced_static = drop_var_from_dataset(sliced_static, self.varname_static)
+            sliced_static = sliced_static.expand_dims(dim={"time": len(sliced_x['time'])})
+            sliced_static['time'] = sliced_x['time']
+            # merge static to sliced_x
+            sliced_x = sliced_x.merge(sliced_static)
+        return sliced_x
+
+    
+    def find_start_stop_indices(self, index):
+        # convert the first forecasted time to initialization time
+        # by subtracting the forecast length (assuming 1 step)
+        # other later forecasted time are viewed as init time directly 
+        # becuase their previous step forecasted time are init times of the later forecasted time
+        start_time = self.fcst_datetime[index][0] # string
+        date_object = datetime.datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
+        shifted_hours = self.history_len
+        date_object = date_object - datetime.timedelta(hours=shifted_hours)
+        self.fcst_datetime[index][0] = date_object.strftime('%Y-%m-%d %H:%M:%S')
+
+        # convert all strings to np.datetime64
+        datetime_objs = [np.datetime64(date) for date in self.fcst_datetime[index]]
+        start_time, stop_time = [str(datetime_obj) + '.000000000' for datetime_obj in datetime_objs]
+        self.start_time = np.datetime64(start_time).astype(datetime.datetime)
+        self.stop_time = np.datetime64(stop_time).astype(datetime.datetime)
+
+        info = {}
+
+        for idx, dataset in enumerate(self.all_files):
+            start_time = np.datetime64(dataset['time'].min().values).astype(datetime.datetime)
+            stop_time = np.datetime64(dataset['time'].max().values).astype(datetime.datetime)
+            track_start = False
+            track_stop = False
+
+            if start_time <= self.start_time <= stop_time:
+                # Start time is in this file, use start time index
+                dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
+                start_idx = np.searchsorted(dataset, self.start_time)
+                start_idx = max(0, min(start_idx, len(dataset)-1))
+                track_start = True
+
+            elif start_time < self.stop_time and stop_time > self.start_time:
+                # File overlaps time range, use full file
+                start_idx = 0
+                track_start = True
+
+            if start_time <= self.stop_time <= stop_time:
+                # Stop time is in this file, use stop time index
+                if isinstance(dataset, np.ndarray):
+                    pass
+                else:
+                    dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
+                stop_idx = np.searchsorted(dataset, self.stop_time)
+                stop_idx = max(0, min(stop_idx, len(dataset)-1))
+                track_stop = True
+
+            elif start_time < self.stop_time and stop_time > self.start_time:
+                # File overlaps time range, use full file
+                stop_idx = len(dataset) - 1
+                track_stop = True
+
+            # Only include files that overlap the time range
+            if track_start and track_stop:
+                info[idx] = ((idx, start_idx), (idx, stop_idx))
+
+        indices = []
+        for dataset_idx, (start, stop) in info.items():
+            for i in range(start[1], stop[1]+1):
+                indices.append((start[0], i))
+        return indices
+
+    def __len__(self):
+        return len(self.fcst_datetime)
+
+    def __iter__(self):
+        worker_info = get_worker_info()
+        num_workers = worker_info.num_workers if worker_info is not None else 1
+        worker_id = worker_info.id if worker_info is not None else 0
+        sampler = DistributedSampler(self, 
+                                     num_replicas=num_workers*self.world_size, 
+                                     rank=self.rank*num_workers+worker_id, 
+                                     shuffle=False)
+        for index in sampler:
+            # get time indices for inputs
+            data_lookup = self.find_start_stop_indices(index)
+            for k, (file_key, time_key) in enumerate(data_lookup):
+                
+                if k == 0:
+                    output_dict = {}
+                    # get all inputs (upper air, surface, forcing, static ) in one xr.Dataset
+                    sliced_x = self.load_zarr_as_input(file_key, time_key)
+                    
+                    # Check if additional data from the next file is needed
+                    if len(sliced_x['time']) < self.history_len + 1:
+                        
+                        # Load excess data from the next file
+                        next_file_idx = self.filenames.index(self.filenames[file_key]) + 1
+                        
+                        if next_file_idx == len(self.filenames):
+                            # not enough input data to support this forecast
+                            raise OSError("You have reached the end of the available data. Exiting.")
+                            
+                        else:
+                            # time_key = 0 because we need the beginning of the next file only
+                            sliced_x_next = self.load_zarr_as_input(next_file_idx, 0)
+                            
+                            # Concatenate excess data from the next file with the current data
+                            sliced_x = xr.concat([sliced_x, sliced_x_next], dim='time')
+
+                    # key 'historical_ERA5_images' is recongnized as input in credit.transform
+                    sample_x = {
+                        'historical_ERA5_images': sliced_x.isel(time=slice(0, self.history_len))
+                    }
+                    
+                    if self.transform:
+                        sample_x = self.transform(sample_x)
+                        
+                    for key in sample_x.keys():
+                        output_dict[key] = sample_x[key]
+                        
+                    output_dict['forecast_hour'] = k + 1
+                    output_dict['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[-1]
+                    
+                    # Adjust stopping condition
+                    output_dict['stop_forecast'] = (k == (len(data_lookup)-self.history_len-1)) 
+                else:
+                    output_dict['forecast_hour'] = k + 1
+                    # Adjust stopping condition
+                    output_dict['stop_forecast'] = (k == (len(data_lookup)-self.history_len-1))  
+                    
+                yield output_dict
+
+                if output_dict['stop_forecast']:
+                    break
+
+
 
 
 class ERA5Dataset(torch.utils.data.Dataset):
