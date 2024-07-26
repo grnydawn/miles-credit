@@ -29,9 +29,10 @@ from credit.data import ERA5Dataset, ERA5_and_Forcing_Dataset, Dataset_BridgeSca
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
 
-from credit.trainers.trainer import Trainer
-# <-------------- the new pipeline
-from credit.trainers.trainer_new import Trainer as Trainer_New
+# from credit.trainers.trainer import Trainer
+# # <-------------- the new pipeline
+# from credit.trainers.trainer_new import Trainer as Trainer_New
+from credit.trainers import load_trainer
 
 from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
@@ -450,26 +451,23 @@ def main(rank, world_size, conf, trial=False):
     metrics = LatWeightedMetrics(conf)
 
     # Initialize a trainer object
-    # <----------------------------------- replace
-    if conf['data']['scaler_type'] == 'std_new':
-        trainer = Trainer_New(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
-    else:
-        trainer = Trainer(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
+    trainer_cls = load_trainer(conf)
+    trainer = trainer_cls(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
 
     # Fit the model
 
     result = trainer.fit(
         conf,
-        train_loader,
-        valid_loader,
-        optimizer,
-        train_criterion,
-        valid_criterion,
-        scaler,
-        scheduler,
-        metrics,
-        rollout_scheduler=annealed_probability,
-        trial=trial
+        train_loader=train_loader,
+        valid_loader=train_loader,
+        optimizer=optimizer,
+        train_criterion=train_criterion,
+        valid_criterion=valid_criterion,
+        scaler=scaler,
+        scheduler=scheduler,
+        metrics=metrics,
+        rollout_scheduler=annealed_probability,  # Optional
+        trial=trial  # Optional
     )
 
     return result

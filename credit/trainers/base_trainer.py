@@ -207,9 +207,6 @@ class BaseTrainer(ABC):
                 train_loader.sampler.set_epoch(epoch)
             else:
                 train_loader.dataset.set_epoch(epoch)
-                if rollout_scheduler is not None:
-                    conf['trainer']['stop_rollout'] = rollout_scheduler(epoch, epochs)
-                    train_loader.dataset.set_rollout_prob(conf['trainer']['stop_rollout'])
 
             ############
             #

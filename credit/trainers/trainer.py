@@ -60,13 +60,9 @@ class Trainer(BaseTrainer):
             scheduler.step()
 
         # set up a custom tqdm
-        if isinstance(trainloader.dataset, IterableDataset):
-            # we sample forecast termination with probability p during training
-            trainloader.dataset.set_rollout_prob(rollout_p)
-        else:
-            batches_per_epoch = (
-                batches_per_epoch if 0 < batches_per_epoch < len(trainloader) else len(trainloader)
-            )
+        batches_per_epoch = (
+            batches_per_epoch if 0 < batches_per_epoch < len(trainloader) else len(trainloader)
+        )
 
         batch_group_generator = tqdm.tqdm(
             enumerate(trainloader),

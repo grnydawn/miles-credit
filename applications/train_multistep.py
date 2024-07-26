@@ -22,7 +22,8 @@ from credit.loss import VariableTotalLoss2D
 from credit.datasets.sequential_multistep import DistributedSequentialDataset
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
-from credit.trainers.trainer_multistep import Trainer
+# from credit.trainer_multistep import Trainer
+from credit.trainers import load_trainer
 from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything
@@ -227,8 +228,9 @@ def main(rank, world_size, conf, trial=False):
     metrics = LatWeightedMetrics(conf)
 
     # Initialize a trainer object
-
-    trainer = Trainer(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
+    trainer_cls = load_trainer(conf)
+    trainer = trainer_cls(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
+    # trainer = Trainer(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
 
     # Fit the model
 
