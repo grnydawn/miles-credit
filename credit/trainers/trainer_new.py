@@ -1,5 +1,5 @@
 '''
-trainer.py 
+trainer.py
 -------------------------------------------------------
 Content:
     - Trainer
@@ -29,21 +29,18 @@ from credit.data import concat_and_reshape, reshape_only
 from credit.models.checkpoint import TorchFSDPCheckpointIO
 from credit.scheduler import update_on_batch, update_on_epoch
 from credit.trainers.utils import cleanup, accum_log
+from credit.trainers.base_trainer import BaseTrainer
 
 
 logger = logging.getLogger(__name__)
 
 
-class Trainer:
+class Trainer(BaseTrainer):
 
-    def __init__(self, model, rank, module=False):
-        super(Trainer, self).__init__()
-        self.model = model
-        self.rank = rank
-        self.device = torch.device(f"cuda:{rank % torch.cuda.device_count()}") if torch.cuda.is_available() else torch.device("cpu")
-
-        if module:
-            self.model = self.model.module
+    def __init__(self, model: torch.nn.Module, rank: int, module: bool = False):
+        super().__init__(model, rank, module)
+        # Add any additional initialization if needed
+        logger.info("Loading a batch trainer class")
 
     # Training function.
     def train_one_epoch(
@@ -66,7 +63,7 @@ class Trainer:
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
 
         if 'stop_rollout' not in conf['trainer']:
-            rollout_p = 1.0 
+            rollout_p = 1.0
         else:
             rollout_p = conf['trainer']['stop_rollout']
 
@@ -77,7 +74,7 @@ class Trainer:
 
         if 'diagnostic_variables' in conf["data"]:
             varnum_diag = len(conf["data"]['diagnostic_variables'])
-            
+
         # update the learning rate if epoch-by-epoch updates that dont depend on a metric
         if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "lambda":
             scheduler.step()
@@ -97,7 +94,7 @@ class Trainer:
             leave=True,
             disable=True if self.rank > 0 else False
         )
-        
+
         results_dict = defaultdict(list)
 
         for i, batch in batch_group_generator:
@@ -112,7 +109,7 @@ class Trainer:
 
                 if "x_surf" in batch:
                     # combine x and x_surf
-                    # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon) 
+                    # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon)
                     # output: (batch_num, var, time, lat, lon), 'x' first and then 'x_surf'
                     x = concat_and_reshape(batch["x"], batch["x_surf"]).to(self.device).float()
                 else:
@@ -122,28 +119,28 @@ class Trainer:
                 # --------------------------------------------------------------------------------- #
                 # add forcing and static variables
                 if 'x_forcing_static' in batch:
-                    
+
                     # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
                     x_forcing_batch = batch['x_forcing_static'].to(self.device).permute(0, 2, 1, 3, 4).float()
 
                     # concat on var dimension
                     x = torch.cat((x, x_forcing_batch), dim=1)
-                    
+
                 # --------------------------------------------------------------------------------- #
                 # combine y and y_surf
                 if "y_surf" in batch:
                     y = concat_and_reshape(batch["y"], batch["y_surf"]).to(self.device)
                 else:
                     y = reshape_only(batch["y"]).to(self.device)
-                
+
                 if 'y_diag' in batch:
 
                     # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
                     y_diag_batch = batch['y_diag'].to(self.device).permute(0, 2, 1, 3, 4).float()
-                    
+
                     # concat on var dimension
                     y = torch.cat((y, y_diag_batch), dim=1)
-                
+
                 k = 0
                 while True:
 
@@ -166,7 +163,7 @@ class Trainer:
 
                             # detach and throw away the oldest time dim
                             x_detach = x.detach()[:, :, 1:, ...]
-                            
+
                             # use y_pred as the next-hour input
                             if 'y_diag' in batch:
                                 # drop diagnostic variables
@@ -180,27 +177,27 @@ class Trainer:
 
                                 # concat forcing and static to y_pred, y_pred will be the next input
                                 y_pred = torch.cat((y_pred, x_forcing_detach), dim=1)
-                            
+
                             x = torch.cat([x_detach, y_pred], dim=2).detach()
-                            
+
                         else:
                             # use y_pred as the next-hour inputs
                             x = y_pred.detach()
-                            
+
                             if 'y_diag' in batch:
                                 x = x[:, :-varnum_diag, ...]
-                                
+
                             # add forcing and static vars to y_pred
                             if 'x_forcing_static' in batch:
                                 x = torch.cat((x, x_forcing_batch), dim=1)
 
                 y = y.to(device=self.device, dtype=y_pred.dtype)
-                
+
                 loss = criterion(y, y_pred)
 
                 # Metrics
                 metrics_dict = metrics(y_pred.float(), y.float())
-                
+
                 for name, value in metrics_dict.items():
                     value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
                     if distributed:
@@ -222,7 +219,7 @@ class Trainer:
 
             # Handle batch_loss
             batch_loss = torch.Tensor([logs["loss"]]).cuda(self.device)
-            
+
             if distributed:
                 dist.all_reduce(batch_loss, dist.ReduceOp.AVG, async_op=False)
             results_dict["train_loss"].append(batch_loss[0].item())
@@ -253,7 +250,7 @@ class Trainer:
                 np.mean(results_dict["train_mae"]),
                 np.mean(results_dict["train_forecast_len"])
             )
-            
+
             to_print += " lr: {:.12f}".format(optimizer.param_groups[0]["lr"])
             if self.rank == 0:
                 batch_group_generator.set_description(to_print)
@@ -292,7 +289,7 @@ class Trainer:
 
         if 'diagnostic_variables' in conf["data"]:
             varnum_diag = len(conf["data"]['diagnostic_variables'])
-        
+
         results_dict = defaultdict(list)
 
         # set up a custom tqdm
@@ -318,7 +315,7 @@ class Trainer:
 
                 if "x_surf" in batch:
                     # combine x and x_surf
-                    # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon) 
+                    # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon)
                     # output: (batch_num, var, time, lat, lon), 'x' first and then 'x_surf'
                     x = concat_and_reshape(batch["x"], batch["x_surf"]).to(self.device).float()
                 else:
@@ -328,25 +325,25 @@ class Trainer:
                 # --------------------------------------------------------------------------------- #
                 # add forcing and static variables
                 if 'x_forcing_static' in batch:
-                    
+
                     # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
                     x_forcing_batch = batch['x_forcing_static'].to(self.device).permute(0, 2, 1, 3, 4).float()
 
                     # concat on var dimension
                     x = torch.cat((x, x_forcing_batch), dim=1)
-                    
+
                 # --------------------------------------------------------------------------------- #
                 # combine y and y_surf
                 if "y_surf" in batch:
                     y = concat_and_reshape(batch["y"], batch["y_surf"]).to(self.device)
                 else:
                     y = reshape_only(batch["y"]).to(self.device)
-                
+
                 if 'y_diag' in batch:
 
                     # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
                     y_diag_batch = batch['y_diag'].to(self.device).permute(0, 2, 1, 3, 4).float()
-                    
+
                     # concat on var dimension
                     y = torch.cat((y, y_diag_batch), dim=1)
 
@@ -367,7 +364,7 @@ class Trainer:
 
                         # detach and throw away the oldest time dim
                         x_detach = x.detach()[:, :, 1:, ...]
-                        
+
                         # use y_pred as the next-hour input
                         if 'y_diag' in batch:
                             # drop diagnostic variables
@@ -381,38 +378,38 @@ class Trainer:
 
                             # concat forcing and static to y_pred, y_pred will be the next input
                             y_pred = torch.cat((y_pred, x_forcing_detach), dim=1)
-                        
+
                         x = torch.cat([x_detach, y_pred], dim=2).detach()
-                        
+
                     else:
                         # use y_pred as the next-hour inputs
                         x = y_pred.detach()
-                        
+
                         if 'y_diag' in batch:
                             x = x[:, :-varnum_diag, ...]
-                            
+
                         # add forcing and static vars to y_pred
                         if 'x_forcing_static' in batch:
                             x = torch.cat((x, x_forcing_batch), dim=1)
-                            
+
                 loss = criterion(y.to(y_pred.dtype), y_pred)
 
                 # Metrics
                 metrics_dict = metrics(y_pred.float(), y.float())
-                
+
                 for name, value in metrics_dict.items():
                     value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
-                    
+
                     if distributed:
                         dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
-                        
+
                     results_dict[f"valid_{name}"].append(value[0].item())
 
                 batch_loss = torch.Tensor([loss.item()]).cuda(self.device)
-                
+
                 if distributed:
                     torch.distributed.barrier()
-                    
+
                 results_dict["valid_loss"].append(batch_loss[0].item())
 
                 # print to tqdm
@@ -422,7 +419,7 @@ class Trainer:
                     np.mean(results_dict["valid_acc"]),
                     np.mean(results_dict["valid_mae"])
                 )
-                
+
                 if self.rank == 0:
                     batch_group_generator.set_description(to_print)
 
@@ -442,7 +439,7 @@ class Trainer:
 
         return results_dict
 
-    def fit(
+    def fit_deprecated(
         self,
         conf,
         train_loader,
@@ -464,7 +461,7 @@ class Trainer:
         epochs = conf['trainer']['epochs']
         skip_validation = conf['trainer']['skip_validation'] if 'skip_validation' in conf['trainer'] else False
         flag_load_weights = conf['trainer']['load_weights']
-        
+
         # Reload the results saved in the training csv if continuing to train
         if (start_epoch == 0) or (flag_load_weights is False):
             results_dict = defaultdict(list)
