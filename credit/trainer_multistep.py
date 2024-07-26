@@ -7,13 +7,12 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.distributed as dist
-import torch.distributed.checkpoint as DCP
 import torch.fft
 import tqdm
 from torch.cuda.amp import autocast
-from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
-from torch.distributed.fsdp import StateDictType
 from torch.utils.data import IterableDataset
+from credit.models.checkpoint import TorchFSDPCheckpointIO
+from credit.scheduler import update_on_batch, update_on_epoch
 import optuna
 
 
@@ -55,14 +54,13 @@ class Trainer:
         criterion,
         scaler,
         scheduler,
-        metrics
+        metrics,
+        forecast_length=0
     ):
 
         batches_per_epoch = conf['trainer']['batches_per_epoch']
         amp = conf['trainer']['amp']
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
-        teacher_forcing_ratio = conf['trainer']['teacher_forcing_ratio']
-        rollout_p = 1.0 if 'rollout_p' not in conf['trainer'] else conf['trainer']['rollout_p']
 
         # update the learning rate if epoch-by-epoch updates that dont depend on a metric
         if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "lambda":
@@ -71,7 +69,8 @@ class Trainer:
         # set up a custom tqdm
         if isinstance(trainloader.dataset, IterableDataset):
             # we sample forecast termination with probability p during training
-            trainloader.dataset.set_rollout_prob(rollout_p)
+            # trainloader.dataset.set_rollout_prob(rollout_p)
+            pass
         else:
             batches_per_epoch = (
                 batches_per_epoch if 0 < batches_per_epoch < len(trainloader) else len(trainloader)
@@ -85,6 +84,7 @@ class Trainer:
 
         dl = cycle(trainloader)
 
+        static = None
         results_dict = defaultdict(list)
 
         for steps in range(batches_per_epoch):
@@ -92,6 +92,7 @@ class Trainer:
             logs = {}
             loss = 0
             stop_forecast = False
+            y_pred = None  # Place holder that gets updated after first roll-out
 
             with autocast(enabled=amp):
 
@@ -99,79 +100,80 @@ class Trainer:
 
                     batch = next(dl)
 
-                    y_pred = None  # Place holder that gets updated after first roll-out
                     for i, forecast_hour in enumerate(batch["forecast_hour"]):
-
                         if forecast_hour == 0:  # use true x -- initial condition time-step
                             x_atmo = batch["x"]
                             x_surf = batch["x_surf"]
                             x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
-                        elif torch.rand(1).item() < teacher_forcing_ratio:  # Teacher forcing - use true x input with probability p
-                            x_atmo = batch["x"]
-                            x_surf = batch["x_surf"]
-                            x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
                         else:  # use model's predictions
-                            x_detach = x[:, :, 1:].detach()
-                            x = torch.cat([x_detach, y_pred.detach()], dim=2)
+                            if x.shape[2] > 1:
+                                # discard any statics from x here as they will get added below from batch
+                                x_detach = x[:, :, 1:].detach()
+                                atmos_vars = y_pred.shape[1]
+                                x = torch.cat([x_detach[:, :atmos_vars], y_pred.detach()], dim=2)
+                            else:
+                                x = y_pred.detach()
 
+                        if "static" in batch:
+                            if static is None:
+                                static = batch["static"].to(self.device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float()  # [batch, num_stat_vars, hist_len, lat, lon]
+                            x = torch.cat((x, static.clone()), dim=1)
+
+                        if "TOA" in batch:
+                            toa = batch["TOA"].to(self.device)
+                            if x.shape[2] == 1:  # Sequential with time = 1
+                                toa = toa.unsqueeze(1).unsqueeze(1)
+                            elif x.shape[2] == 2:  # Sequential with time = 2
+                                toa = toa.unsqueeze(1)
+                            x = torch.cat([x, toa], dim=1)
+
+                        # predict with the model
                         y_pred = self.model(x)
 
-                        # probability of stopping a forecast rollout early
-                        if batch['stop_forecast'][i] or self.update_on_step:
-                            y_atmo = batch["y"].unsqueeze(1)
-                            y_surf = batch["y_surf"].unsqueeze(1)
-                            y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
-                            loss += criterion(y.to(y_pred.dtype), y_pred).mean()
+                        # calculate rolling loss
+                        y_atmo = batch["y"]
+                        y_surf = batch["y_surf"]
 
-                            # Metrics
-                            metrics_dict = metrics(y_pred.float(), y.float())
-                            for name, value in metrics_dict.items():
-                                value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
-                                if distributed:
-                                    dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
-                                results_dict[f"train_{name}"].append(value[0].item())
+                        y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
 
-                            # scale, accumulate, backward
-                            if self.update_on_step:
-                                scaler.scale(loss).backward()
-                                accum_log(logs, {'loss': loss.item()})
+                        loss = criterion(y.to(y_pred.dtype), y_pred).mean()
 
-                                if distributed:
-                                    torch.distributed.barrier()
+                        # compute gradients
+                        scaler.scale(loss).backward()
 
-                                scaler.step(optimizer)
-                                scaler.update()
-                                optimizer.zero_grad()
-                                loss = 0
+                        if distributed:
+                            torch.distributed.barrier()
 
-                            if batch['stop_forecast'][i]:
-                                stop_forecast = True
+                        # stop after X steps
+                        stop_forecast = batch['stop_forecast'][i]
 
                     if stop_forecast:
                         break
 
                 # scale, accumulate, backward
+                # scaler.scale(loss).backward()
+                accum_log(logs, {'loss': loss.item()})
 
-                if not self.update_on_step:
-                    scaler.scale(loss).backward()
-                    accum_log(logs, {'loss': loss.item()})
+                if distributed:
+                    torch.distributed.barrier()
 
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
+
+                # Metrics
+                metrics_dict = metrics(y_pred.float(), y.float())
+                for name, value in metrics_dict.items():
+                    value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
                     if distributed:
-                        torch.distributed.barrier()
-
-                    scaler.step(optimizer)
-                    scaler.update()
-                    optimizer.zero_grad()
+                        dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
+                    results_dict[f"train_{name}"].append(value[0].item())
 
             batch_loss = torch.Tensor([logs["loss"]]).cuda(self.device)
             if distributed:
                 dist.all_reduce(batch_loss, dist.ReduceOp.AVG, async_op=False)
             results_dict["train_loss"].append(batch_loss[0].item())
-            if 'forecast_hour' in batch:
-                forecast_hour_stop = batch['forecast_hour'][-1].item()
-                results_dict["train_forecast_len"].append(forecast_hour_stop+1)
-            else:
-                results_dict["train_forecast_len"].append(1)
+            results_dict["train_forecast_len"].append(forecast_length+1)
 
             if not np.isfinite(np.mean(results_dict["train_loss"])):
                 try:
@@ -180,19 +182,19 @@ class Trainer:
                     raise E
 
             # agg the results
-            to_print = "Epoch: {} train_loss: {:.6f} train_acc: {:.6f} train_mae: {:.6f} forecast_len {:.6}".format(
+            to_print = "Epoch: {} train_loss: {:.6f} train_acc: {:.6f} train_mae: {:.6f} forecast_len: {:.6f}".format(
                 epoch,
                 np.mean(results_dict["train_loss"]),
                 np.mean(results_dict["train_acc"]),
                 np.mean(results_dict["train_mae"]),
-                np.mean(results_dict["train_forecast_len"])
+                forecast_length+1
             )
             to_print += " lr: {:.12f}".format(optimizer.param_groups[0]["lr"])
             if self.rank == 0:
                 batch_group_generator.update(1)
                 batch_group_generator.set_description(to_print)
 
-            if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "cosine-annealing":
+            if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] in update_on_batch:
                 scheduler.step()
 
         #  Shutdown the progbar
@@ -234,27 +236,37 @@ class Trainer:
             range(valid_batches_per_epoch), total=valid_batches_per_epoch, leave=True
         )
 
+        static = None
         stop_forecast = False
         with torch.no_grad():
             for k, batch in enumerate(valid_loader):
 
                 y_pred = None  # Place holder that gets updated after first roll-out
-                for i in batch["forecast_hour"]:
+                for j, i in enumerate(batch["forecast_hour"]):
 
-                    if i == 0:  # use true x -- initial condition time-step
+                    if j == 0:  # use true x -- initial condition time-step
                         x_atmo = batch["x"]
                         x_surf = batch["x_surf"]
                         x = self.model.concat_and_reshape(x_atmo, x_surf).to(self.device)
                     else:  # use model's predictions
-                        x_detach = x[:, :, 1:].detach()
-                        x = torch.cat([x_detach, y_pred.detach()], dim=2)
+                        x = y_pred.detach()  # x[:, :, 1:].detach()
+                        # x = torch.cat([x_detach, y_pred.detach()], dim=2)
+
+                    if "static" in batch:
+                        if static is None:
+                            static = batch["static"].to(self.device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float() # [batch, num_stat_vars, hist_len, lat, lon]
+                        x = torch.cat((x, static.clone()), dim=1)
+
+                    if "TOA" in batch:
+                        toa = batch["TOA"].to(self.device)
+                        x = torch.cat([x, toa.unsqueeze(1)], dim=1)
 
                     y_pred = self.model(x)
 
                     # stop after user-defined number of steps
                     if i == forecast_len:
-                        y_atmo = batch["y"].unsqueeze(1)
-                        y_surf = batch["y_surf"].unsqueeze(1)
+                        y_atmo = batch["y"]
+                        y_surf = batch["y_surf"]
                         y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
 
                         loss = criterion(y.to(y_pred.dtype), y_pred).mean()
@@ -322,7 +334,7 @@ class Trainer:
         save_loc = conf['save_loc']
         start_epoch = conf['trainer']['start_epoch']
         epochs = conf['trainer']['epochs']
-        self.update_on_step = conf['trainer']['update_on_step'] if 'update_on_step' in conf['trainer'] else False
+        skip_validation = conf['trainer']['skip_validation'] if 'skip_validation' in conf['trainer'] else False
 
         # Reload the results saved in the training csv if continuing to train
         if start_epoch == 0:
@@ -343,9 +355,9 @@ class Trainer:
                 train_loader.sampler.set_epoch(epoch)
             else:
                 train_loader.dataset.set_epoch(epoch)
-                if rollout_scheduler is not None:
-                    conf['trainer']['stop_rollout'] = rollout_scheduler(epoch, epochs)
-                    train_loader.dataset.set_rollout_prob(conf['trainer']['stop_rollout'])
+                # if rollout_scheduler is not None:
+                #     conf['trainer']['stop_rollout'] = rollout_scheduler(epoch, epochs)
+                #     train_loader.dataset.set_rollout_prob(conf['trainer']['stop_rollout'])
 
             ############
             #
@@ -361,7 +373,8 @@ class Trainer:
                 train_criterion,
                 scaler,
                 scheduler,
-                metrics
+                metrics,
+                conf["data"]["forecast_len"]
             )
 
             ############
@@ -370,13 +383,19 @@ class Trainer:
             #
             ############
 
-            valid_results = self.validate(
-                epoch,
-                conf,
-                valid_loader,
-                valid_criterion,
-                metrics
-            )
+            if skip_validation:
+
+                valid_results = train_results
+
+            else:
+
+                valid_results = self.validate(
+                    epoch,
+                    conf,
+                    valid_loader,
+                    valid_criterion,
+                    metrics
+                )
 
             #################
             #
@@ -386,8 +405,11 @@ class Trainer:
 
             # update the learning rate if epoch-by-epoch updates
 
-            if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "plateau":
-                scheduler.step(results_dict["valid_acc"][-1])
+            if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] in update_on_epoch:
+                if conf['trainer']['scheduler']['scheduler_type'] == 'plateau':
+                    scheduler.step(results_dict["valid_acc"][-1])
+                else:
+                    scheduler.step()
 
             # Put things into a results dictionary -> dataframe
 
@@ -439,28 +461,35 @@ class Trainer:
 
                     logging.info(f"Saving FSDP model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
 
-                    # https://pytorch.org/tutorials/recipes/distributed_checkpoint_recipe.html
-                    FSDP.set_state_dict_type(
+                    # Initialize the checkpoint I/O handler
+
+                    checkpoint_io = TorchFSDPCheckpointIO()
+
+                    # Save model and optimizer checkpoints
+
+                    checkpoint_io.save_unsharded_model(
                         self.model,
-                        StateDictType.SHARDED_STATE_DICT,
+                        os.path.join(save_loc, "model_checkpoint.pt"),
+                        gather_dtensor=True,
+                        use_safetensors=False,
+                        rank=self.rank
                     )
-                    sharded_state_dict = {
-                        "model_state_dict": self.model.state_dict()
-                    }
-                    DCP.save_state_dict(
-                        state_dict=sharded_state_dict,
-                        storage_writer=DCP.FileSystemWriter(os.path.join(save_loc, "checkpoint")),
+                    checkpoint_io.save_unsharded_optimizer(
+                        optimizer,
+                        os.path.join(save_loc, "optimizer_checkpoint.pt"),
+                        gather_dtensor=True,
+                        rank=self.rank
                     )
-                    # save the optimizer
-                    optimizer_state = FSDP.full_optim_state_dict(self.model, optimizer)
+
+                    # Still need to save the scheduler and scaler states, just in another file for FSDP
+
                     state_dict = {
                         "epoch": epoch,
-                        "optimizer_state_dict": optimizer_state,
-                        'scheduler_state_dict': scheduler.state_dict(),
+                        'scheduler_state_dict': scheduler.state_dict() if conf["trainer"]["use_scheduler"] else None,
                         'scaler_state_dict': scaler.state_dict()
                     }
 
-                    torch.save(state_dict, f"{save_loc}/checkpoint.pt")
+                    torch.save(state_dict, os.path.join(save_loc, "checkpoint.pt"))
 
                 # This needs updated!
                 # valid_loss = np.mean(valid_results["valid_loss"])
@@ -479,15 +508,13 @@ class Trainer:
             torch.cuda.empty_cache()
             gc.collect()
 
-            # Report result to the trial
-            if trial:
-                trial.report(results_dict["valid_loss"][-1], step=epoch)
+            training_metric = "train_loss" if skip_validation else "valid_loss"
 
             # Stop training if we have not improved after X epochs (stopping patience)
             best_epoch = [
                 i
-                for i, j in enumerate(results_dict["valid_loss"])
-                if j == min(results_dict["valid_loss"])
+                for i, j in enumerate(results_dict[training_metric])
+                if j == min(results_dict[training_metric])
             ][0]
             offset = epoch - best_epoch
             if offset >= conf['trainer']['stopping_patience']:
@@ -499,8 +526,10 @@ class Trainer:
                 if conf['trainer']['stop_after_epoch']:
                     break
 
+        training_metric = "train_loss" if skip_validation else "valid_loss"
+
         best_epoch = [
-            i for i, j in enumerate(results_dict["valid_loss"]) if j == min(results_dict["valid_loss"])
+            i for i, j in enumerate(results_dict[training_metric]) if j == min(results_dict[training_metric])
         ][0]
 
         result = {k: v[best_epoch] for k, v in results_dict.items()}
