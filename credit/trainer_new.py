@@ -27,6 +27,8 @@ from torch.utils.data import IterableDataset
 import optuna
 from credit.data import concat_and_reshape, reshape_only
 from credit.models.checkpoint import TorchFSDPCheckpointIO
+from credit.scheduler import update_on_batch, update_on_epoch
+
 
 logger = logging.getLogger(__name__)
 
@@ -271,7 +273,7 @@ class Trainer:
             if self.rank == 0:
                 batch_group_generator.set_description(to_print)
 
-            if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "cosine-annealing":
+            if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] in update_on_batch:
                 scheduler.step()
 
             if i >= batches_per_epoch and i > 0:
@@ -553,8 +555,11 @@ class Trainer:
 
             # update the learning rate if epoch-by-epoch updates
 
-            if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "plateau":
-                scheduler.step(results_dict["valid_acc"][-1])
+            if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] in update_on_epoch:
+                if conf['trainer']['scheduler']['scheduler_type'] == 'plateau':
+                    scheduler.step(results_dict["valid_acc"][-1])
+                else:
+                    scheduler.step()
 
             # Put things into a results dictionary -> dataframe
 
