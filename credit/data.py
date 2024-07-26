@@ -36,7 +36,28 @@ from torch.utils.data.distributed import DistributedSampler
 Array = Union[np.ndarray, xr.DataArray]
 IMAGE_ATTR_NAMES = ('historical_ERA5_images', 'target_ERA5_images')
 
+def extract_month_day_hour(dates):
+    '''
+    Given an 1-d array of np.datatime64[ns], extract their mon, day, hr into a zipped list
+    '''
+    months = dates.astype('datetime64[M]').astype(int) % 12 + 1
+    days = (dates - dates.astype('datetime64[M]') + 1).astype('timedelta64[D]').astype(int)
+    hours = dates.astype('datetime64[h]').astype(int) % 24
+    return list(zip(months, days, hours))
 
+def find_common_indices(list1, list2):
+    '''
+    find indices of common elements between two lists 
+    '''
+    # Find common elements
+    common_elements = set(list1).intersection(set(list2))
+    
+    # Find indices of common elements in both lists
+    indices_list1 = [i for i, x in enumerate(list1) if x in common_elements]
+    indices_list2 = [i for i, x in enumerate(list2) if x in common_elements]
+    
+    return indices_list1, indices_list2
+    
 #
 def concat_and_reshape(x1, x2):
     x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
@@ -513,14 +534,18 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
 
         # merge forcing inputs
         if self.xarray_forcing:
-            # slice + load to the GPU
-            forcing_subset_input = self.xarray_forcing.isel(
-                time=slice(ind_start_in_file, ind_end_in_file + 1))
-            forcing_subset_input = forcing_subset_input.isel(time=slice(0, self.history_len, self.skip_periods)).load()
-
-            # update
-            
+            # =============================================================================== #
+            # matching month, day, hour between forcing and upper air [time]
+            # this approach handles leap year forcing file and non-leap-year upper air file
+            month_day_forcing = extract_month_day_hour(np.array(self.xarray_forcing['time']))
+            month_day_inputs = extract_month_day_hour(np.array(historical_ERA5_images['time'])) # <-- upper air
+            # indices to subset
+            ind_forcing, _ = find_common_indices(month_day_forcing, month_day_inputs)
+            forcing_subset_input = self.xarray_forcing.isel(time=ind_forcing).load()
+            # forcing and upper air have different years but the same mon/day/hour
+            # safely replace forcing time with upper air time
             forcing_subset_input['time'] = historical_ERA5_images['time']
+            # =============================================================================== #
 
             # merge
             historical_ERA5_images = historical_ERA5_images.merge(forcing_subset_input)
@@ -686,8 +711,21 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         if self.filename_forcing is not None:
             sliced_forcing = xr.open_dataset(self.filename_forcing)
             sliced_forcing = drop_var_from_dataset(sliced_forcing, self.varname_forcing)
-            sliced_forcing = sliced_forcing.isel(time=slice(time_key, time_key+self.history_len+1))
+
+            # See also `ERA5_and_Forcing_Dataset`
+            # =============================================================================== #
+            # matching month, day, hour between forcing and upper air [time]
+            # this approach handles leap year forcing file and non-leap-year upper air file
+            month_day_forcing = extract_month_day_hour(np.array(sliced_forcing['time']))
+            month_day_inputs = extract_month_day_hour(np.array(sliced_x['time']))
+            # indices to subset
+            ind_forcing, _ = find_common_indices(month_day_forcing, month_day_inputs)
+            sliced_forcing = sliced_forcing.isel(time=ind_forcing)
+            # forcing and upper air have different years but the same mon/day/hour
+            # safely replace forcing time with upper air time
             sliced_forcing['time'] = sliced_x['time']
+            # =============================================================================== #
+            
             # merge forcing to sliced_x
             sliced_x = sliced_x.merge(sliced_forcing)
             
@@ -711,7 +749,7 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         # =========================================================================== #
         # <--- !! it MAY NOT work when self.skip_period != 1
         shifted_hours = self.lead_time_periods * self.skip_periods * self.history_len
-        # =========================================================================== # 
+        # =========================================================================== #
         date_object = date_object - datetime.timedelta(hours=shifted_hours)
         self.fcst_datetime[index][0] = date_object.strftime('%Y-%m-%d %H:%M:%S')
 
@@ -722,20 +760,17 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         self.stop_time = np.datetime64(stop_time).astype(datetime.datetime)
 
         info = {}
-
         for idx, dataset in enumerate(self.all_files):
             start_time = np.datetime64(dataset['time'].min().values).astype(datetime.datetime)
             stop_time = np.datetime64(dataset['time'].max().values).astype(datetime.datetime)
             track_start = False
             track_stop = False
-
             if start_time <= self.start_time <= stop_time:
                 # Start time is in this file, use start time index
                 dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
                 start_idx = np.searchsorted(dataset, self.start_time)
                 start_idx = max(0, min(start_idx, len(dataset)-1))
                 track_start = True
-
             elif start_time < self.stop_time and stop_time > self.start_time:
                 # File overlaps time range, use full file
                 start_idx = 0
@@ -751,7 +786,7 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
                 stop_idx = max(0, min(stop_idx, len(dataset)-1))
                 track_stop = True
 
-            elif start_time < self.stop_time and stop_time > self.start_time:
+            elif start_time < self.stop_time and stop_time >= self.start_time:
                 # File overlaps time range, use full file
                 stop_idx = len(dataset) - 1
                 track_stop = True
@@ -781,7 +816,6 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
             # get time indices for inputs
             data_lookup = self.find_start_stop_indices(index)
             for k, (file_key, time_key) in enumerate(data_lookup):
-                
                 if k == 0:
                     output_dict = {}
                     # get all inputs (upper air, surface, forcing, static ) in one xr.Dataset
@@ -803,7 +837,8 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
                             
                             # Concatenate excess data from the next file with the current data
                             sliced_x = xr.concat([sliced_x, sliced_x_next], dim='time')
-
+                            sliced_x = sliced_x.isel(time=slice(0, self.history_len+1))
+                                                     
                     # key 'historical_ERA5_images' is recongnized as input in credit.transform
                     sample_x = {
                         'historical_ERA5_images': sliced_x.isel(time=slice(0, self.history_len))
