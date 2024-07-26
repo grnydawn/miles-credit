@@ -16,12 +16,11 @@ import torch.distributed as dist
 from torch.cuda.amp import GradScaler
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from credit.distributed import distributed_model_wrapper
-from torchvision import transforms
 
 from credit.models import load_model
 from credit.loss import VariableTotalLoss2D
-from credit.data import DistributedSequentialDataset
-from credit.transforms import ToTensor, NormalizeState
+from credit.datasets.sequential_multistep import DistributedSequentialDataset
+from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
 from credit.trainer_multistep import Trainer
 from credit.metrics import LatWeightedMetrics
@@ -50,25 +49,21 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
     forecast_len = conf["data"]["forecast_len"]
     valid_history_len = conf["data"]["valid_history_len"]
     valid_forecast_len = conf["data"]["valid_forecast_len"]
-    rollout_p = conf["trainer"]["rollout_p"]
 
     history_len = history_len if is_train else valid_history_len
     forecast_len = forecast_len if is_train else valid_forecast_len
     shuffle = is_train
     name = "Train" if is_train else "Valid"
+
     dataset = DistributedSequentialDataset(
         filenames=files,
         history_len=history_len,
         forecast_len=forecast_len,
-        skip_periods=1,
+        skip_periods=conf['data']['skip_periods'],
         world_size=world_size,
         rank=rank,
         shuffle=shuffle,
-        rollout_p=rollout_p if is_train else 0.0,
-        transform=transforms.Compose([
-            NormalizeState(conf["data"]["mean_path"], conf["data"]["std_path"]),
-            ToTensor(history_len=history_len, forecast_len=forecast_len),
-        ]),
+        transform=load_transforms(conf)
     )
     sampler = None
     logging.info(
@@ -189,7 +184,7 @@ def main(rank, world_size, conf, trial=False):
         shuffle=False,
         sampler=train_sampler,
         pin_memory=True,
-        persistent_workers=True if thread_workers > 0 else False,
+        # persistent_workers=True if thread_workers > 0 else False,
         num_workers=thread_workers,
         drop_last=True
     )
@@ -206,20 +201,15 @@ def main(rank, world_size, conf, trial=False):
 
     # model
 
-    vae = load_model(conf)
-
-    num_params = sum(p.numel() for p in vae.parameters())
-    if rank == 0:
-        logging.info(f"Number of parameters in the model: {num_params}")
-    # summary(vae, input_size=(channels, height, width))
+    m = load_model(conf)
 
     # have to send the module to the correct device first
 
-    vae.to(device)
+    m.to(device)
 
     # Wrap in DDP or FSDP module, or none
 
-    model = distributed_model_wrapper(conf, vae, device)
+    model = distributed_model_wrapper(conf, m, device)
 
     # Load an optimizer, scheduler, and gradient scaler from disk if epoch > 0
 
