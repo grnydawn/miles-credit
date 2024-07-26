@@ -14,7 +14,7 @@ import multiprocessing as mp
 
 # ---------- #
 # Numerics
-import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 import xarray as xr
 import numpy as np
@@ -82,6 +82,11 @@ def predict(rank, world_size, conf, p):
         raise
     # ----------------------------------------------------------------- #
     # parse varnames and save_locs from config
+    if 'lead_time_periods' in conf['data']:
+        lead_time_periods = conf['data']['lead_time_periods']
+    else:
+        lead_time_periods = 1
+    
     ## upper air variables
     all_ERA_files = sorted(glob(conf["data"]["save_loc"]))
     varname_upper_air = conf['data']['variables']
@@ -185,7 +190,6 @@ def predict(rank, world_size, conf, p):
             # get the datetime and forecasted hours
             date_time = batch["datetime"].item()
             forecast_hour = batch["forecast_hour"].item()
-    
             # initialization on the first forecast hour
             if forecast_hour == 1:
                 
@@ -199,7 +203,7 @@ def predict(rank, world_size, conf, p):
                     # no x_surf
                     x = reshape_only(batch["x"]).to(device).float()
 
-                init_datetime_str = datetime.datetime.utcfromtimestamp(date_time)
+                init_datetime_str = datetime.utcfromtimestamp(date_time)
                 init_datetime_str = init_datetime_str.strftime('%Y-%m-%dT%HZ')
 
             # -------------------------------------------------------------------------------------- #
@@ -226,7 +230,7 @@ def predict(rank, world_size, conf, p):
                 )
     
             # Save the current forecast hour data in parallel
-            utc_datetime = datetime.datetime.utcfromtimestamp(date_time) + datetime.timedelta(hours=forecast_hour)
+            utc_datetime = datetime.utcfromtimestamp(date_time) + timedelta(hours=lead_time_periods*forecast_hour)
     
             # convert the current step result as x-array
             darray_upper_air, darray_single_level = make_xarray(
@@ -240,7 +244,14 @@ def predict(rank, world_size, conf, p):
             # Save the current forecast hour data in parallel
             result = p.apply_async(
                 save_netcdf_increment,
-                (darray_upper_air, darray_single_level, init_datetime_str, forecast_hour, meta_data, conf)
+                (
+                    darray_upper_air, 
+                     darray_single_level, 
+                     init_datetime_str, 
+                     lead_time_periods*forecast_hour, 
+                     meta_data, 
+                     conf
+                )
             )
             results.append(result)
             
