@@ -22,7 +22,7 @@ from credit.loss import VariableTotalLoss2D
 from credit.datasets.sequential_multistep import DistributedSequentialDataset
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
-from credit.trainer_multistep import Trainer
+from credit.trainers.trainer_multistep import Trainer
 from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything

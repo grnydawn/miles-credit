@@ -29,9 +29,9 @@ from credit.data import ERA5Dataset, ERA5_and_Forcing_Dataset, Dataset_BridgeSca
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
 
-from credit.trainer import Trainer
+from credit.trainers.trainer import Trainer
 # <-------------- the new pipeline
-from credit.trainer_new import Trainer as Trainer_New
+from credit.trainers.trainer_new import Trainer as Trainer_New
 
 from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
@@ -124,6 +124,7 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
     logging.info(f" Loaded a {name} ERA dataset, and a distributed sampler (forecast length = {forecast_len + 1})")
 
     return dataset, sampler
+
 
 def load_dataset_and_sampler_zscore_only(conf, 
                                          all_ERA_files, 
