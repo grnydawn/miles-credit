@@ -36,6 +36,25 @@ from torch.utils.data.distributed import DistributedSampler
 Array = Union[np.ndarray, xr.DataArray]
 IMAGE_ATTR_NAMES = ('historical_ERA5_images', 'target_ERA5_images')
 
+def generate_datetime(start_time, end_time, interval_hr):
+    # Define the time interval (e.g., every hour)
+    interval = datetime.timedelta(hours=interval_hr)
+    
+    # Generate the list of datetime objects
+    datetime_list = []
+    current_time = start_time
+    while current_time <= end_time:
+        datetime_list.append(current_time)
+        current_time += interval
+    return datetime_list
+
+def hour_to_nanoseconds(input_hr):
+    # hr * min_per_hr * sec_per_min * nanosec_per_sec
+    return input_hr*60 * 60 * 1000000000
+
+def nanoseconds_to_year(nanoseconds_value):
+    return np.datetime64(nanoseconds_value, 'ns').astype('datetime64[Y]').astype(int) + 1970
+
 def extract_month_day_hour(dates):
     '''
     Given an 1-d array of np.datatime64[ns], extract their mon, day, hr into a zipped list
@@ -636,7 +655,7 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         self.world_size = world_size
         self.transform = transform
         self.history_len = history_len
-        self.fcst_datetime = fcst_datetime
+        self.init_datetime = fcst_datetime
         self.which_forecast = which_forecast # <-- got from the old roll-out. Dont know 
         
         # -------------------------------------- #
@@ -688,20 +707,20 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         sliced_x = drop_var_from_dataset(sliced_x, varnames)
         return sliced_x
 
-    def load_zarr_as_input(self, file_key, time_key):
+    def load_zarr_as_input(self, i_file, i_init_start, i_init_end):
         # get the needed file from a list of zarr files
         # open the zarr file as xr.dataset and subset based on the needed time
         
         # sliced_x: the final output, starts with an upper air xr.dataset
-        sliced_x = self.ds_read_and_subset(self.filenames[file_key], 
-                                           time_key, 
-                                           time_key+self.history_len+1, 
+        sliced_x = self.ds_read_and_subset(self.filenames[i_file], 
+                                           i_init_start,
+                                           i_init_end+1,
                                            self.varname_upper_air)
         # surface variables
         if self.varname_surface is not None:
-            sliced_surface = self.ds_read_and_subset(self.filename_surface[file_key], 
-                                                     time_key, 
-                                                     time_key+self.history_len+1, 
+            sliced_surface = self.ds_read_and_subset(self.filename_surface[i_file], 
+                                                     i_init_start,
+                                                     i_init_end+1,
                                                      self.varname_surface)
             # merge surface to sliced_x
             sliced_surface['time'] = sliced_x['time']
@@ -740,69 +759,65 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
 
     
     def find_start_stop_indices(self, index):
-        # convert the first forecasted time to initialization time
-        # by subtracting the forecast length (assuming 1 step)
-        # other later forecasted time are viewed as init time directly 
-        # becuase their previous step forecasted time are init times of the later forecasted time
-        start_time = self.fcst_datetime[index][0] # string
-        date_object = datetime.datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
-        # =========================================================================== #
+        # ============================================================================ #
+        # shift hours for history_len > 1, becuase more than one init times are needed
         # <--- !! it MAY NOT work when self.skip_period != 1
-        shifted_hours = self.lead_time_periods * self.skip_periods * self.history_len
-        # =========================================================================== #
-        date_object = date_object - datetime.timedelta(hours=shifted_hours)
-        self.fcst_datetime[index][0] = date_object.strftime('%Y-%m-%d %H:%M:%S')
+        shifted_hours = self.lead_time_periods * self.skip_periods * (self.history_len-1)
+        # ============================================================================ #
+        # subtrack shifted_hour form the 1st & last init times
+        # convert to datetime object
+        self.init_datetime[index][0] = datetime.datetime.strptime(
+            self.init_datetime[index][0], '%Y-%m-%d %H:%M:%S') - datetime.timedelta(hours=shifted_hours)
+        self.init_datetime[index][1] = datetime.datetime.strptime(
+            self.init_datetime[index][1], '%Y-%m-%d %H:%M:%S') - datetime.timedelta(hours=shifted_hours)
+        
+        # convert the 1st & last init times to a list of init times
+        self.init_datetime[index] = generate_datetime(self.init_datetime[index][0], self.init_datetime[index][1], self.lead_time_periods)
+        # convert datetime obj to nanosecondes
+        init_time_list_dt = [np.datetime64(date.strftime('%Y-%m-%d %H:%M:%S')) for date in self.init_datetime[index]]
+        self.init_time_list_np = [np.datetime64(str(dt_obj) + '.000000000').astype(datetime.datetime) for dt_obj in init_time_list_dt]
 
-        # convert all strings to np.datetime64
-        datetime_objs = [np.datetime64(date) for date in self.fcst_datetime[index]]
-        start_time, stop_time = [str(datetime_obj) + '.000000000' for datetime_obj in datetime_objs]
-        self.start_time = np.datetime64(start_time).astype(datetime.datetime)
-        self.stop_time = np.datetime64(stop_time).astype(datetime.datetime)
-
-        info = {}
-        for idx, dataset in enumerate(self.all_files):
-            start_time = np.datetime64(dataset['time'].min().values).astype(datetime.datetime)
-            stop_time = np.datetime64(dataset['time'].max().values).astype(datetime.datetime)
-            track_start = False
-            track_stop = False
-            if start_time <= self.start_time <= stop_time:
-                # Start time is in this file, use start time index
-                dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
-                start_idx = np.searchsorted(dataset, self.start_time)
-                start_idx = max(0, min(start_idx, len(dataset)-1))
-                track_start = True
-            elif start_time < self.stop_time and stop_time > self.start_time:
-                # File overlaps time range, use full file
-                start_idx = 0
-                track_start = True
-
-            if start_time <= self.stop_time <= stop_time:
-                # Stop time is in this file, use stop time index
-                if isinstance(dataset, np.ndarray):
-                    pass
-                else:
-                    dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
-                stop_idx = np.searchsorted(dataset, self.stop_time)
-                stop_idx = max(0, min(stop_idx, len(dataset)-1))
-                track_stop = True
-
-            elif start_time < self.stop_time and stop_time >= self.start_time:
-                # File overlaps time range, use full file
-                stop_idx = len(dataset) - 1
-                track_stop = True
-
-            # Only include files that overlap the time range
-            if track_start and track_stop:
-                info[idx] = ((idx, start_idx), (idx, stop_idx))
-
-        indices = []
-        for dataset_idx, (start, stop) in info.items():
-            for i in range(start[1], stop[1]+1):
-                indices.append((start[0], i))
-        return indices
+        for i_file, ds in enumerate(self.all_files):
+            # get the year of the current file
+            ds_year = int(np.datetime_as_string(ds['time'][0].values, unit='Y'))
+        
+            # get the first and last years of init times
+            init_year0 = nanoseconds_to_year(self.init_time_list_np[0])
+            
+            # found the right yearly file
+            if init_year0 == ds_year:
+                
+                # convert ds['time'] to a list of nanosecondes
+                ds_time_list = [np.datetime64(ds_time.values).astype(datetime.datetime) for ds_time in ds['time']]
+                ds_start_time = ds_time_list[0]
+                ds_end_time = ds_time_list[-1]
+                
+                init_time_start = self.init_time_list_np[0]
+                # if initalization time is within this (yearly) xr.Dataset
+                if ds_start_time <= init_time_start <= ds_end_time:
+        
+                    # try getting the index of the first initalization time 
+                    i_init_start = ds_time_list.index(init_time_start)
+                    
+                    # for multiple init time inputs (history_len > 1), init_end is different for init_start
+                    init_time_end = init_time_start + hour_to_nanoseconds(shifted_hours)
+                    
+                    # see if init_time_end is alos in this file
+                    if ds_start_time <= init_time_end <= ds_end_time:
+                        
+                        # try getting the index
+                        i_init_end = ds_time_list.index(init_time_end)
+                    else:
+                        # this set of initalizations have crossed years
+                        # get the last element of the current file
+                        # we have anthoer section that checks additional input data
+                        i_init_end = len(ds_time_list) - 1
+                        
+                    info = [i_file, i_init_start, i_init_end]
+                    return info
 
     def __len__(self):
-        return len(self.fcst_datetime)
+        return len(self.init_datetime)
 
     def __iter__(self):
         worker_info = get_worker_info()
@@ -813,54 +828,63 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
                                      rank=self.rank*num_workers+worker_id, 
                                      shuffle=False)
         for index in sampler:
-            # get time indices for inputs
+            # get the init time info for the current sample
             data_lookup = self.find_start_stop_indices(index)
-            for k, (file_key, time_key) in enumerate(data_lookup):
+            
+            for k, _ in enumerate(self.init_time_list_np):
+                
+                # the first initialization time: get initalization from data
                 if k == 0:
+                    i_file, i_init_start, i_init_end = data_lookup
+                    
+                    # allocate output dict
                     output_dict = {}
-                    # get all inputs (upper air, surface, forcing, static ) in one xr.Dataset
-                    sliced_x = self.load_zarr_as_input(file_key, time_key)
+
+                    # get all inputs in one xr.Dataset
+                    sliced_x = self.load_zarr_as_input(i_file, i_init_start, i_init_end)
                     
                     # Check if additional data from the next file is needed
-                    if len(sliced_x['time']) < self.history_len + 1:
+                    if len(sliced_x['time']) < self.history_len:
                         
                         # Load excess data from the next file
-                        next_file_idx = self.filenames.index(self.filenames[file_key]) + 1
+                        next_file_idx = self.filenames.index(self.filenames[i_file]) + 1
                         
-                        if next_file_idx == len(self.filenames):
+                        if next_file_idx >= len(self.filenames):
                             # not enough input data to support this forecast
                             raise OSError("You have reached the end of the available data. Exiting.")
                             
                         else:
-                            # time_key = 0 because we need the beginning of the next file only
-                            sliced_x_next = self.load_zarr_as_input(next_file_idx, 0)
+                            # i_init_start = 0 because we need the beginning of the next file only
+                            sliced_x_next = self.load_zarr_as_input(next_file_idx, 0, self.history_len)
                             
                             # Concatenate excess data from the next file with the current data
                             sliced_x = xr.concat([sliced_x, sliced_x_next], dim='time')
-                            sliced_x = sliced_x.isel(time=slice(0, self.history_len+1))
+                            sliced_x = sliced_x.isel(time=slice(0, self.history_len))
                                                      
                     # key 'historical_ERA5_images' is recongnized as input in credit.transform
-                    sample_x = {
-                        'historical_ERA5_images': sliced_x.isel(time=slice(0, self.history_len))
-                    }
+                    sample_x = {'historical_ERA5_images': sliced_x}
                     
                     if self.transform:
                         sample_x = self.transform(sample_x)
                         
                     for key in sample_x.keys():
                         output_dict[key] = sample_x[key]
-                        
-                    output_dict['forecast_hour'] = k + 1
+            
+                    # <--- !! 'forecast_hour' is actually "forecast_step" but named by assuming hourly
+                    output_dict['forecast_hour'] = k + 1 
                     # Adjust stopping condition
-                    output_dict['stop_forecast'] = (k == (len(data_lookup)-self.history_len-1))
+                    output_dict['stop_forecast'] = k == (len(self.init_time_list_np) - 1)
                     output_dict['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[-1]
+                    
+                # other later initialization time: the same initalization as in k=0, but add more forecast steps
                 else:
                     output_dict['forecast_hour'] = k + 1
                      # Adjust stopping condition
-                    output_dict['stop_forecast'] = (k == (len(data_lookup)-self.history_len-1)) 
+                    output_dict['stop_forecast'] = k == (len(self.init_time_list_np) - 1)
                     
+                # return output_dict
                 yield output_dict
-
+                
                 if output_dict['stop_forecast']:
                     break
 
