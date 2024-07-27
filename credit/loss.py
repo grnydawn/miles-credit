@@ -169,10 +169,13 @@ class PSDLoss(nn.Module):
 
 
 def latititude_weights(conf):
-    cos_lat = xr.open_dataset(conf["loss"]["latitude_weights"])["coslat"].values
-    # Normalize over lat
-    cos_lat_sum = cos_lat.sum(axis=0) / cos_lat.shape[0]
-    L = cos_lat / cos_lat_sum
+    _lat = xr.open_dataset(conf["loss"]["latitude_weights"])["latitude"].values
+    dims_lon = xr.open_dataset(conf["loss"]["latitude_weights"])["longitude"].shape[0]
+
+    weights = np.cos(np.deg2rad(_lat))
+    repeated_weights = np.repeat(weights[np.newaxis, :], dims_lon, axis=0)
+    L= repeated_weights.T
+    
     return torch.from_numpy(L).float()
 
 #     # Compute the latitude-weighting factor for each row
