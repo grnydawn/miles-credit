@@ -656,6 +656,9 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         self.transform = transform
         self.history_len = history_len
         self.init_datetime = fcst_datetime
+
+        print(self.init_datetime)
+        
         self.which_forecast = which_forecast # <-- got from the old roll-out. Dont know 
         
         # -------------------------------------- #
@@ -862,6 +865,11 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
                             sliced_x = sliced_x.isel(time=slice(0, self.history_len))
                                                      
                     # key 'historical_ERA5_images' is recongnized as input in credit.transform
+
+                    print(
+                        np.array(sliced_x['time'])
+                    )
+                    
                     sample_x = {'historical_ERA5_images': sliced_x}
                     
                     if self.transform:
