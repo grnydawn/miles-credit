@@ -57,8 +57,9 @@ data:
     # number of forecast lead times to predict FOR TRAINING 
     # 0 for single-step training
     # 1, 2, 3, ... for multi-step training
-    forecast_len: 0         
-    valid_forecast_len: 0   # keep it as 0 for step-by-step rollout
+    forecast_len: 0
+    # the "forecast_len" used for validation set, can be the same as "forecast_len"
+    valid_forecast_len: 0
 
     # TRAINING ONLY
     # when forecast_len = 0, it does nothing
