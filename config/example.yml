@@ -1,0 +1,124 @@
+# This is an example config file for training and testing your own model 
+# Yingkai Sha <ksha@ucar.edu>
+
+# the location to save your workspace, it will have 
+# (1) pbs script, (2) a copy of this config, (3) model weights, (4) training_log.csv
+save_loc: "/glade/work/$USER/repos/global/miles-credit/results/fuxi_new/"
+seed: 1000 # random seeed
+
+data:
+    # upper-air variables, must be YEARLY zarr or nc with (time, level, latitude, longitude) coords
+    # files must have the listed variable names 
+    # upper-air variables will be normalized by the dataloader, users do not need to normalize them
+    variables: ['U','V','T','Q']
+    save_loc: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/TOTAL_*'
+    
+    # surface variables, must be YEARLY zarr or nc with (time, latitude, longitude) coords
+    # files must have the listed variable names
+    # surface variables will be normalized by the dataloader, users do not need to normalize them
+    surface_variables: ['Z500']
+    save_loc_surface: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/TOTAL_*'
+
+    # diagnostic variables, must be YEARLY zarr or nc with (time, latitude, longitude) coords
+    # files must have the listed variable names 
+    # diagnostic  variables will be normalized by the dataloader, users do not need to normalize them
+    diagnostic_variables: ['tp'] 
+    save_loc_diagnostic: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/ERA5_regrid_tp_*'
+    
+    # forcing variables, must be a single zarr or nc with (time, latitude, longitude) coords
+    # forcing variables must be normalized by the user 
+    forcing_variables: ['TSI']   
+    save_loc_forcing: '/glade/campaign/cisl/aiml/ksha/CREDIT/forcing_norm.nc'
+    
+    # static variables must be a single zarr or nc with (latitude, longitude) coords
+    # static variables must be normalized by user 
+    static_variables: ['Z_GDS4_SFC','LSM'] 
+    save_loc_static: '/glade/campaign/cisl/aiml/ksha/CREDIT/static_norm.nc'
+
+    # z-score files, they must be zarr or nc with (level,) coords
+    # they must include all the 'variables', 'surface_variables', 'diagnostic_variables' above
+    mean_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/All_2010_staged.mean.Lev.SLO.nc'
+    std_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/All_2010_staged.std.Lev.SLO.nc'
+    
+    # # years to train the model, [first_year, last_yeat]
+    train_years: [1979, 2014]
+    # years to validate the model
+    valid_years: [2014, 2018] 
+    
+    # std_new is the new data workflow that works with z-score
+    scaler_type: 'std_new'  
+
+    # number of input time frames
+    # 2 for Fuxi, 
+    # 1 for a state-in-state-out model
+    history_len: 2
+    valid_history_len: 1    # keep it the same as "history_len"
+
+    # number of forecast lead times to predict FOR TRAINING 
+    # 0 for single-step training
+    # 1, 2, 3, ... for multi-step training
+    forecast_len: 0         
+    valid_forecast_len: 0   # keep it as 0 for step-by-step rollout
+
+    # TRAINING ONLY
+    # when forecast_len = 0, it does nothing
+    # when forecast_len > 0, it applies training loss to the last (forecasted) lead time only
+    # this option speed-up multi-step training
+    one_shot: True          
+                            
+    # number of hours for each forecast step
+    # lead_time_periods = 6 for 6 hourly model and 6 hourly taining data
+    # lead_time_periods = 1 for hourly model and hourly taining data
+    lead_time_periods: 6
+
+    # *NOT A STABLE FEATURE
+    # this is the keyword that resolves the mismatch between 6 hourly model and hourly data
+    # skip_periods = 6 will train a 6 hourly model on hourly data, by skipping and picking every 6 hour
+    # default is null or skip_periods = 1
+    skip_periods: null
+    
+    # 'std_new' has stacks forcing first, and then static into batches, 'std' stacks static first.
+    # use True if the model was trained using the old 'std' and switching to 'std_new'
+    static_first: False     
+                            
+                            
+predict:
+    forecasts:
+        type: "custom"       # keep it as "custom"
+        start_year: 2020     # year of the first initialization (where rollout will start)
+        start_month: 1       # month of the first initialization
+        start_day: 1         # day of the first initialization
+        start_hours: [0, 12] # hour-of-day for each initialization, 0 for 00Z, 12 for 12Z
+        duration: 30         # number of days to initialize, starting from the (year, mon, day) above 
+        days: 2              # forecast lead time as days (1 means 24-hour forecast)
+
+    # this keyword will apply a low-pass filter to all fields and each forecast step
+    # it will reduce the high-freq noise, but may impact the performance
+    use_laplace_filter: False
+
+    # The location to store rollout predictions, the folder structure will be:
+    # $save_forecast/$initialization_time/file.nc
+    # each forecast lead time produces a file.nc
+    save_forecast: '/glade/derecho/scratch/ksha/CREDIT/wx_former_6h/'
+
+    # variables to save within the nc
+    save_vars: ['Z500',]
+
+    # location of the metadata
+    # users can use $repo/credit/metadata/era5.yaml as an example to create their own
+    metadata: '/glade/u/home/ksha/miles-credit/credit/metadata/era5.yaml'
+    
+    save_format: "nc"
+
+
+pbs: #derecho
+    conda: "/glade/work/ksha/miniconda3/envs/credit"
+    project: "NAML0001"
+    job_name: "train_model"
+    walltime: "12:00:00"
+    nodes: 8
+    ncpus: 64
+    ngpus: 4
+    mem: '480GB'
+    queue: 'main'
+    
