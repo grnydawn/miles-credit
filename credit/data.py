@@ -605,7 +605,7 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
                 diagnostic_subset = diagnostic_subset.isel(
                     time=slice(-1, None)).load() # <-- load into memory
                 
-                target_ERA5_images = target_ERA5_images.merge(target_diagnostic)
+                target_ERA5_images = target_ERA5_images.merge(diagnostic_subset)
                 
         else:
             # one_shot is None (off), get the full target length based on forecast_len
@@ -623,8 +623,7 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
                     time=slice(self.history_len, ind_end_time, self.skip_periods)).load() # <-- load into memory
                 
                 # merge into the target dataset
-                target_diagnostic = diagnostic_subset
-                target_ERA5_images = target_ERA5_images.merge(target_diagnostic)
+                target_ERA5_images = target_ERA5_images.merge(diagnostic_subset)
             
         # pipe xarray datasets to the sampler
         sample = Sample(
