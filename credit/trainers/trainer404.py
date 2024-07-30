@@ -14,35 +14,16 @@ from torch.cuda.amp import autocast
 from torch.utils.data import IterableDataset
 import optuna
 from credit.models.checkpoint import TorchFSDPCheckpointIO
+from credit.trainers.utils import cleanup, accum_log
+from credit.trainers.base_trainer import BaseTrainer
 
 
-def cleanup():
-    dist.destroy_process_group()
+class Trainer(BaseTrainer):
 
-
-def cycle(dl):
-    while True:
-        for data in dl:
-            yield data
-
-
-def accum_log(log, new_logs):
-    for key, new_value in new_logs.items():
-        old_value = log.get(key, 0.)
-        log[key] = old_value + new_value
-    return log
-
-
-class Trainer:
-
-    def __init__(self, model, rank, module=False):
-        super(Trainer, self).__init__()
-        self.model = model
-        self.rank = rank
-        self.device = torch.device(f"cuda:{rank % torch.cuda.device_count()}") if torch.cuda.is_available() else torch.device("cpu")
-
-        if module:
-            self.model = self.model.module
+    def __init__(self, model: torch.nn.Module, rank: int, module: bool = False):
+        super().__init__(model, rank, module)
+        # Add any additional initialization if needed
+        logging.info("Loading a trainer class for the conus404 dataset")
 
     # Training function.
     def train_one_epoch(
