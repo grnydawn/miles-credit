@@ -5,7 +5,7 @@ import logging
 # Import trainer classes
 from credit.trainers.trainerERA5_v1 import Trainer as TrainerDeprecated
 from credit.trainers.trainerERA5_v2 import Trainer as TrainerStandard
-from credit.trainers.trainerERA_multistep import Trainer as TrainerMultiStep
+from credit.trainers.trainerERA5_multistep import Trainer as TrainerMultiStep
 from credit.trainers.trainer404 import Trainer as Trainer404
 
 logger = logging.getLogger(__name__)

@@ -1,37 +1,38 @@
-save_loc: "/glade/derecho/scratch/wchapman/STAGING/rugby/results/crossformer/one"
-seed: 42
+save_loc: "/glade/work/$USER/repos/global/miles-credit/results/wxformer_6h/"
+seed: 1000
 
 data:
     variables: ['U','V','T','Q']
     surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
-    static_variables: ['Z_GDS4_SFC','LSM','tsi'] # []
-    save_loc: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/ONE*zarr'
-    mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
-    std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
-    TOA_forcing_path: '/glade/derecho/scratch/dgagne/credit_scalers/solar_radiation_2024-03-28_2211.nc' 
-    history_len: 2 
-    forecast_len: 0
-    valid_history_len: 2
-    valid_forecast_len: 0
+    forcing_variables: ['TSI'] #
+    static_variables: ['Z_GDS4_SFC','LSM']
+    save_loc: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/STD_SixHourly_TOTAL_*'
+    save_loc_surface: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/STD_SixHourly_TOTAL_*'
+    save_loc_forcing: '/glade/u/home/ksha/CREDIT/data/forcing_norm_6h.nc'
+    save_loc_static: '/glade/u/home/ksha/CREDIT/data/static_norm_old.nc'
+    train_years: [1979, 2014]
+    valid_years: [2014, 2018]
+    mean_path: '/glade/u/home/ksha/CREDIT/data/mean_zero.nc'
+    std_path: '/glade/u/home/ksha/CREDIT/data/std_one.nc'
+    scaler_type: 'std_new'
+    history_len: 1 
+    forecast_len: 0 # larger than 0 for multi step
+    valid_history_len: 1
+    valid_forecast_len: 0 # 
     one_shot: True
-    scaler_type: 'std' #'std', 'quantile', 'quantile-cached'
     skip_periods: null
-    bs_years_train: ['1983-01-01','2014-01-01'] #only used with bridgescalar developed datasets
-    bs_years_val: ['2014-01-01','2017-01-01'] #only used with bridgescalar developed datasets
-    bs_years_test: ['2018-01-01','2019-01-01'] #only used with bridgescalar developed datasets
-    bs_data_path: '/glade/derecho/scratch/dgagne/era5_quantile/' #only used with bridgescalar developed datasets
-    bs_file_format: 'TOTAL_%Y-%m-%dT%H:%M:%S_quantile.nc' #only used with bridgescalar developed datasets
     
 trainer:
+    type: "standard"
     mode: none # none, ddp, fsdp
-    train_batch_size: 8
-    valid_batch_size: 4
-    batches_per_epoch: 0 # Set to 0 to use len(dataloader)
+    train_batch_size: 1
+    valid_batch_size: 1
+    batches_per_epoch: 1000 # Set to 0 to use len(dataloader)
     valid_batches_per_epoch: 100
-    learning_rate: 1.0e-04
+    learning_rate: 5.0e-04
     weight_decay: 1.0e-05
-    start_epoch: 3
-    epochs: 30
+    start_epoch: 1
+    epochs: 20
     amp: False
     grad_accum_every: 1
     grad_max_norm: 1.0
@@ -40,30 +41,30 @@ trainer:
     stopping_patience: 50
     teacher_forcing_ratio: 0.5 #0.9886539666794065
     stop_rollout: 0.9
-    load_weights: True
-    load_optimizer: True
+    skip_validation: False
+    load_weights: False
+    load_optimizer: False
     use_scheduler: False
-    update_learning_rate: False
-    # scheduler: {'scheduler_type': 'cosine-annealing', first_cycle_steps: 2000, cycle_mult: 6.0, max_lr: 5.0e-04, min_lr: 5.0e-07, warmup_steps: 1999, gamma: 0.7}
-    # scheduler: {scheduler_type: plateau, mode: min, factor: 0.1, patience: 5, cooldown: 2, min_lr: 1e-6, epsilon: 1e-8, verbose: true, threshold: 1e-4}
-    # scheduler: {'scheduler_type': 'lambda'}
-  
+    cpu_offload: True
+    update_learning_rate: True
+    train_one_epoch: False
+    scheduler: {'scheduler_type': 'lambda'}
+    
 model:
     type: "crossformer"
-    image_height: 192    # Image height (default: 640)
+    image_height: 640    # Image height (default: 640)
     patch_height: 1      # Patch height (default: 2)
-    image_width: 288    # Image width (default: 1280)
+    image_width: 1280    # Image width (default: 1280)
     patch_width: 1       # Patch width (default: 2)
     levels: 15           # Number of levels (default: 15)
-    frames: 2            # Number of frames (default: 2)
+    frames: 1            # Number of frames (default: 2)
     frame_patch_size: 2  # Frame patch size (default: 2)
     channels: 4          # Channels (default: 4)
     surface_channels: 7  # Surface channels (default: 7)
-    static_channels: 3   # Static channels (default: 3)
-    dim: [288, 576, 1152, 2304]           # Dimensionality of each layer (default: [64, 128, 256, 512])
-    depth: [1, 1, 2, 1] #[2, 2, 5, 2]                    # Depth of each layer (default: [2, 2, 8, 2])
-    global_window_size: [2, 2, 2, 1]      # Global window size for each layer (default: [10, 5, 2, 1])
-    local_window_size: 2                  # Local window size (default: 10)
+    dim: [128, 256, 512, 1024]              # Dimensionality of each layer (default: [64, 128, 256, 512])
+    depth: [2, 2, 8, 2]                    # Depth of each layer (default: [2, 2, 8, 2])
+    global_window_size: [10, 5, 2, 1]      # Global window size for each layer (default: [10, 5, 2, 1])
+    local_window_size: 10                  # Local window size (default: 10)
     cross_embed_kernel_sizes:             # Kernel sizes for cross-embedding (default: [[4, 8, 16, 32], [2, 4], [2, 4], [2, 4]])
     - [4, 8, 16, 32]
     - [2, 4]
@@ -72,18 +73,19 @@ model:
     cross_embed_strides: [2, 2, 2, 2]     # Strides for cross-embedding (default: [4, 2, 2, 2])
     attn_dropout: 0.                      # Dropout probability for attention layers (default: 0.0)
     ff_dropout: 0.                        # Dropout probability for feed-forward layers (default: 0.0)
-    pad_lon: 48
-    pad_lat: 48
+    pad_lon: 80
+    pad_lat: 80
     use_spectral_norm: True
     
 loss: 
     training_loss: "mse"
     use_vgg: False
+    use_power_loss: False # use either power or spectral loss
     use_spectral_loss: False
-    spectral_wavenum_init: 15
-    spectral_lambda_reg: 0.025791372491084097
+    spectral_wavenum_init: 20
+    spectral_lambda_reg: 0.1 # power loss is order of 1e1 (usually between 1-10)
     use_latitude_weights: True
-    latitude_weights: "/glade/u/home/wchapman/MLWPS/DataLoader/LSM_static_variables_ERA5_zhght_ONEDEG.nc"
+    latitude_weights: "/glade/u/home/wchapman/MLWPS/DataLoader/LSM_static_variables_ERA5_zhght.nc"
     use_variable_weights: False
     variable_weights:
         U: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
@@ -99,18 +101,33 @@ loss:
         Q500: 0.1
 
 predict:
-    forecasts: [
-        #["1989-12-31 00:00:00", "1990-01-02 00:00:00"],
-        ["2018-06-01 00:00:00", "2018-06-01 12:00:00"],
-        ["2017-02-01 00:00:00", "2017-02-01 12:00:00"],
-        
-    ]
-    use_laplace_filter: False
+    forecasts: 
+        type: "custom"
+        start_year: 2020
+        start_month: 6
+        start_day: 1
+        days: 10
+        duration: 32
+    # forecasts: [
+    #     ["2020-01-01 00:00:00", "2020-01-10 23:00:00"],
+    #     ["2020-02-01 00:00:00", "2020-02-10 23:00:00"],
+    #     ["2020-03-01 00:00:00", "2020-03-10 23:00:00"],
+    #     ["2020-04-01 00:00:00", "2020-04-10 23:00:00"],
+    #     ["2020-05-01 00:00:00", "2020-05-10 23:00:00"],
+    #     ["2020-06-01 00:00:00", "2020-06-10 23:00:00"],
+    #     ["2020-07-01 00:00:00", "2020-07-10 23:00:00"],
+    #     ["2020-08-01 00:00:00", "2020-08-10 23:00:00"],
+    #     ["2020-09-01 00:00:00", "2020-09-10 23:00:00"],
+    #     ["2020-10-01 00:00:00", "2020-10-10 23:00:00"],
+    #     ["2020-11-01 00:00:00", "2020-11-10 23:00:00"],
+    #     ["2020-12-01 00:00:00", "2020-12-10 23:00:00"]
+    # ]
+    use_laplace_filter: True
     save_format: "nc"
 
 visualization:
     sigma_level_visualize:
-        variable_keys: [] #['U','V','T','Q']  # variable keys as defined in **[data][variables][...]**
+        variable_keys: ['U','V','T','Q']  # variable keys as defined in **[data][variables][...]**
         visualize_levels: [5, 10,]     # sigma levels (by their indices) to visualize 
         variable_names: ['U wind [m/s]', # the name of each variable
                          'V wind [m/s]', # must be consistent with **variable_indices**
@@ -121,7 +138,7 @@ visualization:
         colormaps: ['Spectral_r', 'Spectral_r', 'viridis_plasma', 'YlGn']
         file_name_prefix: 'global_sigma'
     diagnostic_variable_visualize:
-        variable_keys: [] #['V500', 'U500','T500','Z500','Q500']
+        variable_keys: ['V500', 'U500','T500','Z500','Q500']
         visualize_levels: ['none', 'none', 'none', 'none', 'none'] # none for single level variables
         variable_names: ['500 hPa V Wind [m/s]', 
                          '500 hPa U Wind [m/s]',
@@ -133,7 +150,7 @@ visualization:
         colormaps: ['Spectral_r', 'Spectral_r', 'viridis_plasma', 'Spectral_r', 'YlGn']
         file_name_prefix: 'global_diagnostics'
     surface_visualize:
-        variable_keys: [] #['SP','t2m']
+        variable_keys: ['SP','t2m']
         visualize_levels: ['none', 'none']
         variable_names: ['Surface Pressure [hPa]', 
                          '2-m Air Temperature [$^\circ$K]']
@@ -142,28 +159,41 @@ visualization:
         colormaps: ['Spectral', 'viridis_plasma',]
         file_name_prefix: 'global_surface'
     map_projection: 'EckertIII' # PlateCarree, LambertCylindrical, Miller, EckertIII, Mollweide, Robinson
-    save_options: {'dpi':100, 
-                   'orientation':'portrait',
+    save_options: {'dpi':250, 
+                   'orientation':'portrait', 
                    'bbox_inches':'tight', 
                    'pad_inches':0.1, 
                    'transparent':False,
                    'format':'png'}
     video_format: 'mp4' # gif, mp4, none
+diagnostics:
+    summary_plot_fhs: [1, 20, 60, 120] # what forecast hours to plot as a summary plot
+    use_spectrum_vis: False
+    spectrum_vis:
+        atmos_variables: ["U", "V", "T", "Q"]
+        atmos_levels: [8, 10]
+        single_level_variables: ["SP", "t2m", "Z500"]
+        figsize: () # empty tuple for auto
+    plev_summary_only: True  # pressure level conversion is really slow, use this option to compute pressure level diagnostics only at summary fhs (above), will disable KE metrics output
+    use_KE_diagnostics: True # disable all KE diagnostics including KE metrics
+    ke_vis:
+        use_KE_spectrum_vis: True
+        use_KE_difference_vis: True
 
 pbs: #derecho
-    conda: "credit"
-    project: "P03010039"
-    job_name: "xformer-1deg"
+    conda: "/glade/work/ksha/miniconda3/envs/credit"
+    project: "NAML0001"
+    job_name: "wxformer"
     walltime: "12:00:00"
-    nodes: 12
+    nodes: 8
     ncpus: 64
     ngpus: 4
     mem: '480GB'
     queue: 'main'
     
 # pbs: # casper
-#     conda: "holodec"
-#     job_name: 'xformer-1deg'
+#     conda: "/glade/work/schreck/miniconda3/envs/evidential"
+#     job_name: 'latlon'
 #     nodes: 1
 #     ncpus: 8
 #     ngpus: 1
