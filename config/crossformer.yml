@@ -3,7 +3,7 @@ seed: 1000
 
 scaler:
   type: "standard"
-  config: 
+  options: 
     channels_last: False
 
 data:

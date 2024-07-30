@@ -1,7 +1,7 @@
 #!/bin/bash -l
 #PBS -N gwm_scaler
-#PBS -l select=4:ncpus=128:mpiprocs=128:ngpus=0:mem=200GB
-#PBS -l walltime=06:00:00
+#PBS -l select=4:ncpus=128:mpiprocs=128:ngpus=0
+#PBS -l walltime=07:00:00
 #PBS -A NAML0001
 #PBS -q main
 #PBS -l job_priority=regular
