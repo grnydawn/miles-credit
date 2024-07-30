@@ -55,7 +55,7 @@ def main():
                                       solar_point["longitude"].values, 
                                       solar_point["tsi"].values.ravel()]), dest=0, tag=rank)
         else:
-            solar_grid.loc[:, solar_point["latitude"], solar_point["longitude"]] = solar_point
+            solar_grid.loc[:, solar_point["latitude"], solar_point["longitude"]] = solar_point["tsi"]
             for sr in range(1, size):
                 other_point = np.empty(2 + solar_grid.shape[0], dtype=solar_point.dtype)
                 comm.Recv(other_point, source=sr, tag=sr)
