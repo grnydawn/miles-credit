@@ -17,6 +17,19 @@ def test_get_solar_radiation_loc():
     assert np.all(dates == pd.DatetimeIndex(tsi_ds.time)), "Dates do not match"
 
 
+def test_get_solar_radiation_loc_6h():
+    start_date = "1999-01-01"
+    end_date = "2001-12-31 18:00"
+    lon = -95.2
+    lat = 49.2
+    altitude = 1000.0
+    dates = pd.date_range(start=start_date, end=end_date, freq='6h')
+    tsi_ds = get_solar_radiation_loc(lon, lat, altitude, start_date, end_date, step_freq='6h')
+    assert np.all(tsi_ds["tsi"].values) >= 0, "Negative solar values"
+    assert np.all(tsi_ds["coszen"].min() >= 0), "Negative cos zenith values"
+    assert np.all(dates == pd.DatetimeIndex(tsi_ds.time)), "Dates do not match"
+
+
 def test_solar_gridding():
     lons = np.arange(-100.0, -89.5, 0.5)
     lats = np.arange(30.0, 35.0, 0.5)
