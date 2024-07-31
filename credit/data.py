@@ -197,73 +197,73 @@ def get_contiguous_segments(dt_index: pd.DatetimeIndex, min_timesteps: int, max_
     return segments
 
 
-def get_zarr_chunk_sequences(
-        n_chunks_per_disk_load: int,
-        zarr_chunk_boundaries: Iterable[int],
-        contiguous_segments: Iterable[Segment]
-) -> Iterable[Segment]:
-    """
+# def get_zarr_chunk_sequences(
+#         n_chunks_per_disk_load: int,
+#         zarr_chunk_boundaries: Iterable[int],
+#         contiguous_segments: Iterable[Segment]
+# ) -> Iterable[Segment]:
+#     """
 
-    Args:
-      n_chunks_per_disk_load: Maximum number of Zarr chunks to load from disk in one go.
-      zarr_chunk_boundaries: The indicies into the Zarr store's time dimension which define the Zarr chunk boundaries.
-        Must be sorted.
-      contiguous_segments: Indicies into the Zarr store's time dimension that define contiguous timeseries.
-        That is, timeseries with no gaps.
+#     Args:
+#       n_chunks_per_disk_load: Maximum number of Zarr chunks to load from disk in one go.
+#       zarr_chunk_boundaries: The indicies into the Zarr store's time dimension which define the Zarr chunk boundaries.
+#         Must be sorted.
+#       contiguous_segments: Indicies into the Zarr store's time dimension that define contiguous timeseries.
+#         That is, timeseries with no gaps.
 
-    Returns zarr_chunk_sequences: a list of Segments representing the start and end indicies of contiguous sequences of multiple Zarr chunks,
-    all exactly n_chunks_per_disk_load long (for contiguous segments at least as long as n_chunks_per_disk_load zarr chunks),
-    and at least one side of the boundary will lie on a 'natural' Zarr chunk boundary.
+#     Returns zarr_chunk_sequences: a list of Segments representing the start and end indicies of contiguous sequences of multiple Zarr chunks,
+#     all exactly n_chunks_per_disk_load long (for contiguous segments at least as long as n_chunks_per_disk_load zarr chunks),
+#     and at least one side of the boundary will lie on a 'natural' Zarr chunk boundary.
 
-    For example, say that n_chunks_per_disk_load = 3, and the Zarr chunks sizes are all 5:
+#     For example, say that n_chunks_per_disk_load = 3, and the Zarr chunks sizes are all 5:
 
 
-                  0    5   10   15   20   25   30   35
-                  |....|....|....|....|....|....|....|
+#                   0    5   10   15   20   25   30   35
+#                   |....|....|....|....|....|....|....|
 
-    INPUTS:
-                     |------CONTIGUOUS SEGMENT----|
+#     INPUTS:
+#                      |------CONTIGUOUS SEGMENT----|
 
-    zarr_chunk_boundaries:
-                  |----|----|----|----|----|----|----|
+#     zarr_chunk_boundaries:
+#                   |----|----|----|----|----|----|----|
 
-    OUTPUT:
-    zarr_chunk_sequences:
-           3 to 15:  |-|----|----|
-           5 to 20:    |----|----|----|
-          10 to 25:         |----|----|----|
-          15 to 30:              |----|----|----|
-          20 to 32:                   |----|----|-|
+#     OUTPUT:
+#     zarr_chunk_sequences:
+#            3 to 15:  |-|----|----|
+#            5 to 20:    |----|----|----|
+#           10 to 25:         |----|----|----|
+#           15 to 30:              |----|----|----|
+#           20 to 32:                   |----|----|-|
 
-    """
-    assert n_chunks_per_disk_load > 0
+#     """
+#     assert n_chunks_per_disk_load > 0
 
-    zarr_chunk_sequences = []
+#     zarr_chunk_sequences = []
 
-    for contig_segment in contiguous_segments:
-        # searchsorted() returns the index into zarr_chunk_boundaries at which contig_segment.start
-        # should be inserted into zarr_chunk_boundaries to maintain a sorted list.
-        # i_of_first_zarr_chunk is the index to the element in zarr_chunk_boundaries which defines
-        # the start of the current contig chunk.
-        i_of_first_zarr_chunk = np.searchsorted(zarr_chunk_boundaries, contig_segment.start)
+#     for contig_segment in contiguous_segments:
+#         # searchsorted() returns the index into zarr_chunk_boundaries at which contig_segment.start
+#         # should be inserted into zarr_chunk_boundaries to maintain a sorted list.
+#         # i_of_first_zarr_chunk is the index to the element in zarr_chunk_boundaries which defines
+#         # the start of the current contig chunk.
+#         i_of_first_zarr_chunk = np.searchsorted(zarr_chunk_boundaries, contig_segment.start)
 
-        # i_of_first_zarr_chunk will be too large by 1 unless contig_segment.start lies
-        # exactly on a Zarr chunk boundary.  Hence we must subtract 1, or else we'll
-        # end up with the first contig_chunk being 1 + n_chunks_per_disk_load chunks long.
-        if zarr_chunk_boundaries[i_of_first_zarr_chunk] > contig_segment.start:
-            i_of_first_zarr_chunk -= 1
+#         # i_of_first_zarr_chunk will be too large by 1 unless contig_segment.start lies
+#         # exactly on a Zarr chunk boundary.  Hence we must subtract 1, or else we'll
+#         # end up with the first contig_chunk being 1 + n_chunks_per_disk_load chunks long.
+#         if zarr_chunk_boundaries[i_of_first_zarr_chunk] > contig_segment.start:
+#             i_of_first_zarr_chunk -= 1
 
-        # Prepare for looping to create multiple Zarr chunk sequences for the current contig_segment.
-        zarr_chunk_seq_start_i = contig_segment.start
-        zarr_chunk_seq_end_i = None  # Just a convenience to allow us to break the while loop by checking if zarr_chunk_seq_end_i != contig_segment.end.
-        while zarr_chunk_seq_end_i != contig_segment.end:
-            zarr_chunk_seq_end_i = zarr_chunk_boundaries[i_of_first_zarr_chunk + n_chunks_per_disk_load]
-            zarr_chunk_seq_end_i = min(zarr_chunk_seq_end_i, contig_segment.end)
-            zarr_chunk_sequences.append(Segment(start=zarr_chunk_seq_start_i, end=zarr_chunk_seq_end_i))
-            i_of_first_zarr_chunk += 1
-            zarr_chunk_seq_start_i = zarr_chunk_boundaries[i_of_first_zarr_chunk]
+#         # Prepare for looping to create multiple Zarr chunk sequences for the current contig_segment.
+#         zarr_chunk_seq_start_i = contig_segment.start
+#         zarr_chunk_seq_end_i = None  # Just a convenience to allow us to break the while loop by checking if zarr_chunk_seq_end_i != contig_segment.end.
+#         while zarr_chunk_seq_end_i != contig_segment.end:
+#             zarr_chunk_seq_end_i = zarr_chunk_boundaries[i_of_first_zarr_chunk + n_chunks_per_disk_load]
+#             zarr_chunk_seq_end_i = min(zarr_chunk_seq_end_i, contig_segment.end)
+#             zarr_chunk_sequences.append(Segment(start=zarr_chunk_seq_start_i, end=zarr_chunk_seq_end_i))
+#             i_of_first_zarr_chunk += 1
+#             zarr_chunk_seq_start_i = zarr_chunk_boundaries[i_of_first_zarr_chunk]
 
-    return zarr_chunk_sequences
+#     return zarr_chunk_sequences
 
 
 def flatten_list(list_of_lists):
@@ -524,20 +524,21 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         
         ind_end_in_file = ind_start_in_file+self.history_len+self.forecast_len
         
-        ## ERA5_subset: a xarray dataset that contains training input and target (for the current index)
+        ## ERA5_subset: a xarray dataset that contains training input and target (for the current batch)
         ERA5_subset = self.all_files[int(ind_file)].isel(
-            time=slice(ind_start_in_file, ind_end_in_file+1)).load()
+            time=slice(ind_start_in_file, ind_end_in_file+1)) #.load() NOT load into memory
         
         if self.surface_files:
             ## subset surface variables
             surface_subset = self.surface_files[int(ind_file)].isel(
-                time=slice(ind_start_in_file, ind_end_in_file+1)).load()
-    
+                time=slice(ind_start_in_file, ind_end_in_file+1)) #.load() NOT load into memory
+            
             ## merge upper-air and surface here:
-            ERA5_subset = ERA5_subset.merge(surface_subset)
+            ERA5_subset = ERA5_subset.merge(surface_subset) # <-- lazy merge, ERA5 and surface both not loaded
 
         # ==================================================== #
-        # split ERA5_subset into training inputs and targets + merge with forcing and static
+        # split ERA5_subset into training inputs and targets
+        #   + merge with forcing and static
 
         # the ind_end of the ERA5_subset
         ind_end_time = len(ERA5_subset['time'])
@@ -549,7 +550,8 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         # xarray dataset as input
         ## historical_ERA5_images: the final input
 
-        historical_ERA5_images = ERA5_subset.isel(time=slice(0, self.history_len, self.skip_periods))
+        historical_ERA5_images = ERA5_subset.isel(
+            time=slice(0, self.history_len, self.skip_periods)).load() # <-- load into memory
 
         # merge forcing inputs
         if self.xarray_forcing:
@@ -560,7 +562,7 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
             month_day_inputs = extract_month_day_hour(np.array(historical_ERA5_images['time'])) # <-- upper air
             # indices to subset
             ind_forcing, _ = find_common_indices(month_day_forcing, month_day_inputs)
-            forcing_subset_input = self.xarray_forcing.isel(time=ind_forcing).load()
+            forcing_subset_input = self.xarray_forcing.isel(time=ind_forcing).load() # <-- load into memory
             # forcing and upper air have different years but the same mon/day/hour
             # safely replace forcing time with upper air time
             forcing_subset_input['time'] = historical_ERA5_images['time']
@@ -578,7 +580,8 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
             static_subset_input = static_subset_input.assign_coords({'time': ERA5_subset['time']})
 
             # slice + load to the GPU
-            static_subset_input = static_subset_input.isel(time=slice(0, self.history_len, self.skip_periods)).load()
+            static_subset_input = static_subset_input.isel(
+                time=slice(0, self.history_len, self.skip_periods)).load() # <-- load into memory
 
             # update 
             static_subset_input['time'] = historical_ERA5_images['time']
@@ -589,24 +592,39 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         # ==================================================== #
         # xarray dataset as target
         ## target_ERA5_images: the final target
-        
-        target_ERA5_images = ERA5_subset.isel(time=slice(self.history_len, ind_end_time, self.skip_periods))
 
-        ## merge diagnoisc input here:
-        if self.diagnostic_files:
-            
-            # subset diagnostic variables
-            diagnostic_subset = self.diagnostic_files[int(ind_file)].isel(
-                time=slice(ind_start_in_file, ind_end_in_file+1)).load()
-            
-            # merge into the target dataset
-            target_diagnostic = diagnostic_subset.isel(time=slice(self.history_len, ind_end_time, self.skip_periods))
-            target_ERA5_images = target_ERA5_images.merge(target_diagnostic)
-            
         if self.one_shot is not None:
-            # get the final state of the target as one-shot
-            target_ERA5_images = target_ERA5_images.isel(time=slice(0, 1))
-
+            # one_shot is True (on), go straight to the last element
+            target_ERA5_images = ERA5_subset.isel(time=slice(-1, None)).load() # <-- load into memory
+            
+            ## merge diagnoisc input here:
+            if self.diagnostic_files:
+                diagnostic_subset = self.diagnostic_files[int(ind_file)].isel(
+                    time=slice(ind_start_in_file, ind_end_in_file+1))
+                
+                diagnostic_subset = diagnostic_subset.isel(
+                    time=slice(-1, None)).load() # <-- load into memory
+                
+                target_ERA5_images = target_ERA5_images.merge(diagnostic_subset)
+                
+        else:
+            # one_shot is None (off), get the full target length based on forecast_len
+            target_ERA5_images = ERA5_subset.isel(
+                time=slice(self.history_len, ind_end_time, self.skip_periods)).load() # <-- load into memory
+    
+            ## merge diagnoisc input here:
+            if self.diagnostic_files:
+                
+                # subset diagnostic variables
+                diagnostic_subset = self.diagnostic_files[int(ind_file)].isel(
+                    time=slice(ind_start_in_file, ind_end_in_file+1))
+                
+                diagnostic_subset = diagnostic_subset.isel(
+                    time=slice(self.history_len, ind_end_time, self.skip_periods)).load() # <-- load into memory
+                
+                # merge into the target dataset
+                target_ERA5_images = target_ERA5_images.merge(diagnostic_subset)
+            
         # pipe xarray datasets to the sampler
         sample = Sample(
             historical_ERA5_images=historical_ERA5_images,
