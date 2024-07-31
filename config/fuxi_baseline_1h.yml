@@ -19,6 +19,7 @@ data:
     skip_periods: null
     
 trainer:
+    type: "standard"
     mode: none
     train_batch_size: 1
     valid_batch_size: 1
