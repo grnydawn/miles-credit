@@ -93,6 +93,7 @@ class Trainer(BaseTrainer):
                         else:  # use model's predictions
                             if x.shape[2] > 1:
                                 # discard any statics from x here as they will get added below from batch
+                                print(i, forecast_hour)
                                 x_detach = x[:, :, 1:].detach()
                                 atmos_vars = y_pred.shape[1]
                                 x = torch.cat([x_detach[:, :atmos_vars], y_pred.detach()], dim=2)
