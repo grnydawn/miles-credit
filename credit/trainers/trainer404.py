@@ -1,62 +1,29 @@
-'''
-trainer.py 
--------------------------------------------------------
-Content:
-    - Trainer
-        - train_one_epoch
-        - validate
-        - fit
-
-Yingkai Sha
-ksha@ucar.edu
-'''
-import os
 import gc
-import tqdm
+import os
 import logging
 from collections import defaultdict
 
 import numpy as np
 import pandas as pd
-
+import datetime as dt
 import torch
 import torch.distributed as dist
+import torch.fft
+import tqdm
 from torch.cuda.amp import autocast
 from torch.utils.data import IterableDataset
-
 import optuna
-from credit.data import concat_and_reshape, reshape_only
 from credit.models.checkpoint import TorchFSDPCheckpointIO
-
-logger = logging.getLogger(__name__)
-
-def cleanup():
-    dist.destroy_process_group()
+from credit.trainers.utils import cleanup, accum_log
+from credit.trainers.base_trainer import BaseTrainer
 
 
-def cycle(dl):
-    while True:
-        for data in dl:
-            yield data
+class Trainer(BaseTrainer):
 
-
-def accum_log(log, new_logs):
-    for key, new_value in new_logs.items():
-        old_value = log.get(key, 0.)
-        log[key] = old_value + new_value
-    return log
-
-
-class Trainer:
-
-    def __init__(self, model, rank, module=False):
-        super(Trainer, self).__init__()
-        self.model = model
-        self.rank = rank
-        self.device = torch.device(f"cuda:{rank % torch.cuda.device_count()}") if torch.cuda.is_available() else torch.device("cpu")
-
-        if module:
-            self.model = self.model.module
+    def __init__(self, model: torch.nn.Module, rank: int, module: bool = False):
+        super().__init__(model, rank, module)
+        # Add any additional initialization if needed
+        logging.info("Loading a trainer class for the conus404 dataset")
 
     # Training function.
     def train_one_epoch(
@@ -70,27 +37,18 @@ class Trainer:
         scheduler,
         metrics
     ):
-        # training hyperparameters
+
         batches_per_epoch = conf['trainer']['batches_per_epoch']
         grad_accum_every = conf['trainer']['grad_accum_every']
         history_len = conf["data"]["history_len"]
         forecast_len = conf["data"]["forecast_len"]
         amp = conf['trainer']['amp']
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
+        rollout_p = 1.0 if 'stop_rollout' not in conf['trainer'] else conf['trainer']['stop_rollout']
 
-        if 'stop_rollout' not in conf['trainer']:
-            rollout_p = 1.0 
-        else:
-            rollout_p = conf['trainer']['stop_rollout']
+        if "static_variables" in conf["data"] and "tsi" in conf["data"]["static_variables"]:
+            pass  # not implemented yet
 
-        if "total_time_steps" in conf["data"]:
-            total_time_steps = conf["data"]["total_time_steps"]
-        else:
-            total_time_steps = forecast_len
-
-        if 'diagnostic_variables' in conf["data"]:
-            varnum_diag = len(conf["data"]['diagnostic_variables'])
-            
         # update the learning rate if epoch-by-epoch updates that dont depend on a metric
         if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "lambda":
             scheduler.step()
@@ -110,110 +68,58 @@ class Trainer:
             leave=True,
             disable=True if self.rank > 0 else False
         )
-        
+
+        static = None
         results_dict = defaultdict(list)
 
         for i, batch in batch_group_generator:
-            # training log
+
             logs = {}
-            # loss
+
             commit_loss = 0.0
 
             with autocast(enabled=amp):
 
-                # --------------------------------------------------------------------------------- #
+                x = batch["x"].to(self.device)
+                y = batch["y"].squeeze(2)
 
-                if "x_surf" in batch:
-                    # combine x and x_surf
-                    # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon) 
-                    # output: (batch_num, var, time, lat, lon), 'x' first and then 'x_surf'
-                    x = concat_and_reshape(batch["x"], batch["x_surf"]).to(self.device).float()
-                else:
-                    # no x_surf
-                    x = reshape_only(batch["x"]).to(self.device).float()
+                if "static" in batch:
+                    if static is None:
+                        static = batch["static"].to(self.device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float()
+                    x = torch.cat((x, static.clone()), dim=1)
 
-                # --------------------------------------------------------------------------------- #
-                # add forcing and static variables
-                if 'x_forcing_static' in batch:
-                    
-                    # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
-                    x_forcing_batch = batch['x_forcing_static'].to(self.device).permute(0, 2, 1, 3, 4).float()
-
-                    # concat on var dimension
-                    x = torch.cat((x, x_forcing_batch), dim=1)
-                    
-                # --------------------------------------------------------------------------------- #
-                # combine y and y_surf
-                if "y_surf" in batch:
-                    y = concat_and_reshape(batch["y"], batch["y_surf"]).to(self.device)
-                else:
-                    y = reshape_only(batch["y"]).to(self.device)
-                
-                if 'y_diag' in batch:
-
-                    # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
-                    y_diag_batch = batch['y_diag'].to(self.device).permute(0, 2, 1, 3, 4).float()
-                    
-                    # concat on var dimension
-                    y = torch.cat((y, y_diag_batch), dim=1)
-                
                 k = 0
                 while True:
 
-                    with torch.no_grad() if k != total_time_steps else torch.enable_grad():
+                    with torch.no_grad() if k != forecast_len else torch.enable_grad():
 
-                        self.model.eval() if k != total_time_steps else self.model.train()
+                        self.model.eval() if k != forecast_len else self.model.train()
 
-                        if getattr(self.model, 'use_codebook', False):
-                            y_pred, cm_loss = self.model(x)
-                            commit_loss += cm_loss
-                        else:
-                            y_pred = self.model(x)
+                        y_pred = self.model(x)
 
-                        if k == total_time_steps:
+                        if k == forecast_len:
                             break
 
                         k += 1
 
-                        if history_len > 1:
-
-                            # detach and throw away the oldest time dim
-                            x_detach = x.detach()[:, :, 1:, ...]
-                            
-                            # use y_pred as the next-hour input
-                            if 'y_diag' in batch:
-                                # drop diagnostic variables
-                                y_pred = y_pred.detach()[:, :-varnum_diag, ...]
-
-                            # add forcing and static vars to y_pred
-                            if 'x_forcing_static' in batch:
-
-                                # detach and throw away the oldest time dim (same idea as x_detach)
-                                x_forcing_detach = x_forcing_batch.detach()[:, :, 1:, ...]
-
-                                # concat forcing and static to y_pred, y_pred will be the next input
-                                y_pred = torch.cat((y_pred, x_forcing_detach), dim=1)
-                            
+                        if history_len > 2:
+                            x_detach = x.detach()[:, :, 1:]
+                            if "static" in batch:
+                                y_pred = torch.cat((y_pred, static[:, :, 0:1].clone()), dim=1)
                             x = torch.cat([x_detach, y_pred], dim=2).detach()
-                            
                         else:
-                            # use y_pred as the next-hour inputs
-                            x = y_pred.detach()
-                            
-                            if 'y_diag' in batch:
-                                x = x[:, :-varnum_diag, ...]
-                                
-                            # add forcing and static vars to y_pred
-                            if 'x_forcing_static' in batch:
-                                x = torch.cat((x, x_forcing_batch), dim=1)
+                            if "static" in batch or "TOA" in batch:
+                                x = y_pred.detach()
+                                if "static" in batch:
+                                    x = torch.cat((x, static[:, :, 0:1].clone()), dim=1)
+                            else:
+                                x = y_pred.detach()
 
                 y = y.to(device=self.device, dtype=y_pred.dtype)
-                
-                loss = criterion(y, y_pred)
+                loss = criterion(y, y_pred.squeeze(2))
 
                 # Metrics
-                metrics_dict = metrics(y_pred.float(), y.float())
-                
+                metrics_dict = metrics(y_pred.float().squeeze(2), y.float())
                 for name, value in metrics_dict.items():
                     value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
                     if distributed:
@@ -233,24 +139,15 @@ class Trainer:
             scaler.update()
             optimizer.zero_grad()
 
-            # Handle batch_loss
             batch_loss = torch.Tensor([logs["loss"]]).cuda(self.device)
-            
             if distributed:
                 dist.all_reduce(batch_loss, dist.ReduceOp.AVG, async_op=False)
             results_dict["train_loss"].append(batch_loss[0].item())
-
             if 'forecast_hour' in batch:
-                forecast_hour_tensor = batch['forecast_hour'].to(self.device)
-                if distributed:
-                    dist.all_reduce(forecast_hour_tensor, dist.ReduceOp.AVG, async_op=False)
-                    forecast_hour_avg = forecast_hour_tensor[-1].item()
-                else:
-                    forecast_hour_avg = batch['forecast_hour'][-1].item()
-
-                results_dict["train_forecast_len"].append(forecast_hour_avg + 1)
+                forecast_hour_stop = batch['forecast_hour'][-1].item()
+                results_dict["train_forecast_len"].append(forecast_hour_stop)
             else:
-                results_dict["train_forecast_len"].append(forecast_len + 1)
+                results_dict["train_forecast_len"].append(forecast_len)
 
             if not np.isfinite(np.mean(results_dict["train_loss"])):
                 try:
@@ -266,7 +163,6 @@ class Trainer:
                 np.mean(results_dict["train_mae"]),
                 np.mean(results_dict["train_forecast_len"])
             )
-            
             to_print += " lr: {:.12f}".format(optimizer.param_groups[0]["lr"])
             if self.rank == 0:
                 batch_group_generator.set_description(to_print)
@@ -301,11 +197,7 @@ class Trainer:
         history_len = conf["data"]["valid_history_len"] if "valid_history_len" in conf["data"] else conf["history_len"]
         forecast_len = conf["data"]["valid_forecast_len"] if "valid_forecast_len" in conf["data"] else conf["forecast_len"]
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
-        total_time_steps = conf["data"]["total_time_steps"] if "total_time_steps" in conf["data"] else forecast_len
 
-        if 'diagnostic_variables' in conf["data"]:
-            varnum_diag = len(conf["data"]['diagnostic_variables'])
-        
         results_dict = defaultdict(list)
 
         # set up a custom tqdm
@@ -323,45 +215,22 @@ class Trainer:
             disable=True if self.rank > 0 else False
         )
 
+        static = None
+
         for i, batch in batch_group_generator:
 
             with torch.no_grad():
 
                 commit_loss = 0.0
 
-                if "x_surf" in batch:
-                    # combine x and x_surf
-                    # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon) 
-                    # output: (batch_num, var, time, lat, lon), 'x' first and then 'x_surf'
-                    x = concat_and_reshape(batch["x"], batch["x_surf"]).to(self.device).float()
-                else:
-                    # no x_surf
-                    x = reshape_only(batch["x"]).to(self.device).float()
+                x = batch["x"].to(self.device)
 
-                # --------------------------------------------------------------------------------- #
-                # add forcing and static variables
-                if 'x_forcing_static' in batch:
-                    
-                    # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
-                    x_forcing_batch = batch['x_forcing_static'].to(self.device).permute(0, 2, 1, 3, 4).float()
+                if "static" in batch:
+                    if static is None:
+                        static = batch["static"].to(self.device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float()
+                    x = torch.cat((x, static.clone()), dim=1)
 
-                    # concat on var dimension
-                    x = torch.cat((x, x_forcing_batch), dim=1)
-                    
-                # --------------------------------------------------------------------------------- #
-                # combine y and y_surf
-                if "y_surf" in batch:
-                    y = concat_and_reshape(batch["y"], batch["y_surf"]).to(self.device)
-                else:
-                    y = reshape_only(batch["y"]).to(self.device)
-                
-                if 'y_diag' in batch:
-
-                    # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
-                    y_diag_batch = batch['y_diag'].to(self.device).permute(0, 2, 1, 3, 4).float()
-                    
-                    # concat on var dimension
-                    y = torch.cat((y, y_diag_batch), dim=1)
+                y = batch["y"].to(self.device).squeeze(2)
 
                 k = 0
                 while True:
@@ -371,61 +240,37 @@ class Trainer:
                     else:
                         y_pred = self.model(x)
 
-                    if k == total_time_steps:
+                    if k == forecast_len:
                         break
 
                     k += 1
 
-                    if history_len > 1:
-
-                        # detach and throw away the oldest time dim
-                        x_detach = x.detach()[:, :, 1:, ...]
-                        
-                        # use y_pred as the next-hour input
-                        if 'y_diag' in batch:
-                            # drop diagnostic variables
-                            y_pred = y_pred.detach()[:, :-varnum_diag, ...]
-
-                        # add forcing and static vars to y_pred
-                        if 'x_forcing_static' in batch:
-
-                            # detach and throw away the oldest time dim (same idea as x_detach)
-                            x_forcing_detach = x_forcing_batch.detach()[:, :, 1:, ...]
-
-                            # concat forcing and static to y_pred, y_pred will be the next input
-                            y_pred = torch.cat((y_pred, x_forcing_detach), dim=1)
-                        
+                    if history_len > 2:
+                        x_detach = x.detach()[:, :, 1:]
+                        if "static" in batch:
+                            y_pred = torch.cat((y_pred, static[:, :, 0:1].clone()), dim=1)
                         x = torch.cat([x_detach, y_pred], dim=2).detach()
-                        
                     else:
-                        # use y_pred as the next-hour inputs
-                        x = y_pred.detach()
-                        
-                        if 'y_diag' in batch:
-                            x = x[:, :-varnum_diag, ...]
-                            
-                        # add forcing and static vars to y_pred
-                        if 'x_forcing_static' in batch:
-                            x = torch.cat((x, x_forcing_batch), dim=1)
-                            
-                loss = criterion(y.to(y_pred.dtype), y_pred)
+                        if "static" in batch or "TOA" in batch:
+                            x = y_pred.detach()
+                            if "static" in batch:
+                                x = torch.cat((x, static[:, :, 0:1].clone()), dim=1)
+                        else:
+                            x = y_pred.detach()
+
+                loss = criterion(y.to(y_pred.dtype), y_pred.squeeze(2))
 
                 # Metrics
-                metrics_dict = metrics(y_pred.float(), y.float())
-                
+                metrics_dict = metrics(y_pred.float().squeeze(2), y.float())
                 for name, value in metrics_dict.items():
                     value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
-                    
                     if distributed:
                         dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
-                        
                     results_dict[f"valid_{name}"].append(value[0].item())
 
                 batch_loss = torch.Tensor([loss.item()]).cuda(self.device)
-                
                 if distributed:
                     torch.distributed.barrier()
-                    
                 results_dict["valid_loss"].append(batch_loss[0].item())
 
                 # print to tqdm
@@ -435,7 +280,6 @@ class Trainer:
                     np.mean(results_dict["valid_acc"]),
                     np.mean(results_dict["valid_mae"])
                 )
-                
                 if self.rank == 0:
                     batch_group_generator.set_description(to_print)
 
@@ -469,28 +313,17 @@ class Trainer:
         rollout_scheduler=None,
         trial=False
     ):
-        # convert $USER to the actual user name
-        conf['save_loc'] = save_loc = os.path.expandvars(conf['save_loc'])
-
-        # training hyperparameters
+        save_loc = conf['save_loc']
         start_epoch = conf['trainer']['start_epoch']
         epochs = conf['trainer']['epochs']
         skip_validation = conf['trainer']['skip_validation'] if 'skip_validation' in conf['trainer'] else False
-        flag_load_weights = conf['trainer']['load_weights']
-        
+
         # Reload the results saved in the training csv if continuing to train
-        if (start_epoch == 0) or (flag_load_weights is False):
+        if start_epoch == 0:
             results_dict = defaultdict(list)
         else:
             results_dict = defaultdict(list)
             saved_results = pd.read_csv(os.path.join(save_loc, "training_log.csv"))
-
-            # Set start_epoch to the length of the training log and train for one epoch
-            # This is a manual override, you must use train_one_epoch = True
-            if "train_one_epoch" in conf["trainer"] and conf["trainer"]["train_one_epoch"]:
-                start_epoch = len(saved_results)
-                epochs = start_epoch + 1
-
             for key in saved_results.columns:
                 if key == "index":
                     continue
@@ -561,9 +394,10 @@ class Trainer:
             results_dict["epoch"].append(epoch)
             for name in ["loss", "acc", "mae"]:
                 results_dict[f"train_{name}"].append(np.mean(train_results[f"train_{name}"]))
-                results_dict[f"valid_{name}"].append(np.mean(valid_results[f"valid_{name}"]))
-            results_dict['train_forecast_len'].append(np.mean(train_results['train_forecast_len']))
-            results_dict["lr"].append(optimizer.param_groups[0]["lr"])
+                # results_dict[f"valid_{name}"].append(np.mean(valid_results[f"valid_{name}"]))
+            # results_dict['train_forecast_len'].append(np.mean(train_results['train_forecast_len']))
+            results_dict["learn_rate"].append(optimizer.param_groups[0]["lr"])
+            results_dict["datetime"].append(dt.datetime.now().isoformat())
 
             df = pd.DataFrame.from_dict(results_dict).reset_index()
 
@@ -654,6 +488,10 @@ class Trainer:
             gc.collect()
 
             training_metric = "train_loss" if skip_validation else "valid_loss"
+
+            # Report result to the trial
+            if trial:
+                trial.report(results_dict[training_metric][-1], step=epoch)
 
             # Stop training if we have not improved after X epochs (stopping patience)
             best_epoch = [

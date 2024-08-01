@@ -28,12 +28,12 @@ data:
     # forcing variables, must be a single zarr or nc with (time, latitude, longitude) coords
     # forcing variables must be normalized by the user 
     forcing_variables: ['TSI']   
-    save_loc_forcing: '/glade/campaign/cisl/aiml/ksha/CREDIT/forcing_norm.nc'
+    save_loc_forcing: '/glade/campaign/cisl/aiml/ksha/CREDIT/forcing_norm_6h.nc'
     
     # static variables must be a single zarr or nc with (latitude, longitude) coords
     # static variables must be normalized by user 
     static_variables: ['Z_GDS4_SFC','LSM'] 
-    save_loc_static: '/glade/campaign/cisl/aiml/ksha/CREDIT/static_norm.nc'
+    save_loc_static: '/glade/campaign/cisl/aiml/ksha/CREDIT/static_norm_old.nc'
 
     # z-score files, they must be zarr or nc with (level,) coords
     # they must include all the 'variables', 'surface_variables', 'diagnostic_variables' above
@@ -52,7 +52,7 @@ data:
     # 2 for Fuxi, 
     # 1 for a state-in-state-out model
     history_len: 2
-    valid_history_len: 1    # keep it the same as "history_len"
+    valid_history_len: 2    # keep it the same as "history_len"
 
     # number of forecast lead times to predict FOR TRAINING 
     # 0 for single-step training
