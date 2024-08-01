@@ -17,6 +17,7 @@ data:
     time_step: 1
     
 trainer:
+    type: "standard"
     mode: none # none, ddp, fsdp
     train_batch_size: 1
     valid_batch_size: 1

@@ -1,5 +1,5 @@
 '''
-train.py 
+train.py
 -------------------------------------------------------
 '''
 import os
@@ -29,9 +29,10 @@ from credit.data import ERA5Dataset, ERA5_and_Forcing_Dataset, Dataset_BridgeSca
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
 
-from credit.trainer import Trainer
-# <-------------- the new pipeline
-from credit.trainer_new import Trainer as Trainer_New
+# from credit.trainers.trainer import Trainer
+# # <-------------- the new pipeline
+# from credit.trainers.trainer_new import Trainer as Trainer_New
+from credit.trainers import load_trainer
 
 from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
@@ -125,10 +126,11 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
 
     return dataset, sampler
 
-def load_dataset_and_sampler_zscore_only(conf, 
-                                         all_ERA_files, 
-                                         surface_files, 
-                                         diagnostic_files, 
+
+def load_dataset_and_sampler_zscore_only(conf,
+                                         all_ERA_files,
+                                         surface_files,
+                                         diagnostic_files,
                                          world_size, rank, is_train, seed=42):
 
     # convert $USER to the actual user name
@@ -136,34 +138,34 @@ def load_dataset_and_sampler_zscore_only(conf,
 
     # ======================================================== #
     # parse intputs
-    
+
     # file names
     varname_upper_air = conf['data']['variables']
-    
+
     if ('forcing_variables' in conf['data']) and (len(conf['data']['forcing_variables']) > 0):
         forcing_files = conf['data']['save_loc_forcing']
         varname_forcing = conf['data']['forcing_variables']
     else:
         forcing_files = None
         varname_forcing = None
-    
+
     if ('static_variables' in conf['data']) and (len(conf['data']['static_variables']) > 0):
         static_files = conf['data']['save_loc_static']
         varname_static = conf['data']['static_variables']
     else:
         static_files = None
         varname_static = None
-    
+
     if surface_files is not None:
         varname_surface = conf['data']['surface_variables']
     else:
         varname_surface = None
-        
+
     if diagnostic_files is not None:
         varname_diagnostic = conf['data']['diagnostic_variables']
     else:
         varname_diagnostic = None
-        
+
     # number of previous lead time inputs
     history_len = conf["data"]["history_len"]
     valid_history_len = conf["data"]["valid_history_len"]
@@ -171,7 +173,7 @@ def load_dataset_and_sampler_zscore_only(conf,
     # number of lead times to forecast
     forecast_len = conf["data"]["forecast_len"]
     valid_forecast_len = conf["data"]["valid_forecast_len"]
-    
+
     if is_train:
         history_len = history_len
         forecast_len = forecast_len
@@ -181,7 +183,7 @@ def load_dataset_and_sampler_zscore_only(conf,
         history_len = valid_history_len
         forecast_len = valid_forecast_len
         name = 'validation'
-        
+
     # max_forecast_len
     if "max_forecast_len" not in conf["data"]:
         max_forecast_len = None
@@ -193,7 +195,7 @@ def load_dataset_and_sampler_zscore_only(conf,
         skip_periods = None
     else:
         skip_periods = conf["data"]["skip_periods"]
-        
+
     # one_shot
     if "one_shot" not in conf["data"]:
         one_shot = None
@@ -202,7 +204,7 @@ def load_dataset_and_sampler_zscore_only(conf,
 
     # shufle
     shuffle = is_train
-    
+
     # data preprocessing utils
     transforms = load_transforms(conf)
 
@@ -225,7 +227,7 @@ def load_dataset_and_sampler_zscore_only(conf,
         max_forecast_len=max_forecast_len,
         transform=transforms
     )
-    
+
     # Pytorch sampler
     sampler = DistributedSampler(
         dataset,
@@ -235,7 +237,7 @@ def load_dataset_and_sampler_zscore_only(conf,
         shuffle=shuffle,
         drop_last=True
     )
-    
+
     logging.info(f" Loaded a {name} ERA dataset, and a distributed sampler (forecast length = {forecast_len + 1})")
 
     return dataset, sampler
@@ -256,7 +258,7 @@ def load_model_states_and_optimizer(conf, model, device):
     load_weights = False if 'load_weights' not in conf['trainer'] else conf['trainer']['load_weights']
 
     #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
-    #if start_epoch == 0 and not load_weights: 
+    #if start_epoch == 0 and not load_weights:
     if not load_weights:  # Loaded after loading model weights when reloading
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
         if conf["trainer"]["mode"] == "fsdp":
@@ -311,95 +313,94 @@ def main(rank, world_size, conf, trial=False):
 
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
-    
+
     if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
         setup(rank, world_size, conf["trainer"]["mode"])
-    
+
     # infer device id from rank
-    
+
     device = torch.device(f"cuda:{rank % torch.cuda.device_count()}") if torch.cuda.is_available() else torch.device("cpu")
     torch.cuda.set_device(rank % torch.cuda.device_count())
-    
+
     # Config settings
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
-    
+
     train_batch_size = conf['trainer']['train_batch_size']
     valid_batch_size = conf['trainer']['valid_batch_size']
     thread_workers = conf['trainer']['thread_workers']
     valid_thread_workers = conf['trainer']['valid_thread_workers'] if 'valid_thread_workers' in conf['trainer'] else thread_workers
-    
+
     # get file names
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
-    
+
     # <------------------------------------------ std_new
     if conf['data']['scaler_type'] == 'std_new':
-    
+
         if "save_loc_surface" in conf["data"]:
             surface_files = sorted(glob.glob(conf["data"]["save_loc_surface"]))
         else:
             surface_files = None
-    
+
         if "save_loc_diagnostic" in conf["data"]:
             diagnostic_files = sorted(glob.glob(conf["data"]["save_loc_diagnostic"]))
         else:
             diagnostic_files = None
-    
-    
+
     # -------------------------------------------------- #
     # import training / validation years from conf
-    
+
     if 'train_years' in conf['data']:
         train_years_range = conf['data']['train_years']
     else:
         train_years_range = [1979, 2014]
-    
+
     if 'valid_years' in conf['data']:
         valid_years_range = conf['data']['valid_years']
     else:
         valid_years_range = [2014, 2018]
-    
+
     # convert year info to str for file name search
     train_years = [str(year) for year in range(train_years_range[0], train_years_range[1])]
     valid_years = [str(year) for year in range(valid_years_range[0], valid_years_range[1])]
-    
+
     # Filter the files for training / validation
     train_files = [file for file in all_ERA_files if any(year in file for year in train_years)]
     valid_files = [file for file in all_ERA_files if any(year in file for year in valid_years)]
-    
+
     # <----------------------------------- std_new
     if conf['data']['scaler_type'] == 'std_new':
         train_surface_files = [file for file in surface_files if any(year in file for year in train_years)]
         valid_surface_files = [file for file in surface_files if any(year in file for year in valid_years)]
-        
+
         if diagnostic_files is not None:
             train_diagnostic_files = [file for file in diagnostic_files if any(year in file for year in train_years)]
             valid_diagnostic_files = [file for file in diagnostic_files if any(year in file for year in valid_years)]
         else:
             train_diagnostic_files = None
             valid_diagnostic_files = None
-    
+
     # load dataset and sampler
     # <----------------------------------- std_new
     if conf['data']['scaler_type'] == 'std_new':
         # training set and sampler
-        train_dataset, train_sampler = load_dataset_and_sampler_zscore_only(conf, 
-                                                                            train_files, 
-                                                                            train_surface_files, 
-                                                                            train_diagnostic_files, 
+        train_dataset, train_sampler = load_dataset_and_sampler_zscore_only(conf,
+                                                                            train_files,
+                                                                            train_surface_files,
+                                                                            train_diagnostic_files,
                                                                             world_size, rank, is_train=True)
         # validation set and sampler
-        valid_dataset, valid_sampler = load_dataset_and_sampler_zscore_only(conf, 
-                                                                            valid_files, 
-                                                                            valid_surface_files, 
+        valid_dataset, valid_sampler = load_dataset_and_sampler_zscore_only(conf,
+                                                                            valid_files,
+                                                                            valid_surface_files,
                                                                             valid_diagnostic_files,
                                                                             world_size, rank, is_train=False)
     else:
         train_dataset, train_sampler = load_dataset_and_sampler(conf, train_files, world_size, rank, is_train=True)
         valid_dataset, valid_sampler = load_dataset_and_sampler(conf, valid_files, world_size, rank, is_train=False)
-    
+
     # setup the dataloder for this process
-    
+
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=train_batch_size,
@@ -410,7 +411,7 @@ def main(rank, world_size, conf, trial=False):
         num_workers=thread_workers,
         drop_last=True
     )
-    
+
     valid_loader = torch.utils.data.DataLoader(
         valid_dataset,
         batch_size=valid_batch_size,
@@ -450,26 +451,23 @@ def main(rank, world_size, conf, trial=False):
     metrics = LatWeightedMetrics(conf)
 
     # Initialize a trainer object
-    # <----------------------------------- replace
-    if conf['data']['scaler_type'] == 'std_new':
-        trainer = Trainer_New(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
-    else:
-        trainer = Trainer(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
+    trainer_cls = load_trainer(conf)
+    trainer = trainer_cls(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
 
     # Fit the model
 
     result = trainer.fit(
         conf,
-        train_loader,
-        valid_loader,
-        optimizer,
-        train_criterion,
-        valid_criterion,
-        scaler,
-        scheduler,
-        metrics,
-        rollout_scheduler=annealed_probability,
-        trial=trial
+        train_loader=train_loader,
+        valid_loader=train_loader,
+        optimizer=optimizer,
+        train_criterion=train_criterion,
+        valid_criterion=valid_criterion,
+        scaler=scaler,
+        scheduler=scheduler,
+        metrics=metrics,
+        rollout_scheduler=annealed_probability,  # Optional
+        trial=trial  # Optional
     )
 
     return result
@@ -556,7 +554,7 @@ if __name__ == "__main__":
     # Create directories if they do not exist and copy yml file
     save_loc = os.path.expandvars(conf["save_loc"])
     os.makedirs(save_loc, exist_ok=True)
-    
+
     if not os.path.exists(os.path.join(save_loc, "model.yml")):
         shutil.copy(config, os.path.join(save_loc, "model.yml"))
 

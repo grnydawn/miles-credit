@@ -4,7 +4,8 @@ data.py
 Content:
     - get_forward_data(filename) -> xr.DataArray
     - get_forward_data_netCDF4(filename) -> xr.DataArray
-    - ERA5_Static_Dataset(torch.utils.data.Dataset)
+    - drop_var_from_dataset()
+    - ERA5_and_Forcing_Dataset(torch.utils.data.Dataset)
 
 Yingkai Sha
 ksha@ucar.edu
@@ -35,7 +36,47 @@ from torch.utils.data.distributed import DistributedSampler
 Array = Union[np.ndarray, xr.DataArray]
 IMAGE_ATTR_NAMES = ('historical_ERA5_images', 'target_ERA5_images')
 
+def generate_datetime(start_time, end_time, interval_hr):
+    # Define the time interval (e.g., every hour)
+    interval = datetime.timedelta(hours=interval_hr)
+    
+    # Generate the list of datetime objects
+    datetime_list = []
+    current_time = start_time
+    while current_time <= end_time:
+        datetime_list.append(current_time)
+        current_time += interval
+    return datetime_list
 
+def hour_to_nanoseconds(input_hr):
+    # hr * min_per_hr * sec_per_min * nanosec_per_sec
+    return input_hr*60 * 60 * 1000000000
+
+def nanoseconds_to_year(nanoseconds_value):
+    return np.datetime64(nanoseconds_value, 'ns').astype('datetime64[Y]').astype(int) + 1970
+
+def extract_month_day_hour(dates):
+    '''
+    Given an 1-d array of np.datatime64[ns], extract their mon, day, hr into a zipped list
+    '''
+    months = dates.astype('datetime64[M]').astype(int) % 12 + 1
+    days = (dates - dates.astype('datetime64[M]') + 1).astype('timedelta64[D]').astype(int)
+    hours = dates.astype('datetime64[h]').astype(int) % 24
+    return list(zip(months, days, hours))
+
+def find_common_indices(list1, list2):
+    '''
+    find indices of common elements between two lists 
+    '''
+    # Find common elements
+    common_elements = set(list1).intersection(set(list2))
+    
+    # Find indices of common elements in both lists
+    indices_list1 = [i for i, x in enumerate(list1) if x in common_elements]
+    indices_list2 = [i for i, x in enumerate(list2) if x in common_elements]
+    
+    return indices_list1, indices_list2
+    
 #
 def concat_and_reshape(x1, x2):
     x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
@@ -156,73 +197,73 @@ def get_contiguous_segments(dt_index: pd.DatetimeIndex, min_timesteps: int, max_
     return segments
 
 
-def get_zarr_chunk_sequences(
-        n_chunks_per_disk_load: int,
-        zarr_chunk_boundaries: Iterable[int],
-        contiguous_segments: Iterable[Segment]
-) -> Iterable[Segment]:
-    """
+# def get_zarr_chunk_sequences(
+#         n_chunks_per_disk_load: int,
+#         zarr_chunk_boundaries: Iterable[int],
+#         contiguous_segments: Iterable[Segment]
+# ) -> Iterable[Segment]:
+#     """
 
-    Args:
-      n_chunks_per_disk_load: Maximum number of Zarr chunks to load from disk in one go.
-      zarr_chunk_boundaries: The indicies into the Zarr store's time dimension which define the Zarr chunk boundaries.
-        Must be sorted.
-      contiguous_segments: Indicies into the Zarr store's time dimension that define contiguous timeseries.
-        That is, timeseries with no gaps.
+#     Args:
+#       n_chunks_per_disk_load: Maximum number of Zarr chunks to load from disk in one go.
+#       zarr_chunk_boundaries: The indicies into the Zarr store's time dimension which define the Zarr chunk boundaries.
+#         Must be sorted.
+#       contiguous_segments: Indicies into the Zarr store's time dimension that define contiguous timeseries.
+#         That is, timeseries with no gaps.
 
-    Returns zarr_chunk_sequences: a list of Segments representing the start and end indicies of contiguous sequences of multiple Zarr chunks,
-    all exactly n_chunks_per_disk_load long (for contiguous segments at least as long as n_chunks_per_disk_load zarr chunks),
-    and at least one side of the boundary will lie on a 'natural' Zarr chunk boundary.
+#     Returns zarr_chunk_sequences: a list of Segments representing the start and end indicies of contiguous sequences of multiple Zarr chunks,
+#     all exactly n_chunks_per_disk_load long (for contiguous segments at least as long as n_chunks_per_disk_load zarr chunks),
+#     and at least one side of the boundary will lie on a 'natural' Zarr chunk boundary.
 
-    For example, say that n_chunks_per_disk_load = 3, and the Zarr chunks sizes are all 5:
+#     For example, say that n_chunks_per_disk_load = 3, and the Zarr chunks sizes are all 5:
 
 
-                  0    5   10   15   20   25   30   35
-                  |....|....|....|....|....|....|....|
+#                   0    5   10   15   20   25   30   35
+#                   |....|....|....|....|....|....|....|
 
-    INPUTS:
-                     |------CONTIGUOUS SEGMENT----|
+#     INPUTS:
+#                      |------CONTIGUOUS SEGMENT----|
 
-    zarr_chunk_boundaries:
-                  |----|----|----|----|----|----|----|
+#     zarr_chunk_boundaries:
+#                   |----|----|----|----|----|----|----|
 
-    OUTPUT:
-    zarr_chunk_sequences:
-           3 to 15:  |-|----|----|
-           5 to 20:    |----|----|----|
-          10 to 25:         |----|----|----|
-          15 to 30:              |----|----|----|
-          20 to 32:                   |----|----|-|
+#     OUTPUT:
+#     zarr_chunk_sequences:
+#            3 to 15:  |-|----|----|
+#            5 to 20:    |----|----|----|
+#           10 to 25:         |----|----|----|
+#           15 to 30:              |----|----|----|
+#           20 to 32:                   |----|----|-|
 
-    """
-    assert n_chunks_per_disk_load > 0
+#     """
+#     assert n_chunks_per_disk_load > 0
 
-    zarr_chunk_sequences = []
+#     zarr_chunk_sequences = []
 
-    for contig_segment in contiguous_segments:
-        # searchsorted() returns the index into zarr_chunk_boundaries at which contig_segment.start
-        # should be inserted into zarr_chunk_boundaries to maintain a sorted list.
-        # i_of_first_zarr_chunk is the index to the element in zarr_chunk_boundaries which defines
-        # the start of the current contig chunk.
-        i_of_first_zarr_chunk = np.searchsorted(zarr_chunk_boundaries, contig_segment.start)
+#     for contig_segment in contiguous_segments:
+#         # searchsorted() returns the index into zarr_chunk_boundaries at which contig_segment.start
+#         # should be inserted into zarr_chunk_boundaries to maintain a sorted list.
+#         # i_of_first_zarr_chunk is the index to the element in zarr_chunk_boundaries which defines
+#         # the start of the current contig chunk.
+#         i_of_first_zarr_chunk = np.searchsorted(zarr_chunk_boundaries, contig_segment.start)
 
-        # i_of_first_zarr_chunk will be too large by 1 unless contig_segment.start lies
-        # exactly on a Zarr chunk boundary.  Hence we must subtract 1, or else we'll
-        # end up with the first contig_chunk being 1 + n_chunks_per_disk_load chunks long.
-        if zarr_chunk_boundaries[i_of_first_zarr_chunk] > contig_segment.start:
-            i_of_first_zarr_chunk -= 1
+#         # i_of_first_zarr_chunk will be too large by 1 unless contig_segment.start lies
+#         # exactly on a Zarr chunk boundary.  Hence we must subtract 1, or else we'll
+#         # end up with the first contig_chunk being 1 + n_chunks_per_disk_load chunks long.
+#         if zarr_chunk_boundaries[i_of_first_zarr_chunk] > contig_segment.start:
+#             i_of_first_zarr_chunk -= 1
 
-        # Prepare for looping to create multiple Zarr chunk sequences for the current contig_segment.
-        zarr_chunk_seq_start_i = contig_segment.start
-        zarr_chunk_seq_end_i = None  # Just a convenience to allow us to break the while loop by checking if zarr_chunk_seq_end_i != contig_segment.end.
-        while zarr_chunk_seq_end_i != contig_segment.end:
-            zarr_chunk_seq_end_i = zarr_chunk_boundaries[i_of_first_zarr_chunk + n_chunks_per_disk_load]
-            zarr_chunk_seq_end_i = min(zarr_chunk_seq_end_i, contig_segment.end)
-            zarr_chunk_sequences.append(Segment(start=zarr_chunk_seq_start_i, end=zarr_chunk_seq_end_i))
-            i_of_first_zarr_chunk += 1
-            zarr_chunk_seq_start_i = zarr_chunk_boundaries[i_of_first_zarr_chunk]
+#         # Prepare for looping to create multiple Zarr chunk sequences for the current contig_segment.
+#         zarr_chunk_seq_start_i = contig_segment.start
+#         zarr_chunk_seq_end_i = None  # Just a convenience to allow us to break the while loop by checking if zarr_chunk_seq_end_i != contig_segment.end.
+#         while zarr_chunk_seq_end_i != contig_segment.end:
+#             zarr_chunk_seq_end_i = zarr_chunk_boundaries[i_of_first_zarr_chunk + n_chunks_per_disk_load]
+#             zarr_chunk_seq_end_i = min(zarr_chunk_seq_end_i, contig_segment.end)
+#             zarr_chunk_sequences.append(Segment(start=zarr_chunk_seq_start_i, end=zarr_chunk_seq_end_i))
+#             i_of_first_zarr_chunk += 1
+#             zarr_chunk_seq_start_i = zarr_chunk_boundaries[i_of_first_zarr_chunk]
 
-    return zarr_chunk_sequences
+#     return zarr_chunk_sequences
 
 
 def flatten_list(list_of_lists):
@@ -482,20 +523,21 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         
         ind_end_in_file = ind_start_in_file+self.history_len+self.forecast_len
         
-        ## ERA5_subset: a xarray dataset that contains training input and target (for the current index)
+        ## ERA5_subset: a xarray dataset that contains training input and target (for the current batch)
         ERA5_subset = self.all_files[int(ind_file)].isel(
-            time=slice(ind_start_in_file, ind_end_in_file+1)).load()
+            time=slice(ind_start_in_file, ind_end_in_file+1)) #.load() NOT load into memory
         
         if self.surface_files:
             ## subset surface variables
             surface_subset = self.surface_files[int(ind_file)].isel(
-                time=slice(ind_start_in_file, ind_end_in_file+1)).load()
-    
+                time=slice(ind_start_in_file, ind_end_in_file+1)) #.load() NOT load into memory
+            
             ## merge upper-air and surface here:
-            ERA5_subset = ERA5_subset.merge(surface_subset)
+            ERA5_subset = ERA5_subset.merge(surface_subset) # <-- lazy merge, ERA5 and surface both not loaded
 
         # ==================================================== #
-        # split ERA5_subset into training inputs and targets + merge with forcing and static
+        # split ERA5_subset into training inputs and targets
+        #   + merge with forcing and static
 
         # the ind_end of the ERA5_subset
         ind_end_time = len(ERA5_subset['time'])
@@ -507,18 +549,23 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         # xarray dataset as input
         ## historical_ERA5_images: the final input
 
-        historical_ERA5_images = ERA5_subset.isel(time=slice(0, self.history_len, self.skip_periods))
+        historical_ERA5_images = ERA5_subset.isel(
+            time=slice(0, self.history_len, self.skip_periods)).load() # <-- load into memory
 
         # merge forcing inputs
         if self.xarray_forcing:
-            # slice + load to the GPU
-            forcing_subset_input = self.xarray_forcing.isel(
-                time=slice(ind_start_in_file, ind_end_in_file + 1))
-            forcing_subset_input = forcing_subset_input.isel(time=slice(0, self.history_len, self.skip_periods)).load()
-
-            # update
-            
+            # =============================================================================== #
+            # matching month, day, hour between forcing and upper air [time]
+            # this approach handles leap year forcing file and non-leap-year upper air file
+            month_day_forcing = extract_month_day_hour(np.array(self.xarray_forcing['time']))
+            month_day_inputs = extract_month_day_hour(np.array(historical_ERA5_images['time'])) # <-- upper air
+            # indices to subset
+            ind_forcing, _ = find_common_indices(month_day_forcing, month_day_inputs)
+            forcing_subset_input = self.xarray_forcing.isel(time=ind_forcing).load() # <-- load into memory
+            # forcing and upper air have different years but the same mon/day/hour
+            # safely replace forcing time with upper air time
             forcing_subset_input['time'] = historical_ERA5_images['time']
+            # =============================================================================== #
 
             # merge
             historical_ERA5_images = historical_ERA5_images.merge(forcing_subset_input)
@@ -532,7 +579,8 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
             static_subset_input = static_subset_input.assign_coords({'time': ERA5_subset['time']})
 
             # slice + load to the GPU
-            static_subset_input = static_subset_input.isel(time=slice(0, self.history_len, self.skip_periods)).load()
+            static_subset_input = static_subset_input.isel(
+                time=slice(0, self.history_len, self.skip_periods)).load() # <-- load into memory
 
             # update 
             static_subset_input['time'] = historical_ERA5_images['time']
@@ -543,24 +591,39 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         # ==================================================== #
         # xarray dataset as target
         ## target_ERA5_images: the final target
-        
-        target_ERA5_images = ERA5_subset.isel(time=slice(self.history_len, ind_end_time, self.skip_periods))
 
-        ## merge diagnoisc input here:
-        if self.diagnostic_files:
-            
-            # subset diagnostic variables
-            diagnostic_subset = self.diagnostic_files[int(ind_file)].isel(
-                time=slice(ind_start_in_file, ind_end_in_file+1)).load()
-            
-            # merge into the target dataset
-            target_diagnostic = diagnostic_subset.isel(time=slice(self.history_len, ind_end_time, self.skip_periods))
-            target_ERA5_images = target_ERA5_images.merge(target_diagnostic)
-            
         if self.one_shot is not None:
-            # get the final state of the target as one-shot
-            target_ERA5_images = target_ERA5_images.isel(time=slice(0, 1))
-
+            # one_shot is True (on), go straight to the last element
+            target_ERA5_images = ERA5_subset.isel(time=slice(-1, None)).load() # <-- load into memory
+            
+            ## merge diagnoisc input here:
+            if self.diagnostic_files:
+                diagnostic_subset = self.diagnostic_files[int(ind_file)].isel(
+                    time=slice(ind_start_in_file, ind_end_in_file+1))
+                
+                diagnostic_subset = diagnostic_subset.isel(
+                    time=slice(-1, None)).load() # <-- load into memory
+                
+                target_ERA5_images = target_ERA5_images.merge(diagnostic_subset)
+                
+        else:
+            # one_shot is None (off), get the full target length based on forecast_len
+            target_ERA5_images = ERA5_subset.isel(
+                time=slice(self.history_len, ind_end_time, self.skip_periods)).load() # <-- load into memory
+    
+            ## merge diagnoisc input here:
+            if self.diagnostic_files:
+                
+                # subset diagnostic variables
+                diagnostic_subset = self.diagnostic_files[int(ind_file)].isel(
+                    time=slice(ind_start_in_file, ind_end_in_file+1))
+                
+                diagnostic_subset = diagnostic_subset.isel(
+                    time=slice(self.history_len, ind_end_time, self.skip_periods)).load() # <-- load into memory
+                
+                # merge into the target dataset
+                target_ERA5_images = target_ERA5_images.merge(diagnostic_subset)
+            
         # pipe xarray datasets to the sampler
         sample = Sample(
             historical_ERA5_images=historical_ERA5_images,
@@ -578,6 +641,277 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
 
         return sample
 
+class Predict_Dataset(torch.utils.data.IterableDataset):
+    '''
+    Same as ERA5_and_Forcing_Dataset() but for prediction only
+    '''
+    def __init__(self,
+                 conf, 
+                 varname_upper_air,
+                 varname_surface,
+                 varname_forcing,
+                 varname_static,
+                 filenames,
+                 filename_surface,
+                 filename_forcing,
+                 filename_static,
+                 fcst_datetime,
+                 history_len,
+                 rank,
+                 world_size,
+                 transform=None,
+                 rollout_p=0.0,
+                 which_forecast=None):
+        
+        # ------------------------------------------------------------------------------ #
+        
+        ## no diagnostics because they are output only
+        varname_diagnostic = None
+        
+        self.rank = rank
+        self.world_size = world_size
+        self.transform = transform
+        self.history_len = history_len
+        self.init_datetime = fcst_datetime
+
+        print(self.init_datetime)
+        
+        self.which_forecast = which_forecast # <-- got from the old roll-out. Dont know 
+        
+        # -------------------------------------- #
+        self.filenames = sorted(filenames) # <---------------- a list of files
+        self.filename_surface = sorted(filename_surface) # <-- a list of files
+        self.filename_forcing = filename_forcing # <-- single file
+        self.filename_static = filename_static # <---- single file
+        
+        # -------------------------------------- #
+        self.varname_upper_air = varname_upper_air
+        self.varname_surface = varname_surface
+        self.varname_forcing = varname_forcing
+        self.varname_static = varname_static
+
+        # ====================================== #
+        # import all upper air zarr files
+        all_files = []
+        for fn in self.filenames:
+            # drop variables if they are not in the config
+            xarray_dataset = get_forward_data(filename=fn)
+            xarray_dataset = drop_var_from_dataset(xarray_dataset, self.varname_upper_air)
+            # collect yearly datasets within a list
+            all_files.append(xarray_dataset)
+        self.all_files = all_files
+        # ====================================== #
+
+        # -------------------------------------- #
+        # other settings
+        self.current_epoch = 0
+        self.rollout_p = rollout_p
+        
+        if 'lead_time_periods' in conf['data']:
+            self.lead_time_periods = conf['data']['lead_time_periods']
+        else:
+            self.lead_time_periods = 1
+        
+        if 'skip_periods' in conf['data']:
+            self.skip_periods = conf['data']['skip_periods']
+        else:
+            self.skip_periods = 1
+            
+        if self.skip_periods is None:
+            self.skip_periods = 1
+            
+
+    def ds_read_and_subset(self, filename, time_start, time_end, varnames):
+        sliced_x = xr.open_zarr(filename, consolidated=True)
+        sliced_x = sliced_x.isel(time=slice(time_start, time_end))
+        sliced_x = drop_var_from_dataset(sliced_x, varnames)
+        return sliced_x
+
+    def load_zarr_as_input(self, i_file, i_init_start, i_init_end):
+        # get the needed file from a list of zarr files
+        # open the zarr file as xr.dataset and subset based on the needed time
+        
+        # sliced_x: the final output, starts with an upper air xr.dataset
+        sliced_x = self.ds_read_and_subset(self.filenames[i_file], 
+                                           i_init_start,
+                                           i_init_end+1,
+                                           self.varname_upper_air)
+        # surface variables
+        if self.varname_surface is not None:
+            sliced_surface = self.ds_read_and_subset(self.filename_surface[i_file], 
+                                                     i_init_start,
+                                                     i_init_end+1,
+                                                     self.varname_surface)
+            # merge surface to sliced_x
+            sliced_surface['time'] = sliced_x['time']
+            sliced_x = sliced_x.merge(sliced_surface)
+            
+        # forcing / static
+        if self.filename_forcing is not None:
+            sliced_forcing = xr.open_dataset(self.filename_forcing)
+            sliced_forcing = drop_var_from_dataset(sliced_forcing, self.varname_forcing)
+
+            # See also `ERA5_and_Forcing_Dataset`
+            # =============================================================================== #
+            # matching month, day, hour between forcing and upper air [time]
+            # this approach handles leap year forcing file and non-leap-year upper air file
+            month_day_forcing = extract_month_day_hour(np.array(sliced_forcing['time']))
+            month_day_inputs = extract_month_day_hour(np.array(sliced_x['time']))
+            # indices to subset
+            ind_forcing, _ = find_common_indices(month_day_forcing, month_day_inputs)
+            sliced_forcing = sliced_forcing.isel(time=ind_forcing)
+            # forcing and upper air have different years but the same mon/day/hour
+            # safely replace forcing time with upper air time
+            sliced_forcing['time'] = sliced_x['time']
+            # =============================================================================== #
+            
+            # merge forcing to sliced_x
+            sliced_x = sliced_x.merge(sliced_forcing)
+            
+        if self.filename_static is not None:
+            sliced_static = xr.open_dataset(self.filename_static)
+            sliced_static = drop_var_from_dataset(sliced_static, self.varname_static)
+            sliced_static = sliced_static.expand_dims(dim={"time": len(sliced_x['time'])})
+            sliced_static['time'] = sliced_x['time']
+            # merge static to sliced_x
+            sliced_x = sliced_x.merge(sliced_static)
+        return sliced_x
+
+    
+    def find_start_stop_indices(self, index):
+        # ============================================================================ #
+        # shift hours for history_len > 1, becuase more than one init times are needed
+        # <--- !! it MAY NOT work when self.skip_period != 1
+        shifted_hours = self.lead_time_periods * self.skip_periods * (self.history_len-1)
+        # ============================================================================ #
+        # subtrack shifted_hour form the 1st & last init times
+        # convert to datetime object
+        self.init_datetime[index][0] = datetime.datetime.strptime(
+            self.init_datetime[index][0], '%Y-%m-%d %H:%M:%S') - datetime.timedelta(hours=shifted_hours)
+        self.init_datetime[index][1] = datetime.datetime.strptime(
+            self.init_datetime[index][1], '%Y-%m-%d %H:%M:%S') - datetime.timedelta(hours=shifted_hours)
+        
+        # convert the 1st & last init times to a list of init times
+        self.init_datetime[index] = generate_datetime(self.init_datetime[index][0], self.init_datetime[index][1], self.lead_time_periods)
+        # convert datetime obj to nanosecondes
+        init_time_list_dt = [np.datetime64(date.strftime('%Y-%m-%d %H:%M:%S')) for date in self.init_datetime[index]]
+        self.init_time_list_np = [np.datetime64(str(dt_obj) + '.000000000').astype(datetime.datetime) for dt_obj in init_time_list_dt]
+
+        for i_file, ds in enumerate(self.all_files):
+            # get the year of the current file
+            ds_year = int(np.datetime_as_string(ds['time'][0].values, unit='Y'))
+        
+            # get the first and last years of init times
+            init_year0 = nanoseconds_to_year(self.init_time_list_np[0])
+            
+            # found the right yearly file
+            if init_year0 == ds_year:
+                
+                # convert ds['time'] to a list of nanosecondes
+                ds_time_list = [np.datetime64(ds_time.values).astype(datetime.datetime) for ds_time in ds['time']]
+                ds_start_time = ds_time_list[0]
+                ds_end_time = ds_time_list[-1]
+                
+                init_time_start = self.init_time_list_np[0]
+                # if initalization time is within this (yearly) xr.Dataset
+                if ds_start_time <= init_time_start <= ds_end_time:
+        
+                    # try getting the index of the first initalization time 
+                    i_init_start = ds_time_list.index(init_time_start)
+                    
+                    # for multiple init time inputs (history_len > 1), init_end is different for init_start
+                    init_time_end = init_time_start + hour_to_nanoseconds(shifted_hours)
+                    
+                    # see if init_time_end is alos in this file
+                    if ds_start_time <= init_time_end <= ds_end_time:
+                        
+                        # try getting the index
+                        i_init_end = ds_time_list.index(init_time_end)
+                    else:
+                        # this set of initalizations have crossed years
+                        # get the last element of the current file
+                        # we have anthoer section that checks additional input data
+                        i_init_end = len(ds_time_list) - 1
+                        
+                    info = [i_file, i_init_start, i_init_end]
+                    return info
+
+    def __len__(self):
+        return len(self.init_datetime)
+
+    def __iter__(self):
+        worker_info = get_worker_info()
+        num_workers = worker_info.num_workers if worker_info is not None else 1
+        worker_id = worker_info.id if worker_info is not None else 0
+        sampler = DistributedSampler(self, 
+                                     num_replicas=num_workers*self.world_size, 
+                                     rank=self.rank*num_workers+worker_id, 
+                                     shuffle=False)
+        for index in sampler:
+            # get the init time info for the current sample
+            data_lookup = self.find_start_stop_indices(index)
+            
+            for k, _ in enumerate(self.init_time_list_np):
+                
+                # the first initialization time: get initalization from data
+                if k == 0:
+                    i_file, i_init_start, i_init_end = data_lookup
+                    
+                    # allocate output dict
+                    output_dict = {}
+
+                    # get all inputs in one xr.Dataset
+                    sliced_x = self.load_zarr_as_input(i_file, i_init_start, i_init_end)
+                    
+                    # Check if additional data from the next file is needed
+                    if len(sliced_x['time']) < self.history_len:
+                        
+                        # Load excess data from the next file
+                        next_file_idx = self.filenames.index(self.filenames[i_file]) + 1
+                        
+                        if next_file_idx >= len(self.filenames):
+                            # not enough input data to support this forecast
+                            raise OSError("You have reached the end of the available data. Exiting.")
+                            
+                        else:
+                            # i_init_start = 0 because we need the beginning of the next file only
+                            sliced_x_next = self.load_zarr_as_input(next_file_idx, 0, self.history_len)
+                            
+                            # Concatenate excess data from the next file with the current data
+                            sliced_x = xr.concat([sliced_x, sliced_x_next], dim='time')
+                            sliced_x = sliced_x.isel(time=slice(0, self.history_len))
+                                                     
+                    # key 'historical_ERA5_images' is recongnized as input in credit.transform
+
+                    print(
+                        np.array(sliced_x['time'])
+                    )
+                    
+                    sample_x = {'historical_ERA5_images': sliced_x}
+                    
+                    if self.transform:
+                        sample_x = self.transform(sample_x)
+                        
+                    for key in sample_x.keys():
+                        output_dict[key] = sample_x[key]
+            
+                    # <--- !! 'forecast_hour' is actually "forecast_step" but named by assuming hourly
+                    output_dict['forecast_hour'] = k + 1 
+                    # Adjust stopping condition
+                    output_dict['stop_forecast'] = k == (len(self.init_time_list_np) - 1)
+                    output_dict['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[-1]
+                    
+                # other later initialization time: the same initalization as in k=0, but add more forecast steps
+                else:
+                    output_dict['forecast_hour'] = k + 1
+                     # Adjust stopping condition
+                    output_dict['stop_forecast'] = k == (len(self.init_time_list_np) - 1)
+                    
+                # return output_dict
+                yield output_dict
+                
+                if output_dict['stop_forecast']:
+                    break
 
 class ERA5Dataset(torch.utils.data.Dataset):
 

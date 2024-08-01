@@ -1,43 +1,94 @@
-save_loc: "/glade/work/$USER/repos/global/miles-credit/results/test_quantile/"
+save_loc: "/glade/derecho/scratch/schreck/repos/miles-credit/results/wxformer/quarter/large_multi"
 seed: 1000
 
-scaler:
-  type: "standard"
-  options: 
-    channels_last: False
-
 data:
+    # upper-air variables, must be YEARLY zarr or nc with (time, level, latitude, longitude) coords
+    # files must have the listed variable names 
+    # upper-air variables will be normalized by the dataloader, users do not need to normalize them
     variables: ['U','V','T','Q']
-    surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
-    static_variables: ['Z_GDS4_SFC','LSM','tsi']
     save_loc: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
+    
+    # surface variables, must be YEARLY zarr or nc with (time, latitude, longitude) coords
+    # files must have the listed variable names
+    # surface variables will be normalized by the dataloader, users do not need to normalize them
+    surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
+    save_loc_surface: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
+
+    # diagnostic variables, must be YEARLY zarr or nc with (time, latitude, longitude) coords
+    # files must have the listed variable names 
+    # diagnostic  variables will be normalized by the dataloader, users do not need to normalize them
+    # diagnostic_variables: ['tp'] 
+    # save_loc_diagnostic: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/ERA5_regrid_tp_*'
+    
+    # forcing variables, must be a single zarr or nc with (time, latitude, longitude) coords
+    # forcing variables must be normalized by the user 
+    forcing_variables: ['TSI']   
+    save_loc_forcing: '/glade/campaign/cisl/aiml/ksha/CREDIT/forcing_norm.nc'
+    
+    # static variables must be a single zarr or nc with (latitude, longitude) coords
+    # static variables must be normalized by user 
+    static_variables: ['Z_GDS4_SFC','LSM'] 
+    save_loc_static: '/glade/campaign/cisl/aiml/ksha/CREDIT/static_norm.nc'
+
+    # z-score files, they must be zarr or nc with (level,) coords
+    # they must include all the 'variables', 'surface_variables', 'diagnostic_variables' above
     mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
     std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
-    quant_path: '/glade/derecho/scratch/dgagne/credit_scalers/era5_quantile_scalers_2024-03-30_00:28.parquet'
-    TOA_forcing_path: '/glade/derecho/scratch/dgagne/credit_scalers/solar_radiation_2024-03-29_0204.nc' 
-    scaler_type: 'quantile-cached' #'std', 'quantile'
+    
+    # # years to train the model, [first_year, last_yeat]
+    train_years: [1979, 2014]
+    # years to validate the model
+    valid_years: [2014, 2018] 
+    
+    # std_new is the new data workflow that works with z-score
+    scaler_type: 'std_new'  
+
+    # number of input time frames
+    # 2 for Fuxi, 
+    # 1 for a state-in-state-out model
     history_len: 2
-    forecast_len: 0
-    valid_history_len: 2
-    valid_forecast_len: 0
-    one_shot: True
+    valid_history_len: 2    # keep it the same as "history_len"
+
+    # number of forecast lead times to predict FOR TRAINING 
+    # 0 for single-step training
+    # 1, 2, 3, ... for multi-step training
+    forecast_len: 119
+    # the "forecast_len" used for validation set, can be the same as "forecast_len"
+    valid_forecast_len: 47   
+
+    # TRAINING ONLY
+    # when forecast_len = 0, it does nothing
+    # when forecast_len > 0, it applies training loss to the last (forecasted) lead time only
+    # this option speed-up multi-step training
+    one_shot: True          
+                            
+    # number of hours for each forecast step
+    # lead_time_periods = 6 for 6 hourly model and 6 hourly taining data
+    # lead_time_periods = 1 for hourly model and hourly taining data
+    lead_time_periods: 6
+
+    # *NOT A STABLE FEATURE
+    # this is the keyword that resolves the mismatch between 6 hourly model and hourly data
+    # skip_periods = 6 will train a 6 hourly model on hourly data, by skipping and picking every 6 hour
+    # default is null or skip_periods = 1
     skip_periods: null
-    bs_years_train: ['1979-01-01','2014-01-01'] #only used with bridgescalar developed datasets
-    bs_years_val: ['2014-01-01','2018-01-01'] #only used with bridgescalar developed datasets
-    bs_years_test: ['2018-01-01','2021-01-01'] #only used with bridgescalar developed datasets
-    bs_data_path: '/glade/derecho/scratch/dgagne/era5_quantile/' #only used with bridgescalar developed datasets
-    bs_file_format: 'TOTAL_%Y-%m-%dT%H:%M:%S_quantile.nc' #only used with bridgescalar developed datasets
+    
+    # 'std_new' has stacks forcing first, and then static into batches, 'std' stacks static first.
+    # use True if the model was trained using the old 'std' and switching to 'std_new'
+    static_first: True  
     
 trainer:
+    type: "standard"
     mode: fsdp # none, ddp, fsdp
     train_batch_size: 1
     valid_batch_size: 1
-    batches_per_epoch: 0 # Set to 0 to use len(dataloader)
+    batches_per_epoch: 100 # Set to 0 to use len(dataloader)
     valid_batches_per_epoch: 100
-    learning_rate: 5.0e-04
+    learning_rate: 1.0e-07
     weight_decay: 1.0e-05
-    start_epoch: 0
-    epochs: 1
+    start_epoch: 110
+    epochs: 111
+    train_one_epoch: True
     amp: False
     grad_accum_every: 1
     grad_max_norm: 1.0
@@ -50,6 +101,9 @@ trainer:
     load_weights: True
     load_optimizer: True
     use_scheduler: False
+    activation_checkpoint: True
+    cpu_offload: False
+    update_learning_rate: True
     #scheduler: {'scheduler_type': 'cosine-annealing', first_cycle_steps: 500, cycle_mult: 6.0, max_lr: 5.0e-04, min_lr: 5.0e-07, warmup_steps: 499, gamma: 0.7}
     # scheduler: {scheduler_type: plateau, mode: min, factor: 0.1, patience: 5, cooldown: 2, min_lr: 1e-6, epsilon: 1e-8, verbose: true, threshold: 1e-4}
     scheduler: {'scheduler_type': 'lambda'}
@@ -57,14 +111,17 @@ trainer:
 model:
     type: "crossformer"
     image_height: 640    # Image height (default: 640)
+    patch_height: 1      # Patch height (default: 2)
     image_width: 1280    # Image width (default: 1280)
+    patch_width: 1       # Patch width (default: 2)
     levels: 15           # Number of levels (default: 15)
     frames: 2            # Number of frames (default: 2)
+    frame_patch_size: 1  # Frame patch size (default: 2)
     channels: 4          # Channels (default: 4)
     surface_channels: 7  # Surface channels (default: 7)
     static_channels: 3   # Static channels (default: 3)
-    dim: [96, 192, 384, 768] #[288, 576, 1152, 2304]           # Dimensionality of each layer (default: [64, 128, 256, 512])
-    depth: [1, 1, 2, 1] #[2, 2, 5, 2]                    # Depth of each layer (default: [2, 2, 8, 2])
+    dim: [512, 1024, 2048, 4096]  #[96, 192, 384, 768]          # Dimensionality of each layer (default: [64, 128, 256, 512])
+    depth: [2, 2, 8, 2] #[2, 2, 5, 2]                    # Depth of each layer (default: [2, 2, 8, 2])
     global_window_size: [2, 2, 2, 1]      # Global window size for each layer (default: [10, 5, 2, 1])
     local_window_size: 2                  # Local window size (default: 10)
     cross_embed_kernel_sizes:             # Kernel sizes for cross-embedding (default: [[4, 8, 16, 32], [2, 4], [2, 4], [2, 4]])
@@ -106,10 +163,11 @@ predict:
     forecasts: 
         type: "custom"
         start_year: 2020
-        start_month: 6
+        start_month: 1
         start_day: 1
         days: 10
-        duration: 32
+        start_hours: [0, 12]
+        duration: 384 # 1088
     # forecasts: [
     #     ["2020-01-01 00:00:00", "2020-01-10 23:00:00"],
     #     ["2020-02-01 00:00:00", "2020-02-10 23:00:00"],
@@ -124,26 +182,25 @@ predict:
     #     ["2020-11-01 00:00:00", "2020-11-10 23:00:00"],
     #     ["2020-12-01 00:00:00", "2020-12-10 23:00:00"]
     # ]
-    use_laplace_filter: True
-    metadata: '/glade/u/home/ksha/miles-credit/credit/metadata/era5.yaml'
-    save_forecast: '/glade/derecho/scratch/ksha/CREDIT/fuxi/'
-    save_vars: ['SP','t2m','V500','U500','T500','Z500','Q500']
+    # use_laplace_filter: True
+    # filter_every: 3
+    save_forecast: "/glade/derecho/scratch/schreck/credit/large/" # "/glade/campaign/cisl/aiml/credit/large/"
     save_format: "nc"
 
 visualization:
     sigma_level_visualize:
-        variable_keys: ['U','V','T','Q']  # variable keys as defined in **[data][variables][...]**
-        visualize_levels: [5, 10,]     # sigma levels (by their indices) to visualize 
+        variable_keys: [] #['U','V','T','Q']  # variable keys as defined in **[data][variables][...]**
+        visualize_levels: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]     # sigma levels (by their indices) to visualize 
         variable_names: ['U wind [m/s]', # the name of each variable
                          'V wind [m/s]', # must be consistent with **variable_indices**
                          'Air temperature [$^\circ$K]',
                          'Specific humidity [kg/kg]']
         variable_factors: [1, 1, 1, 1]
-        variable_range: [auto, auto, auto, auto] # use auto or provide a list of [min_var, max_var]; it applies to all levels
+        variable_range: [auto, auto, auto, auto, auto, auto, auto, auto, auto, auto, auto, auto, auto, auto, auto] # use auto or provide a list of [min_var, max_var]; it applies to all levels
         colormaps: ['Spectral_r', 'Spectral_r', 'viridis_plasma', 'YlGn']
         file_name_prefix: 'global_sigma'
     diagnostic_variable_visualize:
-        variable_keys: ['V500', 'U500','T500','Z500','Q500']
+        variable_keys: [] # ['V500', 'U500','T500','Z500','Q500']
         visualize_levels: ['none', 'none', 'none', 'none', 'none'] # none for single level variables
         variable_names: ['500 hPa V Wind [m/s]', 
                          '500 hPa U Wind [m/s]',
@@ -155,7 +212,7 @@ visualization:
         colormaps: ['Spectral_r', 'Spectral_r', 'viridis_plasma', 'Spectral_r', 'YlGn']
         file_name_prefix: 'global_diagnostics'
     surface_visualize:
-        variable_keys: ['SP','t2m']
+        variable_keys: [] # ['SP','t2m']
         visualize_levels: ['none', 'none']
         variable_names: ['Surface Pressure [hPa]', 
                          '2-m Air Temperature [$^\circ$K]']
@@ -170,31 +227,18 @@ visualization:
                    'pad_inches':0.1, 
                    'transparent':False,
                    'format':'png'}
-    video_format: 'mp4' # gif, mp4, none
-diagnostics:
-    summary_plot_fhs: [1, 20, 60, 120] # what forecast hours to plot as a summary plot
-    use_spectrum_vis: False
-    spectrum_vis:
-        atmos_variables: ["U", "V", "T", "Q"]
-        atmos_levels: [8, 10]
-        single_level_variables: ["SP", "t2m", "Z500"]
-        figsize: () # empty tuple for auto
-    plev_summary_only: True  # pressure level conversion is really slow, use this option to compute pressure level diagnostics only at summary fhs (above), will disable KE metrics output
-    use_KE_diagnostics: True # disable all KE diagnostics including KE metrics
-    ke_vis:
-        use_KE_spectrum_vis: True
-        use_KE_difference_vis: True
+    video_format: 'gif' # gif, mp4, none
 
 pbs: #derecho
-    conda: "holodec"
+    conda: "credit"
     project: "NAML0001"
-    job_name: "xformer"
-    walltime: "24:00:00"
-    nodes: 8
+    job_name: "xformer-fsdp"
+    walltime: "12:00:00"
+    nodes: 1
     ncpus: 64
     ngpus: 4
     mem: '480GB'
-    queue: 'preempt'
+    queue: 'main'
     
 # pbs: # casper
 #     conda: "/glade/work/schreck/miniconda3/envs/evidential"

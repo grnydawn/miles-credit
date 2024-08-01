@@ -41,7 +41,7 @@ dependencies = [
    ]
 
 [tool.setuptools]
-packages = ["credit", "credit.models", "credit.metadata"]
+packages = ["credit", "credit.models", "credit.metadata", "credit.datasets", "credit.trainers"]
 
 [tool.setuptools.dynamic]
 version = {file = "credit/VERSION"}
