@@ -173,7 +173,7 @@ def latititude_weights(conf):
     dims_lon = xr.open_dataset(conf["loss"]["latitude_weights"])["longitude"].shape[0]
 
     weights = np.cos(np.deg2rad(_lat))
-    weights = weights / np.sum(weights)
+    weights = weights / np.mean(weights)
     repeated_weights = np.repeat(weights[np.newaxis, :], dims_lon, axis=0)
     L= repeated_weights.T
     
