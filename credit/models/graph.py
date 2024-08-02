@@ -24,7 +24,7 @@ def apply_spectral_norm(model):
         if isinstance(module, (nn.Linear)):
             nn.utils.spectral_norm(module)
 
-class GraphResTransGRU(BaseModel):
+class GraphResTransfGRU(BaseModel):
     def __init__(self, 
                 n_variables=4, 
                 n_surface_variables=7, 
@@ -420,7 +420,7 @@ if __name__ == "__main__":
     # edge_index = torch.randint(image_height * image_width, size=(2, image_width * image_width * 4))
     input_tensor = torch.randn(4, n_variables * levels + n_surface_variables + n_static_variables,  history_len, image_height, image_width).to("cpu")
     print(f'Loading the model input size', input_tensor.shape)
-    model_class = GraphMemModel
+    model_class = GraphResTransfGRU
     print(f'Using the class {model_class} with edges={use_edge_attr}')
     model =  model_class( 
                 n_variables=n_variables, 
