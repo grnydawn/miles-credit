@@ -3,7 +3,6 @@ data.py
 -------------------------------------------------------
 Content:
     - get_forward_data(filename) -> xr.DataArray
-    - get_forward_data_netCDF4(filename) -> xr.DataArray
     - drop_var_from_dataset()
     - ERA5_and_Forcing_Dataset(torch.utils.data.Dataset)
 
@@ -91,18 +90,15 @@ def reshape_only(x1):
     return x1.permute(0, 2, 1, 3, 4)
 
 def get_forward_data(filename) -> xr.DataArray:
-    """Lazily opens the Zarr store on gladefilesystem.
-    """
-    dataset = xr.open_zarr(filename, consolidated=True)
+    '''
+    Check nc vs. zarr files
+    open file as xe.Dataset
+    '''
+    if filename[-3:] == '.nc' or filename[-4:] == '.nc4':
+        dataset = xr.open_dataset(filename)
+    else:
+        dataset = xr.open_zarr(filename, consolidated=True)
     return dataset
-
-
-def get_forward_data_netCDF4(filename) -> xr.DataArray:
-    """Lazily opens netCDF4 files.
-    """
-    dataset = xr.open_dataset(filename)
-    return dataset
-
 
 class Sample(TypedDict):
     """Simple class for structuring data for the ML model.
