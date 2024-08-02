@@ -164,6 +164,7 @@ class Normalize_ERA5_and_Forcing:
 
         # identify the existence of other variables
         self.flag_surface = ('surface_variables' in conf['data']) and (len(conf['data']['surface_variables']) > 0)
+        # self.flag_dyn_forcing = ('dynamic_forcing_variables' in conf['data']) and (len(conf['data']['dynamic_forcing_variables']) > 0)
         self.flag_diagnostic = ('diagnostic_variables' in conf['data']) and (len(conf['data']['diagnostic_variables']) > 0)
         self.flag_forcing = ('forcing_variables' in conf['data']) and (len(conf['data']['forcing_variables']) > 0)
         self.flag_static = ('static_variables' in conf['data']) and (len(conf['data']['static_variables']) > 0)
@@ -172,7 +173,11 @@ class Normalize_ERA5_and_Forcing:
         if self.flag_surface:
             self.varname_surface = conf["data"]["surface_variables"]
             self.num_surface = len(self.varname_surface)
-            
+
+        # # get dynamic forcing varnames
+        # if self.flag_dyn_forcing:
+        #     self.varname_dyn_forcing = conf["data"]['dynamic_forcing_variables']
+        
         # get diagnostic varnames
         if self.flag_diagnostic:
             self.varname_diagnostic = conf["data"]["diagnostic_variables"]
@@ -208,9 +213,9 @@ class Normalize_ERA5_and_Forcing:
 
     def transform_array(self, x: torch.Tensor) -> torch.Tensor:
         '''
-        this function applies to y_pred, so there won't be forcing and static variables.
-        Consider its usage (standardize y_pred as input of the next iteration), 
-            diagnostics don't need to be trnasformed.
+        this function applies to y_pred, so there won't be dynamic forcing, forcing and static variables.
+        Consider its usage (standardize y_pred as input of the next iteration), diagnostics don't need 
+        to be transformed, it is output-only.
         '''
         # get the current device
         device = x.device
@@ -223,7 +228,9 @@ class Normalize_ERA5_and_Forcing:
         if self.flag_surface:
             tensor_surface = x[:, self.num_upper_air:(self.num_upper_air+self.num_surface), :, :]
             transformed_surface = tensor_surface.clone()
-            
+
+        # y_pred does not have dynamic_forcing, skip this var type
+        
         # diagnostic variables (the very last of the stack)
         if self.flag_diagnostic:
             tensor_diagnostic = x[:, -self.num_diagnostic:, :, :]
@@ -268,7 +275,7 @@ class Normalize_ERA5_and_Forcing:
         '''
         This function transforms training batches, it handles forcing & static as follows:
             - forcing & static don't need to be transformed; users should transform them and save them to the file
-            - other variables (upper-air, surface, diagnostics) need to be transformed
+            - other variables (upper-air, surface, dynamic forcing, diagnostics) need to be transformed
         '''
         normalized_sample = {}
         if self.has_forcing_static:
@@ -289,12 +296,14 @@ class Normalize_ERA5_and_Forcing:
                             if (varname in self.varname_forcing_static) is False:
                                 value[varname] = (value[varname] - self.mean_ds[varname]) / self.std_ds[varname]
                         
-                        # put transformed back to 
+                        # put transformed xr.Dataset to the output dictionary
                         normalized_sample[key] = value
                         
-                    # target fields do not contain forcing and static
+                    # target fields do not contain forcing and static, normalize everything
                     else:
                         normalized_sample[key] = (value - self.mean_ds) / self.std_ds
+                        
+        # if there's no forcing / static, normalize everything
         else:
             for key, value in sample.items():
                 if isinstance(value, xr.Dataset):
@@ -304,7 +313,7 @@ class Normalize_ERA5_and_Forcing:
         
     def inverse_transform(self, x: torch.Tensor) -> torch.Tensor:
         '''
-        this function applies to y_pred, so there won't be forcing and static variables here 
+        this function applies to y_pred, so there won't be dynamic forcing, forcing and static variables here 
         '''
         # get the current device
         device = x.device
@@ -579,6 +588,7 @@ class ToTensor_ERA5_and_Forcing:
         
         # identify the existence of other variables
         self.flag_surface = ('surface_variables' in conf['data']) and (len(conf['data']['surface_variables']) > 0)
+        self.flag_dyn_forcing = ('dynamic_forcing_variables' in conf['data']) and (len(conf['data']['dynamic_forcing_variables']) > 0)
         self.flag_diagnostic = ('diagnostic_variables' in conf['data']) and (len(conf['data']['diagnostic_variables']) > 0)
         self.flag_forcing = ('forcing_variables' in conf['data']) and (len(conf['data']['forcing_variables']) > 0)
         self.flag_static = ('static_variables' in conf['data']) and (len(conf['data']['static_variables']) > 0)
@@ -589,6 +599,12 @@ class ToTensor_ERA5_and_Forcing:
         if self.flag_surface:
             self.varname_surface = conf["data"]["surface_variables"]
 
+        # get dynamic forcing varnames
+        if self.flag_dyn_forcing:
+            self.varname_dyn_forcing = conf["data"]['dynamic_forcing_variables']
+        else:
+            self.varname_dyn_forcing = []
+        
         # get diagnostic varnames
         if self.flag_diagnostic:
             self.varname_diagnostic = conf["data"]["diagnostic_variables"]
@@ -608,14 +624,13 @@ class ToTensor_ERA5_and_Forcing:
         
         if self.flag_forcing or self.flag_static:
             self.has_forcing_static = True
+            # ======================================================================================== #
+            # forcing variable first (new models) vs. static variable first (some old models)
+            # this flag makes sure that the class is compatible with some old CREDIT models
+            self.flag_static_first = ('static_first' in conf['data']) and (conf["data"]["static_first"])
+            # ======================================================================================== #
         else:
             self.has_forcing_static = False
-
-        # ======================================================================================== #
-        # forcing variable first (new models) vs. static variable first (some old models)
-        # this flag makes sure that the class is compatible with some old CREDIT models
-        self.flag_static_first = ('static_first' in conf['data']) and (conf["data"]["static_first"])
-        # ======================================================================================== #
             
     def __call__(self, sample: Sample) -> Sample:
 
@@ -648,13 +663,26 @@ class ToTensor_ERA5_and_Forcing:
                     
                     numpy_vars_surface = np.array(list_vars_surface) # [num_surf_vars, hist_len, lat, lon]
 
+
+                # # organize dynamic forcing vars (input only)
+                # if self.flag_dyn_forcing:
+                #     list_vars_dyn_forcing = []
+
+                #     for var_name in self.varname_dyn_forcing:
+                #         var_value = value[var_name].values
+                #         list_vars_dyn_forcing.append(var_value)
+
+                #     numpy_vars_dyn_forcing = np.array(list_vars_dyn_forcing)
+                
                 # organize forcing and static (input only)
-                if self.flag_static_first:
-                    varname_forcing_static = self.varname_static + self.varname_forcing
-                else:
-                    varname_forcing_static = self.varname_forcing + self.varname_static
+                if self.has_forcing_static or self.flag_dyn_forcing:
                     
-                if self.has_forcing_static:
+                    # enter this scope if one of the (dyn_forcing, folrcing, static) exists
+                    if self.flag_static_first:
+                        varname_forcing_static = self.varname_static + self.varname_dyn_forcing + self.varname_forcing
+                    else:
+                        varname_forcing_static = self.varname_dyn_forcing + self.varname_forcing + self.varname_static
+                        
                     if key == 'historical_ERA5_images' or key == 'x':
                         list_vars_forcing_static = []
                         for var_name in varname_forcing_static:
@@ -692,7 +720,9 @@ class ToTensor_ERA5_and_Forcing:
                 if len(x_surf.shape) == 4:
                     # [surface_var, time, lat, lon] --> [time, surface_var, lat, lon]
                     x_surf = x_surf.permute(1, 0, 2, 3)
-                    
+
+                # =============================================== #
+                # separate single variable vs. single history_len
                 elif len(x_surf.shape) == 3:
                     if len(self.varname_surface) > 1:
                         # single time, multi-vars
@@ -700,11 +730,38 @@ class ToTensor_ERA5_and_Forcing:
                     else:
                         # multi-time, single vars
                         x_surf = x_surf.unsqueeze(1)
-                        
+                # =============================================== #
+                
                 else:
+                    # single var and single time, unsqueeze both
                     x_surf = x_surf.unsqueeze(0).unsqueeze(0)
                 
             if key == 'historical_ERA5_images' or key == 'x':
+                # !!! DO NOT DELETE !!!
+                # this is the space if we plan to create an independent key for dynamic forcing
+                # right now it is part of the 'x_forcing_static' so this part is comment-out
+                # # ---------------------------------------------------------------------- #    
+                # # ToTensor: dynamic forcing
+                # if self.flag_dyn_forcing:
+                #     x_dyn_forcing = torch.as_tensor(dyn_forcing).squeeze()
+
+                #     if len(x_dyn_forcing.shape) == 4:
+                #         # [dyn_forcing_var, time, lat, lon] --> [time, dyn_forcing_var, lat, lon]
+                        
+                #     # =============================================== #
+                #     # separate single variable vs. single history_len
+                #     elif len(x_dyn_forcing.shape) == 3:
+                #         if len(self.varname_dyn_forcing) > 1:
+                #             # single time, multi-vars
+                #             x_dyn_forcing = x_dyn_forcing.unsqueeze(0)
+                #         else:
+                #             # multi-time, single vars
+                #             x_dyn_forcing = x_dyn_forcing.unsqueeze(1)
+                #     # =============================================== #
+
+                #     else:
+                #         # single var and single time, unsqueeze both
+                #         x_dyn_forcing = x_dyn_forcing.unsqueeze(0).unsqueeze(0)
 
                 # ---------------------------------------------------------------------- #    
                 # ToTensor: forcing and static
@@ -749,7 +806,9 @@ class ToTensor_ERA5_and_Forcing:
                     if len(y_diag.shape) == 4:
                         # [surface_var, time, lat, lon] --> [time, surface_var, lat, lon]
                         y_diag = y_diag.permute(1, 0, 2, 3)
-                        
+
+                    # =============================================== #
+                    # separate single variable vs. single history_len
                     elif len(y_diag.shape) == 3:
                         if len(self.varname_diagnostic) > 1:
                             # single time, multi-vars
@@ -757,6 +816,7 @@ class ToTensor_ERA5_and_Forcing:
                         else:
                             # multi-time, single vars
                             y_diag = y_diag.unsqueeze(1)
+                    # =============================================== #
                             
                     else:
                         y_diag = y_diag.unsqueeze(0).unsqueeze(0)
