@@ -579,9 +579,7 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
                 time=slice(ind_start_in_file, ind_end_in_file+1))
             dyn_forcing_subset = dyn_forcing_subset.isel(
                 time=slice(0, self.history_len, self.skip_periods)).load() # <-- load into memory
-
-            print(dyn_forcing_subset['time'])
-            print(historical_ERA5_images['time'])
+            
             historical_ERA5_images = historical_ERA5_images.merge(dyn_forcing_subset)
             
         # ========================================================================== #
