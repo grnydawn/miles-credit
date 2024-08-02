@@ -19,20 +19,15 @@ from echo.src.base_objective import BaseObjective
 import torch
 import torch.distributed as dist
 from torch.cuda.amp import GradScaler
-from torch.utils.data.distributed import DistributedSampler
+# from torch.utils.data.distributed import DistributedSampler
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from credit.distributed import distributed_model_wrapper
 
 from credit.seed import seed_everything
 from credit.loss import VariableTotalLoss2D
-from credit.data import ERA5Dataset, ERA5_and_Forcing_Dataset, Dataset_BridgeScaler
-from credit.datasets.sequential_multistep import DistributedSequentialDatasetV2 as DistributedSequentialDataset
+from credit.datasets.sequential_multistep import DistributedSequentialDataset
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
-
-# from credit.trainers.trainer import Trainer
-# # <-------------- the new pipeline
-# from credit.trainers.trainer_new import Trainer as Trainer_New
 from credit.trainers import load_trainer
 
 from credit.metrics import LatWeightedMetrics
@@ -63,81 +58,18 @@ def setup(rank, world_size, mode):
     dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
 
-def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
+def load_dataset_and_sampler(conf,
+                             all_ERA_files,
+                             surface_files,
+                             diagnostic_files,
+                             world_size,
+                             rank,
+                             is_train=True,
+                             seed=42):
 
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
 
-    # number of previous lead time inputs
-    history_len = conf["data"]["history_len"]
-    valid_history_len = conf["data"]["valid_history_len"]
-    history_len = history_len if is_train else valid_history_len
-
-    # number of lead times to forecast
-    forecast_len = conf["data"]["forecast_len"]
-    valid_forecast_len = conf["data"]["valid_forecast_len"]
-    forecast_len = forecast_len if is_train else valid_forecast_len
-
-    # optional setting: max_forecast_len
-    max_forecast_len = None if "max_forecast_len" not in conf["data"] else conf["data"]["max_forecast_len"]
-
-    # optional setting: skip_periods
-    skip_periods = None if "skip_periods" not in conf["data"] else conf["data"]["skip_periods"]
-
-    # optional setting: one_shot
-    one_shot = None if "one_shot" not in conf["data"] else conf["data"]["one_shot"]
-
-    # shufle dataloader if training
-    shuffle = is_train
-    name = "Train" if is_train else "Valid"
-
-    # data preprocessing utils
-    transforms = load_transforms(conf)
-
-    # quantile transform using BridgeScaler
-    if conf["data"]["scaler_type"] == "quantile-cached":
-        dataset = Dataset_BridgeScaler(
-            conf,
-            conf_dataset='bs_years_train' if is_train else 'bs_years_val',
-            transform=transforms
-        )
-
-    else:
-        # Z-score
-        dataset = ERA5Dataset(
-            filenames=files,
-            history_len=history_len,
-            forecast_len=forecast_len,
-            skip_periods=skip_periods,
-            one_shot=one_shot,
-            max_forecast_len=max_forecast_len,
-            transform=transforms
-        )
-
-    # Pytorch sampler
-    sampler = DistributedSampler(
-        dataset,
-        num_replicas=world_size,
-        rank=rank,
-        seed=seed,
-        shuffle=shuffle,
-        drop_last=True
-    )
-    logging.info(f" Loaded a {name} ERA dataset, and a distributed sampler (forecast length = {forecast_len + 1})")
-
-    return dataset, sampler
-
-
-def load_dataset_and_sampler_zscore_only(conf,
-                                         all_ERA_files,
-                                         surface_files,
-                                         diagnostic_files,
-                                         world_size, rank, is_train, seed=42):
-
-    # convert $USER to the actual user name
-    conf['save_loc'] = os.path.expandvars(conf['save_loc'])
-
-    # ======================================================== #
     # parse intputs
 
     # file names
@@ -197,12 +129,6 @@ def load_dataset_and_sampler_zscore_only(conf,
     else:
         skip_periods = conf["data"]["skip_periods"]
 
-    # one_shot
-    if "one_shot" not in conf["data"]:
-        one_shot = None
-    else:
-        one_shot = conf["data"]["one_shot"]
-
     # shufle
     shuffle = is_train
 
@@ -227,7 +153,6 @@ def load_dataset_and_sampler_zscore_only(conf,
         history_len=history_len,
         forecast_len=forecast_len,
         skip_periods=skip_periods,
-        one_shot=one_shot,
         max_forecast_len=max_forecast_len,
         transform=transforms,
         rank=rank,
@@ -250,7 +175,6 @@ def load_model_states_and_optimizer(conf, model, device):
     conf['save_loc'] = save_loc = os.path.expandvars(conf['save_loc'])
 
     # training hyperparameters
-    start_epoch = conf['trainer']['start_epoch']
     learning_rate = float(conf['trainer']['learning_rate'])
     weight_decay = float(conf['trainer']['weight_decay'])
     amp = conf['trainer']['amp']
@@ -329,8 +253,6 @@ def main(rank, world_size, conf, trial=False):
 
     train_batch_size = conf['trainer']['train_batch_size']
     valid_batch_size = conf['trainer']['valid_batch_size']
-    thread_workers = conf['trainer']['thread_workers']
-    valid_thread_workers = conf['trainer']['valid_thread_workers'] if 'valid_thread_workers' in conf['trainer'] else thread_workers
 
     # get file names
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
@@ -382,23 +304,17 @@ def main(rank, world_size, conf, trial=False):
             valid_diagnostic_files = None
 
     # load dataset and sampler
-    # <----------------------------------- std_new
-    if conf['data']['scaler_type'] == 'std_new':
-        # training set and sampler
-        train_dataset, train_sampler = load_dataset_and_sampler_zscore_only(conf,
-                                                                            train_files,
-                                                                            train_surface_files,
-                                                                            train_diagnostic_files,
-                                                                            world_size, rank, is_train=True)
-        # validation set and sampler
-        valid_dataset, valid_sampler = load_dataset_and_sampler_zscore_only(conf,
-                                                                            valid_files,
-                                                                            valid_surface_files,
-                                                                            valid_diagnostic_files,
-                                                                            world_size, rank, is_train=False)
-    else:
-        train_dataset, train_sampler = load_dataset_and_sampler(conf, train_files, world_size, rank, is_train=True)
-        valid_dataset, valid_sampler = load_dataset_and_sampler(conf, valid_files, world_size, rank, is_train=False)
+    train_dataset, train_sampler = load_dataset_and_sampler(conf,
+                                                            train_files,
+                                                            train_surface_files,
+                                                            train_diagnostic_files,
+                                                            world_size, rank, is_train=True)
+    # validation set and sampler
+    valid_dataset, valid_sampler = load_dataset_and_sampler(conf,
+                                                            valid_files,
+                                                            valid_surface_files,
+                                                            valid_diagnostic_files,
+                                                            world_size, rank, is_train=False)
 
     # setup the dataloder for this process
 
@@ -409,7 +325,7 @@ def main(rank, world_size, conf, trial=False):
         sampler=train_sampler,
         pin_memory=True,
         persistent_workers=False,
-        num_workers=0,
+        num_workers=0,  # multiprocessing is handled in the dataset
         drop_last=True
     )
 
@@ -419,7 +335,7 @@ def main(rank, world_size, conf, trial=False):
         shuffle=False,
         sampler=valid_sampler,
         pin_memory=False,
-        num_workers=0,
+        num_workers=0,  # multiprocessing is handled in the dataset
         drop_last=True
     )
 
