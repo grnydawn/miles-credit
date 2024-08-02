@@ -663,16 +663,20 @@ class ToTensor_ERA5_and_Forcing:
                     
                     numpy_vars_surface = np.array(list_vars_surface) # [num_surf_vars, hist_len, lat, lon]
 
-
+                # !!! DO NOT DELETE !!!
+                # this is the space if we plan to create an independent key for dynamic forcing
+                # right now it is part of the varname_forcing_static so this part is comment-out
+                # ------------------------------------------------------------------------------ #
                 # # organize dynamic forcing vars (input only)
                 # if self.flag_dyn_forcing:
-                #     list_vars_dyn_forcing = []
-
-                #     for var_name in self.varname_dyn_forcing:
-                #         var_value = value[var_name].values
-                #         list_vars_dyn_forcing.append(var_value)
-
-                #     numpy_vars_dyn_forcing = np.array(list_vars_dyn_forcing)
+                #     if key == 'historical_ERA5_images' or key == 'x':
+                #         list_vars_dyn_forcing = []
+    
+                #         for var_name in self.varname_dyn_forcing:
+                #             var_value = value[var_name].values
+                #             list_vars_dyn_forcing.append(var_value)
+    
+                #         numpy_vars_dyn_forcing = np.array(list_vars_dyn_forcing)
                 
                 # organize forcing and static (input only)
                 if self.has_forcing_static or self.flag_dyn_forcing:
