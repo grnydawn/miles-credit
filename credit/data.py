@@ -335,15 +335,10 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
     A Pytorch Dataset class that works on:
         - upper-air variables (time, level, lat, lon)
         - surface variables (time, lat, lon)
+        - dynamic forcing variables (time, lat, lon)
         - foring variables (time, lat, lon)
         - diagnostic variables (time, lat, lon)
         - static variables (lat, lon)
-        
-    Parameters:
-    - filenames: ERA5 file path as *.zarr with re (e.g., /user/ERA5/*.zarr)
-    - filename_forcing: None /or a netCDF4 file that contains all the forcing variables.
-    - filename_static: None /or a netCDF4 file that contains all the static variables.
-    
     '''
 
     def __init__(
@@ -368,6 +363,39 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         one_shot=None,
         max_forecast_len=None
     ):
+        
+        '''
+        Initialize the ERA5_and_Forcing_Dataset
+
+        Parameters:
+        - varname_upper_air (list): List of upper air variable names.
+        - varname_surface (list): List of surface variable names.
+        - varname_dyn_forcing (list): List of dynamic forcing variable names.
+        - varname_forcing (list): List of forcing variable names.
+        - varname_static (list): List of static variable names.
+        - varname_diagnostic (list): List of diagnostic variable names.
+        - filenames (list): List of filenames for upper air data.
+        - filename_surface (list, optional): List of filenames for surface data.
+        - filename_dyn_forcing (list, optional): List of filenames for dynamic forcing data.
+        - filename_forcing (str, optional): Filename for forcing data.
+        - filename_static (str, optional): Filename for static data.
+        - filename_diagnostic (list, optional): List of filenames for diagnostic data.
+        - history_len (int, optional): Length of the history sequence. Default is 2.
+        - forecast_len (int, optional): Length of the forecast sequence. Default is 0.
+        - transform (callable, optional): Transformation function to apply to the data.
+        - seed (int, optional): Random seed for reproducibility. Default is 42.
+        - skip_periods (int, optional): Number of periods to skip between samples.
+        - one_shot(bool, optional): Whether to return all states or just 
+                                    the final state of the training target. Default is None
+        - max_forecast_len (int, optional): Maximum length of the forecast sequence.
+        - shuffle (bool, optional): Whether to shuffle the data. Default is True.
+
+        Returns:
+        - sample (dict): A dictionary containing historical_ERA5_images, 
+                                                 target_ERA5_images, 
+                                                 datetime index, and additional information.
+        '''
+        
         self.history_len = history_len
         self.forecast_len = forecast_len
         self.transform = transform
