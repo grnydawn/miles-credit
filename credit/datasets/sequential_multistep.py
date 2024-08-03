@@ -564,10 +564,10 @@ class DistributedSequentialDatasetBasic(DistributedSequentialDataset):
                 ).load() # <-- load into memory
                 
                 ## merge diagnoisc input here:
-                if diagnostic_files:
+                if self.diagnostic_files:
                     
                     # subset diagnostic variables
-                    diagnostic_subset = diagnostic_files[int(ind_file)].isel(
+                    diagnostic_subset = self.diagnostic_files[int(ind_file)].isel(
                         time=slice(ind_start_in_file, ind_end_in_file+1))
                     
                     # get the next forecast step
