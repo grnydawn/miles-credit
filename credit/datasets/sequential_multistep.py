@@ -1,25 +1,34 @@
-from credit.data import (Sample, find_key_for_number,
-                         get_forward_data, get_forward_data_netCDF4,
-                         drop_var_from_dataset, extract_month_day_hour,
-                         find_common_indices)
-from concurrent.futures import ProcessPoolExecutor as Pool
-# https://stackoverflow.com/questions/6974695/python-process-pool-non-daemonic
+'''
+Pytorch IterableDataset for multi-step training 
+
+Reference:
+    Non-daemonic Python pool process
+    https://stackoverflow.com/questions/6974695/python-process-pool-non-daemonic
+
+    Pytorch Iterable Dataset
+    https://colab.research.google.com/drive/1OFLZnX9y5QUFNONuvFsxOizq4M-tFvk-?usp=sharing#scrollTo=CxSCQPOMHgwo
+'''
+
+import os
+import logging
 from functools import partial
+from concurrent.futures import ProcessPoolExecutor as Pool
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+import numpy as np
+
+import torch
 from torch.utils.data import get_worker_info
 from torch.utils.data.distributed import DistributedSampler
-from typing import Any, Callable, Dict, List, Optional, Tuple
-import numpy as np
-import logging
-import torch
-import os
 
+from credit.data import (Sample, find_key_for_number, get_forward_data, 
+                         drop_var_from_dataset, extract_month_day_hour, find_common_indices)
 
 logger = logging.getLogger(__name__)
 
 
 class DistributedSequentialDataset(torch.utils.data.IterableDataset):
-    # https://colab.research.google.com/drive/1OFLZnX9y5QUFNONuvFsxOizq4M-tFvk-?usp=sharing#scrollTo=CxSCQPOMHgwo
-
+    
     def __init__(
         self,
         varname_upper_air: List[str],
@@ -44,7 +53,7 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
         num_workers: int = 0
     ):
 
-        """
+        '''
         Initialize the DistributedSequentialDatasetV2.
 
         Parameters:
@@ -71,7 +80,7 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
 
         Returns:
         - sample (dict): A dictionary containing historical ERA5 images, target ERA5 images, datetime index, and additional information.
-        """
+        '''
 
         self.history_len = history_len
         self.forecast_len = forecast_len
@@ -102,7 +111,7 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
         # ERA5 operations
         all_files = []
         filenames = sorted(filenames)
-
+        
         for fn in filenames:
             # drop variables if they are not in the config
             xarray_dataset = get_forward_data(filename=fn)
@@ -110,19 +119,12 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
 
             # collect yearly datasets within a list
             all_files.append(xarray_dataset)
-
+            
         self.all_files = all_files
-
-        # set data places:
-        indo = 0
-        self.meta_data_dict = {}
-        for ee, bb in enumerate(self.all_files):
-            self.meta_data_dict[str(ee)] = [len(bb['time']), indo, indo + len(bb['time'])]
-            indo += len(bb['time']) + 1
-
+        
         # get sample indices from ERA5 upper-air files:
         ind_start = 0
-        self.ERA5_indices = {}
+        self.ERA5_indices = {} # <------ change
         for ind_file, ERA5_xarray in enumerate(self.all_files):
             # [number of samples, ind_start, ind_end]
             self.ERA5_indices[str(ind_file)] = [len(ERA5_xarray['time']),
@@ -138,10 +140,11 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
             assert os.path.isfile(filename_forcing), 'Cannot find forcing file [{}]'.format(filename_forcing)
 
             # drop variables if they are not in the config
-            xarray_dataset = get_forward_data_netCDF4(filename_forcing)
+            xarray_dataset = get_forward_data(filename_forcing)
             xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_forcing)
-
+            
             self.xarray_forcing = xarray_dataset
+            
         else:
             self.xarray_forcing = False
 
@@ -153,56 +156,53 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
             assert os.path.isfile(filename_static), 'Cannot find static file [{}]'.format(filename_static)
 
             # drop variables if they are not in the config
-            xarray_dataset = get_forward_data_netCDF4(filename_static)
+            xarray_dataset = get_forward_data(filename_static)
             xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_static)
-
+            
             self.xarray_static = xarray_dataset
+            
         else:
             self.xarray_static = False
 
         # ======================================================== #
         # diagnostic file
         self.filename_diagnostic = filename_diagnostic
-
+        
         if self.filename_diagnostic is not None:
 
             diagnostic_files = []
             filename_diagnostic = sorted(filename_diagnostic)
-
+            
             for fn in filename_diagnostic:
 
                 # drop variables if they are not in the config
                 xarray_dataset = get_forward_data(filename=fn)
                 xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_diagnostic)
-
+                
                 diagnostic_files.append(xarray_dataset)
-
+                
             self.diagnostic_files = diagnostic_files
-
-            assert len(self.diagnostic_files) == len(self.all_files), \
-                'Mismatch between the total number of diagnostic files and upper-air files'
+            
         else:
             self.diagnostic_files = False
-
+            
         # ======================================================== #
         # surface files
         if filename_surface is not None:
-
+        
             surface_files = []
             filename_surface = sorted(filename_surface)
-
+        
             for fn in filename_surface:
-
+                
                 # drop variables if they are not in the config
                 xarray_dataset = get_forward_data(filename=fn)
                 xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_surface)
-
+                
                 surface_files.append(xarray_dataset)
-
+                
             self.surface_files = surface_files
-
-            assert len(self.surface_files) == len(self.all_files), \
-                'Mismatch between the total number of surface files and upper-air files'
+            
         else:
             self.surface_files = False
 
@@ -221,13 +221,18 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
         self.current_epoch = epoch
 
     def __iter__(self):
+
         worker_info = get_worker_info()
+        
         num_workers = worker_info.num_workers if worker_info is not None else 1
+        
         worker_id = worker_info.id if worker_info is not None else 0
+        
         sampler = DistributedSampler(self, num_replicas=num_workers * self.world_size,
                                      rank=self.rank * num_workers + worker_id, shuffle=self.shuffle)
+        
         sampler.set_epoch(self.current_epoch)
-
+        
         process_index_partial = partial(
             worker,
             ERA5_indices=self.ERA5_indices,
@@ -252,6 +257,7 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
                     yield sample
                     if sample['stop_forecast']:
                         break
+                        
         else:  # use multi-processing
             with Pool(self.num_workers) as p:
                 batch_size = 2 * self.num_workers  # limit the size of the "queue"
@@ -287,7 +293,7 @@ def worker(
     transform: Optional[Callable]
 ) -> Dict[str, Any]:
 
-    """
+    '''
     Processes a given index to extract and transform data for a specific time slice.
 
     Parameters:
@@ -305,7 +311,7 @@ def worker(
 
     Returns:
     - Dict[str, Any]: A dictionary containing historical ERA5 images, target ERA5 images, datetime index, and additional information.
-    """
+    '''
 
     index, ind_start_current_step = tuple_index
 
@@ -322,44 +328,58 @@ def worker(
         if ind_start_in_file > ind_largest:
             ind_start_in_file = ind_largest
 
+        # ========================================================================== #
         # subset xarray on time dimension & load it to the memory
-        ind_end_in_file = ind_start_in_file + history_len + forecast_len
-
-        # ERA5_subset: a xarray dataset that contains training input and target (for the current batch)
+        
+        ind_end_in_file = ind_start_in_file+history_len+forecast_len
+        
+        ## ERA5_subset: a xarray dataset that contains training input and target (for the current batch)
         ERA5_subset = all_files[int(ind_file)].isel(
-            time=slice(ind_start_in_file, ind_end_in_file + 1)).load()
-
+            time=slice(ind_start_in_file, ind_end_in_file+1)) #.load() NOT load into memory
+        
         if surface_files:
-            # subset surface variables
+            ## subset surface variables
             surface_subset = surface_files[int(ind_file)].isel(
-                time=slice(ind_start_in_file, ind_end_in_file + 1)).load()
-            # merge upper-air and surface here
-            ERA5_subset = ERA5_subset.merge(surface_subset)
-
+                time=slice(ind_start_in_file, ind_end_in_file+1)) #.load() NOT load into memory
+            
+            ## merge upper-air and surface here:
+            ERA5_subset = ERA5_subset.merge(surface_subset) # <-- lazy merge, ERA5 and surface both not loaded
+        
+        # ==================================================== #
+        # split ERA5_subset into training inputs and targets
+        #   + merge with forcing and static
+        
         # the ind_end of the ERA5_subset
-        ind_end_time = len(ERA5_subset['time'])
-
+        # ind_end_time = len(ERA5_subset['time'])
+        
         # datetiem information as int number (used in some normalization methods)
         datetime_as_number = ERA5_subset.time.values.astype('datetime64[s]').astype(int)
-
-        # historical_ERA5_images: the final input
-        historical_ERA5_images = ERA5_subset.isel(time=slice(0, history_len, skip_periods))
-
+        
+        # ==================================================== #
+        # xarray dataset as input
+        ## historical_ERA5_images: the final input
+        
+        historical_ERA5_images = ERA5_subset.isel(
+            time=slice(0, history_len, skip_periods)).load() # <-- load into memory
+        
         # merge forcing inputs
         if xarray_forcing:
+            # =============================================================================== #
             # matching month, day, hour between forcing and upper air [time]
             # this approach handles leap year forcing file and non-leap-year upper air file
             month_day_forcing = extract_month_day_hour(np.array(xarray_forcing['time']))
-            month_day_inputs = extract_month_day_hour(np.array(historical_ERA5_images['time']))
+            month_day_inputs = extract_month_day_hour(np.array(historical_ERA5_images['time'])) # <-- upper air
             # indices to subset
             ind_forcing, _ = find_common_indices(month_day_forcing, month_day_inputs)
-            forcing_subset_input = xarray_forcing.isel(time=ind_forcing).load()
+            forcing_subset_input = xarray_forcing.isel(time=ind_forcing).load() # <-- load into memory
             # forcing and upper air have different years but the same mon/day/hour
             # safely replace forcing time with upper air time
             forcing_subset_input['time'] = historical_ERA5_images['time']
+            # =============================================================================== #
+        
             # merge
             historical_ERA5_images = historical_ERA5_images.merge(forcing_subset_input)
-
+        
         # merge static inputs
         if xarray_static:
             # expand static var on time dim
@@ -367,24 +387,38 @@ def worker(
             static_subset_input = xarray_static.expand_dims(dim={"time": N_time_dims})
             # assign coords 'time'
             static_subset_input = static_subset_input.assign_coords({'time': ERA5_subset['time']})
+        
             # slice + load to the GPU
-            static_subset_input = static_subset_input.isel(time=slice(0, history_len, skip_periods)).load()
-            # update
+            static_subset_input = static_subset_input.isel(
+                time=slice(0, history_len, skip_periods)).load() # <-- load into memory
+        
+            # update 
             static_subset_input['time'] = historical_ERA5_images['time']
+        
             # merge
             historical_ERA5_images = historical_ERA5_images.merge(static_subset_input)
 
-        # target_ERA5_images: the final target
-        target_ERA5_images = ERA5_subset.isel(time=slice(history_len, history_len + skip_periods, skip_periods))
-
-        # merge diagnoisc input
+        # ==================================================== #
+        # xarray dataset as target
+        ## target_ERA5_images: the final target
+        
+        # get the next forecast step
+        target_ERA5_images = ERA5_subset.isel(
+            time=slice(history_len, history_len+skip_periods, skip_periods)).load() # <-- load into memory
+        
+        ## merge diagnoisc input here:
         if diagnostic_files:
+            
             # subset diagnostic variables
             diagnostic_subset = diagnostic_files[int(ind_file)].isel(
-                time=slice(ind_start_in_file, ind_end_in_file + 1)).load()
-            target_diagnostic = diagnostic_subset.isel(time=slice(history_len, ind_end_time, skip_periods))
+                time=slice(ind_start_in_file, ind_end_in_file+1))
+            
+            # get the next forecast step
+            diagnostic_subset = diagnostic_subset.isel(
+                time=slice(history_len, history_len+skip_periods, skip_periods)).load() # <-- load into memory
+            
             # merge into the target dataset
-            target_ERA5_images = target_ERA5_images.merge(target_diagnostic)
+            target_ERA5_images = target_ERA5_images.merge(diagnostic_subset)
 
         # create a dict object with input/output tensors
         sample = Sample(
@@ -407,6 +441,10 @@ def worker(
             int(target_ERA5_images.time.values[0].astype('datetime64[s]').astype(int))
         ]
 
+        # # print out to check input and target datetimes
+        # print('Input time: {}'.format(np.array(historical_ERA5_images['time'])))
+        # print('Target time: {}'.format(np.array(target_ERA5_images['time'])))
+    
     except Exception as e:
         logger.error(f"Error processing index {tuple_index}: {e}")
         raise
@@ -417,11 +455,16 @@ def worker(
 class DistributedSequentialDatasetBasic(DistributedSequentialDataset):
 
     def __iter__(self):
+
         worker_info = get_worker_info()
+        
         num_workers = worker_info.num_workers if worker_info is not None else 1
+        
         worker_id = worker_info.id if worker_info is not None else 0
+        
         sampler = DistributedSampler(self, num_replicas=num_workers * self.world_size,
                                      rank=self.rank * num_workers + worker_id, shuffle=self.shuffle)
+        
         sampler.set_epoch(self.current_epoch)
 
         for index in iter(sampler):
@@ -447,23 +490,23 @@ class DistributedSequentialDatasetBasic(DistributedSequentialDataset):
 
                 ind_end_in_file = ind_start_in_file+self.history_len+self.forecast_len
 
-                # ERA5_subset: a xarray dataset that contains training input and target (for the current index)
+                ## ERA5_subset: a xarray dataset that contains training input and target (for the current batch)
                 ERA5_subset = self.all_files[int(ind_file)].isel(
-                    time=slice(ind_start_in_file, ind_end_in_file+1)).load()
+                    time=slice(ind_start_in_file, ind_end_in_file+1)) #.load() NOT load into memory
 
                 if self.surface_files:
-                    # subset surface variables
+                    ## subset surface variables
                     surface_subset = self.surface_files[int(ind_file)].isel(
-                        time=slice(ind_start_in_file, ind_end_in_file+1)).load()
+                        time=slice(ind_start_in_file, ind_end_in_file+1)) #.load() NOT load into memory
 
-                    # merge upper-air and surface here:
-                    ERA5_subset = ERA5_subset.merge(surface_subset)
+                    ## merge upper-air and surface here:
+                    ERA5_subset = ERA5_subset.merge(surface_subset) # <-- lazy merge, ERA5 and surface both not loaded
 
                 # ==================================================== #
                 # split ERA5_subset into training inputs and targets + merge with forcing and static
 
                 # the ind_end of the ERA5_subset
-                ind_end_time = len(ERA5_subset['time'])
+                # ind_end_time = len(ERA5_subset['time'])
 
                 # datetiem information as int number (used in some normalization methods)
                 datetime_as_number = ERA5_subset.time.values.astype('datetime64[s]').astype(int)
@@ -471,8 +514,9 @@ class DistributedSequentialDatasetBasic(DistributedSequentialDataset):
                 # ==================================================== #
                 # xarray dataset as input
                 # historical_ERA5_images: the final input
-
-                historical_ERA5_images = ERA5_subset.isel(time=slice(0, self.history_len, self.skip_periods))
+                
+                historical_ERA5_images = ERA5_subset.isel(
+                    time=slice(0, self.history_len, self.skip_periods)).load() # <-- load into memory
 
                 # merge forcing inputs
                 if self.xarray_forcing:
@@ -501,7 +545,8 @@ class DistributedSequentialDatasetBasic(DistributedSequentialDataset):
                     static_subset_input = static_subset_input.assign_coords({'time': ERA5_subset['time']})
 
                     # slice + load to the GPU
-                    static_subset_input = static_subset_input.isel(time=slice(0, self.history_len, self.skip_periods)).load()
+                    static_subset_input = static_subset_input.isel(
+                        time=slice(0, self.history_len, self.skip_periods)).load()
 
                     # update
                     static_subset_input['time'] = historical_ERA5_images['time']
@@ -512,26 +557,24 @@ class DistributedSequentialDatasetBasic(DistributedSequentialDataset):
                 # ==================================================== #
                 # xarray dataset as target
                 # target_ERA5_images: the final target
-
-                # return the next state only
+                
+                # get the next forecast step
                 target_ERA5_images = ERA5_subset.isel(
-                    time=slice(self.history_len, self.history_len + self.skip_periods, self.skip_periods)
-                )
-
-                # merge diagnoisc input here:
-                if self.diagnostic_files:
-
+                    time=slice(history_len, history_len+skip_periods, skip_periods)).load() # <-- load into memory
+                
+                ## merge diagnoisc input here:
+                if diagnostic_files:
+                    
                     # subset diagnostic variables
-                    diagnostic_subset = self.diagnostic_files[int(ind_file)].isel(
-                        time=slice(ind_start_in_file, ind_end_in_file+1)).load()
-
+                    diagnostic_subset = diagnostic_files[int(ind_file)].isel(
+                        time=slice(ind_start_in_file, ind_end_in_file+1))
+                    
+                    # get the next forecast step
+                    diagnostic_subset = diagnostic_subset.isel(
+                        time=slice(history_len, history_len+skip_periods, skip_periods)).load() # <-- load into memory
+                    
                     # merge into the target dataset
-                    target_diagnostic = diagnostic_subset.isel(time=slice(self.history_len, ind_end_time, self.skip_periods))
-                    target_ERA5_images = target_ERA5_images.merge(target_diagnostic)
-
-                if self.one_shot is not None:
-                    # get the final state of the target as one-shot
-                    target_ERA5_images = target_ERA5_images.isel(time=slice(0, 1))
+                    target_ERA5_images = target_ERA5_images.merge(diagnostic_subset)
 
                 # pipe xarray datasets to the sampler
                 sample = Sample(
@@ -558,6 +601,10 @@ class DistributedSequentialDatasetBasic(DistributedSequentialDataset):
                     int(target_ERA5_images.time.values[0].astype('datetime64[s]').astype(int))
                 ]
 
+                # # print out to check input and target datetimes
+                # print('Input time: {}'.format(np.array(historical_ERA5_images['time'])))
+                # print('Target time: {}'.format(np.array(target_ERA5_images['time'])))
+                
                 yield sample
 
                 if stop_forecast:
