@@ -61,6 +61,7 @@ def setup(rank, world_size, mode):
 def load_dataset_and_sampler(conf,
                              all_ERA_files,
                              surface_files,
+                             dyn_forcing_files,
                              diagnostic_files,
                              world_size,
                              rank,
@@ -70,30 +71,39 @@ def load_dataset_and_sampler(conf,
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
 
+    # ======================================================== #
     # parse intputs
-
-    # file names
+    
+    # upper air variables
     varname_upper_air = conf['data']['variables']
-
+    
     if ('forcing_variables' in conf['data']) and (len(conf['data']['forcing_variables']) > 0):
         forcing_files = conf['data']['save_loc_forcing']
         varname_forcing = conf['data']['forcing_variables']
     else:
         forcing_files = None
         varname_forcing = None
-
+        
     if ('static_variables' in conf['data']) and (len(conf['data']['static_variables']) > 0):
         static_files = conf['data']['save_loc_static']
         varname_static = conf['data']['static_variables']
     else:
         static_files = None
         varname_static = None
-
+    
+    # get surface variable names
     if surface_files is not None:
         varname_surface = conf['data']['surface_variables']
     else:
         varname_surface = None
-
+    
+    # get dynamic forcing variable names
+    if dyn_forcing_files is not None:
+        varname_dyn_forcing = conf['data']['dynamic_forcing_variables']
+    else:
+        varname_dyn_forcing = None
+    
+    # get diagnostic variable names
     if diagnostic_files is not None:
         varname_diagnostic = conf['data']['diagnostic_variables']
     else:
@@ -142,11 +152,13 @@ def load_dataset_and_sampler(conf,
     dataset = DistributedSequentialDataset(
         varname_upper_air=varname_upper_air,
         varname_surface=varname_surface,
+        varname_dyn_forcing=varname_dyn_forcing,
         varname_forcing=varname_forcing,
         varname_static=varname_static,
         varname_diagnostic=varname_diagnostic,
         filenames=all_ERA_files,
         filename_surface=surface_files,
+        filename_dyn_forcing=dyn_forcing_files,
         filename_forcing=forcing_files,
         filename_static=static_files,
         filename_diagnostic=diagnostic_files,
@@ -160,7 +172,7 @@ def load_dataset_and_sampler(conf,
         shuffle=shuffle,
         num_workers=num_workers
     )
-
+    
     # Pytorch sampler
     sampler = None
 
@@ -259,14 +271,31 @@ def main(rank, world_size, conf, trial=False):
 
     # <------------------------------------------ std_new
     if conf['data']['scaler_type'] == 'std_new':
-
-        if "save_loc_surface" in conf["data"]:
+    
+        # check and glob surface files
+        if ('surface_variables' in conf['data']) and (len(conf['data']['surface_variables']) > 0):
+            
+            print('collecting surface files')
             surface_files = sorted(glob.glob(conf["data"]["save_loc_surface"]))
+            
         else:
             surface_files = None
-
-        if "save_loc_diagnostic" in conf["data"]:
+    
+        # check and glob dyn forcing files
+        if ('dynamic_forcing_variables' in conf['data']) and (len(conf['data']['dynamic_forcing_variables']) > 0):
+    
+            print('collecting dynamic forcing files')
+            dyn_forcing_files = sorted(glob.glob(conf["data"]["save_loc_dynamic_forcing"]))
+            
+        else:
+            dyn_forcing_files = None
+    
+        # check and glob diagnostic files
+        if ('diagnostic_variables' in conf['data']) and (len(conf['data']['diagnostic_variables']) > 0):
+    
+            print('collecting diagnostic files')
             diagnostic_files = sorted(glob.glob(conf["data"]["save_loc_diagnostic"]))
+            
         else:
             diagnostic_files = None
 
@@ -290,15 +319,54 @@ def main(rank, world_size, conf, trial=False):
     # Filter the files for training / validation
     train_files = [file for file in all_ERA_files if any(year in file for year in train_years)]
     valid_files = [file for file in all_ERA_files if any(year in file for year in valid_years)]
-
+    
     # <----------------------------------- std_new
     if conf['data']['scaler_type'] == 'std_new':
-        train_surface_files = [file for file in surface_files if any(year in file for year in train_years)]
-        valid_surface_files = [file for file in surface_files if any(year in file for year in valid_years)]
-
+        
+        if surface_files is not None:
+            
+            train_surface_files = [file for file in surface_files if any(year in file for year in train_years)]
+            valid_surface_files = [file for file in surface_files if any(year in file for year in valid_years)]
+    
+            # ---------------------------- #
+            # check total number of files
+            assert len(train_surface_files) == len(train_files), \
+            'Mismatch between the total number of training set [surface files] and [upper-air files]'
+            assert len(valid_surface_files) == len(valid_files), \
+            'Mismatch between the total number of validation set [surface files] and [upper-air files]'
+        
+        else:
+            train_surface_files = None
+            valid_surface_files = None
+    
+        if dyn_forcing_files is not None:
+            
+            train_dyn_forcing_files = [file for file in dyn_forcing_files if any(year in file for year in train_years)]
+            valid_dyn_forcing_files = [file for file in dyn_forcing_files if any(year in file for year in valid_years)]
+    
+            # ---------------------------- #
+            # check total number of files
+            assert len(train_dyn_forcing_files) == len(train_files), \
+            'Mismatch between the total number of training set [dynamic forcing files] and [upper-air files]'
+            assert len(valid_dyn_forcing_files) == len(valid_files), \
+            'Mismatch between the total number of validation set [dynamic forcing files] and [upper-air files]'
+        
+        else:
+            train_dyn_forcing_files = None
+            valid_dyn_forcing_files = None
+            
         if diagnostic_files is not None:
+            
             train_diagnostic_files = [file for file in diagnostic_files if any(year in file for year in train_years)]
             valid_diagnostic_files = [file for file in diagnostic_files if any(year in file for year in valid_years)]
+    
+            # ---------------------------- #
+            # check total number of files
+            assert len(train_diagnostic_files) == len(train_files), \
+            'Mismatch between the total number of training set [diagnostic files] and [upper-air files]'
+            assert len(valid_diagnostic_files) == len(valid_files), \
+            'Mismatch between the total number of validation set [diagnostic files] and [upper-air files]'
+        
         else:
             train_diagnostic_files = None
             valid_diagnostic_files = None
@@ -307,12 +375,14 @@ def main(rank, world_size, conf, trial=False):
     train_dataset, train_sampler = load_dataset_and_sampler(conf,
                                                             train_files,
                                                             train_surface_files,
+                                                            train_dyn_forcing_files,
                                                             train_diagnostic_files,
                                                             world_size, rank, is_train=True)
     # validation set and sampler
     valid_dataset, valid_sampler = load_dataset_and_sampler(conf,
                                                             valid_files,
                                                             valid_surface_files,
+                                                            valid_dyn_forcing_files,
                                                             valid_diagnostic_files,
                                                             world_size, rank, is_train=False)
 
