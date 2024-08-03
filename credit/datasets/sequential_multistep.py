@@ -560,7 +560,8 @@ class DistributedSequentialDatasetBasic(DistributedSequentialDataset):
                 
                 # get the next forecast step
                 target_ERA5_images = ERA5_subset.isel(
-                    time=slice(history_len, history_len+skip_periods, skip_periods)).load() # <-- load into memory
+                    time=slice(self.history_len, self.history_len+self.skip_periods, self.skip_periods)
+                ).load() # <-- load into memory
                 
                 ## merge diagnoisc input here:
                 if diagnostic_files:
@@ -571,7 +572,7 @@ class DistributedSequentialDatasetBasic(DistributedSequentialDataset):
                     
                     # get the next forecast step
                     diagnostic_subset = diagnostic_subset.isel(
-                        time=slice(history_len, history_len+skip_periods, skip_periods)).load() # <-- load into memory
+                        time=slice(self.history_len, self.history_len+self.skip_periods, self.skip_periods)).load() # <-- load into memory
                     
                     # merge into the target dataset
                     target_ERA5_images = target_ERA5_images.merge(diagnostic_subset)
