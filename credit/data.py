@@ -141,23 +141,6 @@ class CheckForBadData():
                 raise ValueError(f'\n{attr_name} has negative values at {image.time.values}')
         return sample
 
-
-# class NormalizeState():
-#     def __init__(self, mean_file, std_file):
-#         self.mean_ds = xr.open_dataset(mean_file)
-#         self.std_ds = xr.open_dataset(std_file)
-
-#     def __call__(self, sample: Sample) -> Sample:
-#         normalized_sample = {}
-#         for key, value in sample.items():
-#             if isinstance(value, xr.Dataset):
-#                 #key_change = key
-#                 #value_change = (value - self.mean_ds)/self.std_ds
-#                 #sample[key]=value_change
-#                 normalized_sample[key] = (value - self.mean_ds) / self.std_ds
-#         return normalized_sample
-
-
 class Segment(NamedTuple):
     """Represents the start and end indicies of a segment of contiguous samples."""
     start: int
@@ -191,76 +174,6 @@ def get_contiguous_segments(dt_index: pd.DatetimeIndex, min_timesteps: int, max_
         start_i = end_i
 
     return segments
-
-
-# def get_zarr_chunk_sequences(
-#         n_chunks_per_disk_load: int,
-#         zarr_chunk_boundaries: Iterable[int],
-#         contiguous_segments: Iterable[Segment]
-# ) -> Iterable[Segment]:
-#     """
-
-#     Args:
-#       n_chunks_per_disk_load: Maximum number of Zarr chunks to load from disk in one go.
-#       zarr_chunk_boundaries: The indicies into the Zarr store's time dimension which define the Zarr chunk boundaries.
-#         Must be sorted.
-#       contiguous_segments: Indicies into the Zarr store's time dimension that define contiguous timeseries.
-#         That is, timeseries with no gaps.
-
-#     Returns zarr_chunk_sequences: a list of Segments representing the start and end indicies of contiguous sequences of multiple Zarr chunks,
-#     all exactly n_chunks_per_disk_load long (for contiguous segments at least as long as n_chunks_per_disk_load zarr chunks),
-#     and at least one side of the boundary will lie on a 'natural' Zarr chunk boundary.
-
-#     For example, say that n_chunks_per_disk_load = 3, and the Zarr chunks sizes are all 5:
-
-
-#                   0    5   10   15   20   25   30   35
-#                   |....|....|....|....|....|....|....|
-
-#     INPUTS:
-#                      |------CONTIGUOUS SEGMENT----|
-
-#     zarr_chunk_boundaries:
-#                   |----|----|----|----|----|----|----|
-
-#     OUTPUT:
-#     zarr_chunk_sequences:
-#            3 to 15:  |-|----|----|
-#            5 to 20:    |----|----|----|
-#           10 to 25:         |----|----|----|
-#           15 to 30:              |----|----|----|
-#           20 to 32:                   |----|----|-|
-
-#     """
-#     assert n_chunks_per_disk_load > 0
-
-#     zarr_chunk_sequences = []
-
-#     for contig_segment in contiguous_segments:
-#         # searchsorted() returns the index into zarr_chunk_boundaries at which contig_segment.start
-#         # should be inserted into zarr_chunk_boundaries to maintain a sorted list.
-#         # i_of_first_zarr_chunk is the index to the element in zarr_chunk_boundaries which defines
-#         # the start of the current contig chunk.
-#         i_of_first_zarr_chunk = np.searchsorted(zarr_chunk_boundaries, contig_segment.start)
-
-#         # i_of_first_zarr_chunk will be too large by 1 unless contig_segment.start lies
-#         # exactly on a Zarr chunk boundary.  Hence we must subtract 1, or else we'll
-#         # end up with the first contig_chunk being 1 + n_chunks_per_disk_load chunks long.
-#         if zarr_chunk_boundaries[i_of_first_zarr_chunk] > contig_segment.start:
-#             i_of_first_zarr_chunk -= 1
-
-#         # Prepare for looping to create multiple Zarr chunk sequences for the current contig_segment.
-#         zarr_chunk_seq_start_i = contig_segment.start
-#         zarr_chunk_seq_end_i = None  # Just a convenience to allow us to break the while loop by checking if zarr_chunk_seq_end_i != contig_segment.end.
-#         while zarr_chunk_seq_end_i != contig_segment.end:
-#             zarr_chunk_seq_end_i = zarr_chunk_boundaries[i_of_first_zarr_chunk + n_chunks_per_disk_load]
-#             zarr_chunk_seq_end_i = min(zarr_chunk_seq_end_i, contig_segment.end)
-#             zarr_chunk_sequences.append(Segment(start=zarr_chunk_seq_start_i, end=zarr_chunk_seq_end_i))
-#             i_of_first_zarr_chunk += 1
-#             zarr_chunk_seq_start_i = zarr_chunk_boundaries[i_of_first_zarr_chunk]
-
-#     return zarr_chunk_sequences
-
 
 def flatten_list(list_of_lists):
     """
@@ -629,6 +542,7 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
             # merge
             historical_ERA5_images = historical_ERA5_images.merge(forcing_subset_input)
 
+        # ========================================================================== #
         # merge static inputs
         if self.xarray_static:
             # expand static var on time dim
