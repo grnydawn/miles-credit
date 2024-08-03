@@ -92,7 +92,7 @@ def reshape_only(x1):
 def get_forward_data(filename) -> xr.DataArray:
     '''
     Check nc vs. zarr files
-    open file as xe.Dataset
+    open file as xr.Dataset
     '''
     if filename[-3:] == '.nc' or filename[-4:] == '.nc4':
         dataset = xr.open_dataset(filename)
@@ -120,31 +120,31 @@ class Sample(TypedDict):
     datetime_index: Array
 
 
-@dataclass
-class Reshape_Data():
-    size: int = 128  #: Size of the cropped image.
+# @dataclass
+# class Reshape_Data():
+#     size: int = 128  #: Size of the cropped image.
 
-    def __call__(self, sample: Sample) -> Sample:
-        for attr_name in IMAGE_ATTR_NAMES:
-            image = sample[attr_name]
-            # TODO: Random crop!
-            cropped_image = image[..., :self.size, :self.size]
-            sample[attr_name] = cropped_image
-        return sample
+#     def __call__(self, sample: Sample) -> Sample:
+#         for attr_name in IMAGE_ATTR_NAMES:
+#             image = sample[attr_name]
+#             # TODO: Random crop!
+#             cropped_image = image[..., :self.size, :self.size]
+#             sample[attr_name] = cropped_image
+#         return sample
 
 
-class CheckForBadData():
-    def __call__(self, sample: Sample) -> Sample:
-        for attr_name in IMAGE_ATTR_NAMES:
-            image = sample[attr_name]
-            if np.any(image < 0):
-                raise ValueError(f'\n{attr_name} has negative values at {image.time.values}')
-        return sample
+# class CheckForBadData():
+#     def __call__(self, sample: Sample) -> Sample:
+#         for attr_name in IMAGE_ATTR_NAMES:
+#             image = sample[attr_name]
+#             if np.any(image < 0):
+#                 raise ValueError(f'\n{attr_name} has negative values at {image.time.values}')
+#         return sample
 
-class Segment(NamedTuple):
-    """Represents the start and end indicies of a segment of contiguous samples."""
-    start: int
-    end: int
+# class Segment(NamedTuple):
+#     """Represents the start and end indicies of a segment of contiguous samples."""
+#     start: int
+#     end: int
 
 
 def get_contiguous_segments(dt_index: pd.DatetimeIndex, min_timesteps: int, max_gap: pd.Timedelta) -> Iterable[Segment]:
@@ -885,7 +885,10 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
                 
                 if output_dict['stop_forecast']:
                     break
-
+                    
+# ========================================= #
+# This dataset works for hourly model only
+# ========================================= #
 class ERA5Dataset(torch.utils.data.Dataset):
 
     def __init__(
@@ -992,128 +995,130 @@ class ERA5Dataset(torch.utils.data.Dataset):
 
         return sample
 
+# ======================================= #
+# This dataset is replaced by ERA5Dataset
+# ======================================= #
+# class ERA5(torch.utils.data.Dataset):
 
-class ERA5(torch.utils.data.Dataset):
+#     def __init__(
+#             self,
+#             filenames: list = ['/glade/derecho/scratch/wchapman/STAGING/TOTAL_2012-01-01_2012-12-31_staged.zarr',
+#                                '/glade/derecho/scratch/wchapman/STAGING/TOTAL_2013-01-01_2013-12-31_staged.zarr'],
+#             history_len: int = 1,
+#             forecast_len: int = 2,
+#             transform: Optional[Callable] = None,
+#             seed=42,
+#             skip_periods=None,
+#             one_shot=None,
+#             max_forecast_len=None
+#     ):
+#         self.history_len = history_len
+#         self.forecast_len = forecast_len
+#         self.transform = transform
+#         self.skip_periods = skip_periods
+#         self.one_shot = one_shot
+#         self.total_seq_len = self.history_len + self.forecast_len
+#         all_fils = []
+#         filenames = sorted(filenames)
+#         for fn in filenames:
+#             all_fils.append(get_forward_data(filename=fn))
+#         self.all_fils = all_fils
+#         self.data_array = all_fils[0]
+#         self.rng = np.random.default_rng(seed=seed)
+#         self.max_forecast_len = max_forecast_len
 
-    def __init__(
-            self,
-            filenames: list = ['/glade/derecho/scratch/wchapman/STAGING/TOTAL_2012-01-01_2012-12-31_staged.zarr',
-                               '/glade/derecho/scratch/wchapman/STAGING/TOTAL_2013-01-01_2013-12-31_staged.zarr'],
-            history_len: int = 1,
-            forecast_len: int = 2,
-            transform: Optional[Callable] = None,
-            seed=42,
-            skip_periods=None,
-            one_shot=None,
-            max_forecast_len=None
-    ):
-        self.history_len = history_len
-        self.forecast_len = forecast_len
-        self.transform = transform
-        self.skip_periods = skip_periods
-        self.one_shot = one_shot
-        self.total_seq_len = self.history_len + self.forecast_len
-        all_fils = []
-        filenames = sorted(filenames)
-        for fn in filenames:
-            all_fils.append(get_forward_data(filename=fn))
-        self.all_fils = all_fils
-        self.data_array = all_fils[0]
-        self.rng = np.random.default_rng(seed=seed)
-        self.max_forecast_len = max_forecast_len
+#         # set data places:
+#         indo = 0
+#         self.meta_data_dict = {}
+#         for ee, bb in enumerate(self.all_fils):
+#             self.meta_data_dict[str(ee)] = [len(bb['time']), indo, indo + len(bb['time'])]
+#             indo += len(bb['time']) + 1
 
-        # set data places:
-        indo = 0
-        self.meta_data_dict = {}
-        for ee, bb in enumerate(self.all_fils):
-            self.meta_data_dict[str(ee)] = [len(bb['time']), indo, indo + len(bb['time'])]
-            indo += len(bb['time']) + 1
+#         # set out of bounds indexes...
+#         OOB = []
+#         for kk in self.meta_data_dict.keys():
+#             OOB.append(generate_integer_list_around(self.meta_data_dict[kk][2]))
+#         self.OOB = flatten_list(OOB)
 
-        # set out of bounds indexes...
-        OOB = []
-        for kk in self.meta_data_dict.keys():
-            OOB.append(generate_integer_list_around(self.meta_data_dict[kk][2]))
-        self.OOB = flatten_list(OOB)
+#     def __post_init__(self):
+#         # Total sequence length of each sample.
+#         self.total_seq_len = self.history_len + self.forecast_len
 
-    def __post_init__(self):
-        # Total sequence length of each sample.
-        self.total_seq_len = self.history_len + self.forecast_len
+#     def __len__(self):
+#         tlen = 0
+#         for bb in self.all_fils:
+#             tlen += len(bb['time']) - self.total_seq_len + 1
+#         return tlen
 
-    def __len__(self):
-        tlen = 0
-        for bb in self.all_fils:
-            tlen += len(bb['time']) - self.total_seq_len + 1
-        return tlen
+#     def update_forecast_len(self, new_forecast_len):
+#         """Update the forecast length and recompute dependent attributes."""
+#         self.forecast_len = new_forecast_len
+#         self.total_seq_len = self.history_len + self.forecast_len
 
-    def update_forecast_len(self, new_forecast_len):
-        """Update the forecast length and recompute dependent attributes."""
-        self.forecast_len = new_forecast_len
-        self.total_seq_len = self.history_len + self.forecast_len
+#     def __getitem__(self, index):
 
-    def __getitem__(self, index):
+#         # Update forecast_len if needed
+#         if isinstance(self.max_forecast_len, int):
+#             self._forecast_len = self.forecast_len
+#             std_dev = 1.0
+#             new_len = int(np.random.normal(loc=self._forecast_len, scale=std_dev, size=1))
+#             new_len = np.clip(new_len, 1, 120)
+#             self.update_forecast_len(new_len)
 
-        # Update forecast_len if needed
-        if isinstance(self.max_forecast_len, int):
-            self._forecast_len = self.forecast_len
-            std_dev = 1.0
-            new_len = int(np.random.normal(loc=self._forecast_len, scale=std_dev, size=1))
-            new_len = np.clip(new_len, 1, 120)
-            self.update_forecast_len(new_len)
+#         # find the result key:
+#         result_key = find_key_for_number(index, self.meta_data_dict)
+#         # get the data selection:
+#         true_ind = index - self.meta_data_dict[result_key][1]
 
-        # find the result key:
-        result_key = find_key_for_number(index, self.meta_data_dict)
-        # get the data selection:
-        true_ind = index - self.meta_data_dict[result_key][1]
+#         if true_ind > (len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 1)):
+#             true_ind = len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 1)
 
-        if true_ind > (len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 1)):
-            true_ind = len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 1)
+#         datasel = self.all_fils[int(result_key)].isel(
+#             time=slice(true_ind, true_ind + self.history_len + self.forecast_len + 1))
 
-        datasel = self.all_fils[int(result_key)].isel(
-            time=slice(true_ind, true_ind + self.history_len + self.forecast_len + 1))
+#         if (self.skip_periods is not None) and (self.one_shot is None):
+#             sample = Sample(
+#                 historical_ERA5_images=datasel.isel(time=slice(0, self.history_len, self.skip_periods)),
+#                 target_ERA5_images=datasel.isel(time=slice(self.history_len, len(datasel['time']), self.skip_periods)),
+#                 datetime_index=datasel.time.values.astype('datetime64[s]').astype(int)
+#             )
 
-        if (self.skip_periods is not None) and (self.one_shot is None):
-            sample = Sample(
-                historical_ERA5_images=datasel.isel(time=slice(0, self.history_len, self.skip_periods)),
-                target_ERA5_images=datasel.isel(time=slice(self.history_len, len(datasel['time']), self.skip_periods)),
-                datetime_index=datasel.time.values.astype('datetime64[s]').astype(int)
-            )
+#         elif (self.skip_periods is not None) and (self.one_shot is not None):
+#             target_ERA5_images = datasel.isel(time=slice(self.history_len, len(datasel['time']), self.skip_periods))
+#             target_ERA5_images = target_ERA5_images.isel(time=slice(0, 1))
 
-        elif (self.skip_periods is not None) and (self.one_shot is not None):
-            target_ERA5_images = datasel.isel(time=slice(self.history_len, len(datasel['time']), self.skip_periods))
-            target_ERA5_images = target_ERA5_images.isel(time=slice(0, 1))
+#             sample = Sample(
+#                 historical_ERA5_images=datasel.isel(time=slice(0, self.history_len, self.skip_periods)),
+#                 target_ERA5_images=target_ERA5_images,
+#                 datetime_index=datasel.time.values.astype('datetime64[s]').astype(int)
+#             )
 
-            sample = Sample(
-                historical_ERA5_images=datasel.isel(time=slice(0, self.history_len, self.skip_periods)),
-                target_ERA5_images=target_ERA5_images,
-                datetime_index=datasel.time.values.astype('datetime64[s]').astype(int)
-            )
+#         elif self.one_shot is not None:
+#             historical_data = datasel.isel(time=slice(0, self.history_len)).load()
+#             target_data = datasel.isel(time=slice(-1, None)).load()
+#             sample = Sample(
+#                 historical_ERA5_images=historical_data,
+#                 target_ERA5_images=target_data,
+#                 datetime_index=[int(historical_data.time.values[0].astype('datetime64[s]').astype(int)),
+#                                 int(target_data.time.values[0].astype('datetime64[s]').astype(int))]
+#             )
+#         else:
+#             sample = Sample(
+#                 historical_ERA5_images=datasel.isel(time=slice(0, self.history_len)),
+#                 target_ERA5_images=datasel.isel(time=slice(self.history_len, len(datasel['time']))),
+#                 datetime_index=datasel.time.values.astype('datetime64[s]').astype(int)
+#             )
 
-        elif self.one_shot is not None:
-            historical_data = datasel.isel(time=slice(0, self.history_len)).load()
-            target_data = datasel.isel(time=slice(-1, None)).load()
-            sample = Sample(
-                historical_ERA5_images=historical_data,
-                target_ERA5_images=target_data,
-                datetime_index=[int(historical_data.time.values[0].astype('datetime64[s]').astype(int)),
-                                int(target_data.time.values[0].astype('datetime64[s]').astype(int))]
-            )
-        else:
-            sample = Sample(
-                historical_ERA5_images=datasel.isel(time=slice(0, self.history_len)),
-                target_ERA5_images=datasel.isel(time=slice(self.history_len, len(datasel['time']))),
-                datetime_index=datasel.time.values.astype('datetime64[s]').astype(int)
-            )
+#         if self.transform:
+#             sample = self.transform(sample)
 
-        if self.transform:
-            sample = self.transform(sample)
+#         sample["index"] = index
 
-        sample["index"] = index
+#         if isinstance(self.max_forecast_len, int):
+#             sample["forecast_hour"] = self.forecast_len
+#             self.forecast_len = self._forecast_len
 
-        if isinstance(self.max_forecast_len, int):
-            sample["forecast_hour"] = self.forecast_len
-            self.forecast_len = self._forecast_len
-
-        return sample
+#         return sample
 
 # Note: DistributedSequentialDataset & DistributedSequentialDataset
 # are legacy; they wrap ERA5Dataset to send data batches to GPUs for
@@ -1356,565 +1361,574 @@ class SequentialDataset(torch.utils.data.Dataset):
 
         return sample
 
-
-class DistributedSequentialDataset(torch.utils.data.IterableDataset):
-    # https://colab.research.google.com/drive/1OFLZnX9y5QUFNONuvFsxOizq4M-tFvk-?usp=sharing#scrollTo=CxSCQPOMHgwo
-
-    def __init__(self, filenames, history_len, forecast_len, skip_periods, rank, world_size, shuffle=False,
-                 transform=None, rollout_p=0.0):
-
-        self.dataset = ERA5Dataset(
-            filenames=filenames,
-            history_len=history_len,
-            forecast_len=forecast_len,
-            skip_periods=skip_periods,
-            transform=transform
-        )
-        self.meta_data_dict = self.dataset.meta_data_dict
-        self.all_fils = self.dataset.all_fils
-        self.history_len = history_len
-        self.forecast_len = forecast_len
-        self.filenames = filenames
-        self.transform = transform
-        self.rank = rank
-        self.world_size = world_size
-        self.shuffle = shuffle
-        self.skip_periods = skip_periods
-        self.current_epoch = 0
-        self.rollout_p = rollout_p
-
-    def __len__(self):
-        tlen = 0
-        for bb in self.all_fils:
-            tlen += (len(bb['time']) - self.forecast_len)
-        return tlen
-
-    def set_epoch(self, epoch):
-        self.current_epoch = epoch
-
-    def set_rollout_prob(self, p):
-        self.rollout_p = p
-
-    def __iter__(self):
-        worker_info = get_worker_info()
-        num_workers = worker_info.num_workers if worker_info is not None else 1
-        worker_id = worker_info.id if worker_info is not None else 0
-        sampler = DistributedSampler(self, num_replicas=num_workers * self.world_size,
-                                     rank=self.rank * num_workers + worker_id, shuffle=self.shuffle)
-        sampler.set_epoch(self.current_epoch)
-
-        for index in iter(sampler):
-            result_key = find_key_for_number(index, self.meta_data_dict)
-            true_ind = index - self.meta_data_dict[result_key][1]
-
-            if true_ind > (len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 1)):
-                true_ind = len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 3)
-
-            indices = list(range(true_ind, true_ind + self.history_len + self.forecast_len))
-            stop_forecast = False
-
-            for k, ind in enumerate(indices):
-
-                concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': [], "static": [], "TOA": []}
-                sliced = xr.open_zarr(self.filenames[int(result_key)], consolidated=True).isel(
-                    time=slice(ind, ind + self.history_len + self.forecast_len + 1, self.skip_periods))
-                sample = {
-                    'x': sliced.isel(time=slice(k, k + self.history_len, 1)),
-                    'y': sliced.isel(time=slice(k + self.history_len, k + self.history_len + 1, 1)),
-                    't': sliced.time.values.astype('datetime64[s]').astype(int),
-                }
-
-                if self.transform:
-                    sample = self.transform(sample)
-
-                for key in concatenated_samples.keys():
-                    concatenated_samples[key] = sample[key].squeeze()
-
-                stop_forecast = (torch.rand(1).item() < self.rollout_p)
-                stop_forecast = stop_forecast or (k == self.forecast_len)
-
-                concatenated_samples['forecast_hour'] = k
-                concatenated_samples['index'] = index
-                concatenated_samples['stop_forecast'] = stop_forecast
-
-                yield concatenated_samples
-
-                if stop_forecast:
-                    break
-
-                if (k == self.forecast_len):
-                    break
-
-
-class PredictForecast(torch.utils.data.IterableDataset):
-    def __init__(self,
-                 filenames,
-                 forecasts,
-                 history_len,
-                 forecast_len,
-                 skip_periods,
-                 rank,
-                 world_size,
-                 shuffle=False,
-                 transform=None,
-                 rollout_p=0.0,
-                 start_time=None,
-                 stop_time=None,
-                 which_forecast=None):
-
-        self.dataset = ERA5Dataset(
-            filenames=filenames,
-            history_len=history_len,
-            forecast_len=forecast_len,
-            skip_periods=skip_periods,
-            transform=transform
-        )
-        self.meta_data_dict = self.dataset.meta_data_dict
-        self.all_files = self.dataset.all_fils
-        self.history_len = history_len
-        self.forecast_len = forecast_len
-        self.filenames = filenames
-        self.transform = transform
-        self.rank = rank
-        self.world_size = world_size
-        self.shuffle = shuffle
-        self.skip_periods = skip_periods
-        self.current_epoch = 0
-        self.rollout_p = rollout_p
-        self.forecasts = forecasts
-        self.skip_periods = skip_periods if skip_periods is not None else 1
-        self.which_forecast = which_forecast
-
-    def find_start_stop_indices(self, index):
-        start_time = self.forecasts[index][0]
-        date_object = datetime.datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
-        shifted_hours = self.skip_periods * self.history_len
-        date_object = date_object - datetime.timedelta(hours=shifted_hours)
-        self.forecasts[index][0] = date_object.strftime('%Y-%m-%d %H:%M:%S')
-
-        datetime_objs = [np.datetime64(date) for date in self.forecasts[index]]
-        start_time, stop_time = [str(datetime_obj) + '.000000000' for datetime_obj in datetime_objs]
-        self.start_time = np.datetime64(start_time).astype(datetime.datetime)
-        self.stop_time = np.datetime64(stop_time).astype(datetime.datetime)
-
-        info = {}
-
-        for idx, dataset in enumerate(self.all_files):
-            start_time = np.datetime64(dataset['time'].min().values).astype(datetime.datetime)
-            stop_time = np.datetime64(dataset['time'].max().values).astype(datetime.datetime)
-            track_start = False
-            track_stop = False
-
-            if start_time <= self.start_time <= stop_time:
-                # Start time is in this file, use start time index
-                dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
-                start_idx = np.searchsorted(dataset, self.start_time)
-                start_idx = max(0, min(start_idx, len(dataset) - 1))
-                track_start = True
-
-            elif start_time < self.stop_time and stop_time > self.start_time:
-                # File overlaps time range, use full file
-                start_idx = 0
-                track_start = True
-
-            if start_time <= self.stop_time <= stop_time:
-                # Stop time is in this file, use stop time index
-                if isinstance(dataset, np.ndarray):
-                    pass
-                else:
-                    dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
-                stop_idx = np.searchsorted(dataset, self.stop_time)
-                stop_idx = max(0, min(stop_idx, len(dataset) - 1))
-                track_stop = True
-
-            elif start_time < self.stop_time and stop_time > self.start_time:
-                # File overlaps time range, use full file
-                stop_idx = len(dataset) - 1
-                track_stop = True
-
-            # Only include files that overlap the time range
-            if track_start and track_stop:
-                info[idx] = ((idx, start_idx), (idx, stop_idx))
-
-        indices = []
-        for dataset_idx, (start, stop) in info.items():
-            for i in range(start[1], stop[1] + 1):
-                indices.append((start[0], i))
-        return indices
-
-    def __len__(self):
-        return len(self.forecasts)
-
-    def __iter__(self):
-        worker_info = get_worker_info()
-        num_workers = worker_info.num_workers if worker_info is not None else 1
-        worker_id = worker_info.id if worker_info is not None else 0
-        sampler = DistributedSampler(self, num_replicas=num_workers * self.world_size,
-                                     rank=self.rank * num_workers + worker_id, shuffle=self.shuffle)
-
-        for index in sampler:
-
-            data_lookup = self.find_start_stop_indices(index)
-
-            for k, (file_key, time_key) in enumerate(data_lookup):
-                concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
-                sliced_x = xr.open_zarr(self.filenames[file_key], consolidated=True).isel(
-                    time=slice(time_key, time_key + self.history_len + 1))
-
-                # Check if additional data from the next file is needed
-                if len(sliced_x['time']) < self.history_len + 1:
-                    # Load excess data from the next file
-                    next_file_idx = self.filenames.index(self.filenames[file_key]) + 1
-                    if next_file_idx == len(self.filenames):
-                        raise OSError("You have reached the end of the available data. Exiting.")
-                    sliced_x_next = xr.open_zarr(
-                        self.filenames[next_file_idx],
-                        consolidated=True).isel(time=slice(0, self.history_len + 1 - len(sliced_x['time'])))
-
-                    # Concatenate excess data from the next file with the current data
-                    sliced_x = xr.concat([sliced_x, sliced_x_next], dim='time')
-
-                sample_x = {
-                    'x': sliced_x.isel(time=slice(0, self.history_len)),
-                    'y': sliced_x.isel(time=slice(self.history_len, self.history_len + 1))  # Fetch y data for t(i+1)
-                }
-
-                if self.transform:
-                    sample_x = self.transform(sample_x)
-                    # Add static vars, if any, to the return dictionary
-                    if "static" in sample_x:
-                        concatenated_samples["static"] = []
-                    if "TOA" in sample_x:
-                        concatenated_samples["TOA"] = []
-
-                for key in concatenated_samples.keys():
-                    concatenated_samples[key] = sample_x[key].squeeze(0) if self.history_len == 1 else sample_x[key]
-
-                concatenated_samples['forecast_hour'] = k + 1
-                concatenated_samples['stop_forecast'] = (
-                            k == (len(data_lookup) - self.history_len - 1))  # Adjust stopping condition
-                concatenated_samples['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[-1]
-
-                yield concatenated_samples
-
-                if concatenated_samples['stop_forecast']:
-                    break
-
-
-class PredictForecastRollout(torch.utils.data.IterableDataset):
-    def __init__(self,
-                 filenames,
-                 forecasts,
-                 history_len,
-                 forecast_len,
-                 skip_periods,
-                 rank,
-                 world_size,
-                 shuffle=False,
-                 transform=None,
-                 rollout_p=0.0,
-                 start_time=None,
-                 stop_time=None,
-                 which_forecast=None):
-
-        self.dataset = ERA5Dataset(
-            filenames=filenames,
-            history_len=history_len,
-            forecast_len=forecast_len,
-            skip_periods=skip_periods,
-            transform=transform
-        )
-        self.meta_data_dict = self.dataset.meta_data_dict
-        self.all_files = self.dataset.all_fils
-        self.history_len = history_len
-        self.forecast_len = forecast_len
-        self.filenames = filenames
-        self.transform = transform
-        self.rank = rank
-        self.world_size = world_size
-        self.shuffle = shuffle
-        self.skip_periods = skip_periods
-        self.current_epoch = 0
-        self.rollout_p = rollout_p
-        self.forecasts = forecasts
-        self.skip_periods = skip_periods if skip_periods is not None else 1
-        self.which_forecast = which_forecast
-
-    def find_start_stop_indices(self, index):
-        start_time = self.forecasts[index][0]
-        date_object = datetime.datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
-        shifted_hours = self.skip_periods * self.history_len
-        date_object = date_object - datetime.timedelta(hours=shifted_hours)
-        self.forecasts[index][0] = date_object.strftime('%Y-%m-%d %H:%M:%S')
-
-        datetime_objs = [np.datetime64(date) for date in self.forecasts[index]]
-        start_time, stop_time = [str(datetime_obj) + '.000000000' for datetime_obj in datetime_objs]
-        self.start_time = np.datetime64(start_time).astype(datetime.datetime)
-        self.stop_time = np.datetime64(stop_time).astype(datetime.datetime)
-
-        info = {}
-
-        for idx, dataset in enumerate(self.all_files):
-            start_time = np.datetime64(dataset['time'].min().values).astype(datetime.datetime)
-            stop_time = np.datetime64(dataset['time'].max().values).astype(datetime.datetime)
-            track_start = False
-            track_stop = False
-
-            if start_time <= self.start_time <= stop_time:
-                # Start time is in this file, use start time index
-                dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
-                start_idx = np.searchsorted(dataset, self.start_time)
-                start_idx = max(0, min(start_idx, len(dataset) - 1))
-                track_start = True
-
-            elif start_time < self.stop_time and stop_time > self.start_time:
-                # File overlaps time range, use full file
-                start_idx = 0
-                track_start = True
-
-            if start_time <= self.stop_time <= stop_time:
-                # Stop time is in this file, use stop time index
-                if isinstance(dataset, np.ndarray):
-                    pass
-                else:
-                    dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
-                stop_idx = np.searchsorted(dataset, self.stop_time)
-                stop_idx = max(0, min(stop_idx, len(dataset) - 1))
-                track_stop = True
-
-            elif start_time < self.stop_time and stop_time > self.start_time:
-                # File overlaps time range, use full file
-                stop_idx = len(dataset) - 1
-                track_stop = True
-
-            # Only include files that overlap the time range
-            if track_start and track_stop:
-                info[idx] = ((idx, start_idx), (idx, stop_idx))
-
-        indices = []
-        for dataset_idx, (start, stop) in info.items():
-            for i in range(start[1], stop[1] + 1):
-                indices.append((start[0], i))
-        return indices
-
-    def __len__(self):
-        return len(self.forecasts)
-
-    def __iter__(self):
-        worker_info = get_worker_info()
-        num_workers = worker_info.num_workers if worker_info is not None else 1
-        worker_id = worker_info.id if worker_info is not None else 0
-        sampler = DistributedSampler(self, num_replicas=num_workers * self.world_size,
-                                     rank=self.rank * num_workers + worker_id, shuffle=self.shuffle)
-
-        for index in sampler:
-
-            data_lookup = self.find_start_stop_indices(index)
-
-            for k, (file_key, time_key) in enumerate(data_lookup):
-                concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
-                sliced_x = xr.open_zarr(self.filenames[file_key], consolidated=True).isel(
-                    time=slice(time_key, time_key + self.history_len + 1))
-
-                # Check if additional data from the next file is needed
-                if len(sliced_x['time']) < self.history_len + 1:
-                    # Load excess data from the next file
-                    next_file_idx = self.filenames.index(self.filenames[file_key]) + 1
-                    if next_file_idx == len(self.filenames):
-                        raise OSError("You have reached the end of the available data. Exiting.")
-                    sliced_x_next = xr.open_zarr(
-                        self.filenames[next_file_idx],
-                        consolidated=True).isel(time=slice(0, self.history_len + 1 - len(sliced_x['time'])))
-
-                    # Concatenate excess data from the next file with the current data
-                    sliced_x = xr.concat([sliced_x, sliced_x_next], dim='time')
-
-                sample_x = {
-                    'x': sliced_x.isel(time=slice(0, self.history_len)),
-                    'y': sliced_x.isel(time=slice(self.history_len, self.history_len + 1))  # Fetch y data for t(i+1)
-                }
-
-                if self.transform:
-                    sample_x = self.transform(sample_x)
-                    # Add static vars, if any, to the return dictionary
-                    if "static" in sample_x:
-                        concatenated_samples["static"] = []
-                    if "TOA" in sample_x:
-                        concatenated_samples["TOA"] = []
-
-                for key in concatenated_samples.keys():
-                    concatenated_samples[key] = sample_x[key].squeeze(0) if self.history_len == 1 else sample_x[key]
-
-                concatenated_samples['forecast_hour'] = k + 1
-                concatenated_samples['stop_forecast'] = (
-                            k == (len(data_lookup) - self.history_len - 1))  # Adjust stopping condition
-                concatenated_samples['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[-1]
-
-                yield concatenated_samples
-
-                break
-
-
-class PredictForecastQuantile(PredictForecast):
-
-    def __init__(self,
-                 conf,
-                 filenames,
-                 forecasts,
-                 history_len,
-                 forecast_len,
-                 skip_periods,
-                 rank,
-                 world_size,
-                 shuffle=False,
-                 transform=None,
-                 rollout_p=0.0,
-                 start_time=None,
-                 stop_time=None):
-
-        from credit.transforms import load_transforms
-
-        transform = load_transforms(conf)
-
-        self.dataset = Dataset_BridgeScaler(
-            conf,
-            conf_dataset='bs_years_test',
-            transform=transform
-        )
-
-        # Need information on the saved files
-        self.all_files = [get_forward_data(filename=fn) for fn in sorted(filenames)]
-        # Set data places:
-        indo = 0
-        self.meta_data_dict = {}
-        for ee, bb in enumerate(self.all_files):
-            self.meta_data_dict[str(ee)] = [len(bb['time']), indo, indo + len(bb['time'])]
-            indo += len(bb['time']) + 1
-
-        self.history_len = history_len
-        self.forecast_len = forecast_len
-        self.filenames = filenames
-        self.transform = transform
-        self.rank = rank
-        self.world_size = world_size
-        self.shuffle = shuffle
-        self.skip_periods = skip_periods
-        self.current_epoch = 0
-        self.rollout_p = rollout_p
-        self.forecasts = forecasts
-        self.skip_periods = skip_periods if skip_periods is not None else 1
-
-    def find_start_stop_indices(self, index):
-        start_time = self.forecasts[index][0]
-        date_object = datetime.datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
-        shifted_hours = self.skip_periods * self.history_len
-        date_object = date_object - datetime.timedelta(hours=shifted_hours)
-        self.forecasts[index][0] = date_object.strftime('%Y-%m-%d %H:%M:%S')
-
-        datetime_objs = [np.datetime64(date) for date in self.forecasts[index]]
-        start_time, stop_time = [str(datetime_obj) + '.000000000' for datetime_obj in datetime_objs]
-        self.start_time = np.datetime64(start_time).astype(datetime.datetime)
-        self.stop_time = np.datetime64(stop_time).astype(datetime.datetime)
-
-        info = {}
-
-        for idx, dataset in enumerate(self.all_files):
-            start_time = np.datetime64(dataset['time'].min().values).astype(datetime.datetime)
-            stop_time = np.datetime64(dataset['time'].max().values).astype(datetime.datetime)
-            track_start = False
-            track_stop = False
-
-            if start_time <= self.start_time <= stop_time:
-                # Start time is in this file, use start time index
-                dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
-                start_idx = np.searchsorted(dataset, self.start_time)
-                start_idx = max(0, min(start_idx, len(dataset) - 1))
-                track_start = True
-
-            elif start_time < self.stop_time and stop_time > self.start_time:
-                # File overlaps time range, use full file
-                start_idx = 0
-                track_start = True
-
-            if start_time <= self.stop_time <= stop_time:
-                # Stop time is in this file, use stop time index
-                if isinstance(dataset, np.ndarray):
-                    pass
-                else:
-                    dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
-                stop_idx = np.searchsorted(dataset, self.stop_time)
-                stop_idx = max(0, min(stop_idx, len(dataset) - 1))
-                track_stop = True
-
-            elif start_time < self.stop_time and stop_time > self.start_time:
-                # File overlaps time range, use full file
-                stop_idx = len(dataset) - 1
-                track_stop = True
-
-            # Only include files that overlap the time range
-            if track_start and track_stop:
-                info[idx] = ((idx, start_idx), (idx, stop_idx))
-
-        indices = []
-        for dataset_idx, (start, stop) in info.items():
-            for i in range(start[1], stop[1] + 1):
-                indices.append((start[0], i))
-        return indices
-
-    def __len__(self):
-        return len(self.forecasts)
-
-    def __iter__(self):
-        worker_info = get_worker_info()
-        num_workers = worker_info.num_workers if worker_info is not None else 1
-        worker_id = worker_info.id if worker_info is not None else 0
-        sampler = DistributedSampler(self, num_replicas=num_workers * self.world_size,
-                                     rank=self.rank * num_workers + worker_id, shuffle=self.shuffle)
-
-        for index in sampler:
-
-            data_lookup = self.find_start_stop_indices(index)
-
-            for k, (file_key, time_key) in enumerate(data_lookup):
-                concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
-                sliced_x = xr.open_zarr(self.filenames[file_key], consolidated=True).isel(
-                    time=slice(time_key, time_key + self.history_len + 1))
-
-                # Check if additional data from the next file is needed
-                if len(sliced_x['time']) < self.history_len + 1:
-                    # Load excess data from the next file
-                    next_file_idx = self.filenames.index(self.filenames[file_key]) + 1
-                    if next_file_idx == len(self.filenames):
-                        raise OSError("You have reached the end of the available data. Exiting.")
-                    sliced_x_next = xr.open_zarr(
-                        self.filenames[next_file_idx],
-                        consolidated=True).isel(time=slice(0, self.history_len + 1 - len(sliced_x['time'])))
-
-                    # Concatenate excess data from the next file with the current data
-                    sliced_x = xr.concat([sliced_x, sliced_x_next], dim='time')
-
-                sample_x = {
-                    'x': sliced_x.isel(time=slice(0, self.history_len)),
-                    'y': sliced_x.isel(time=slice(self.history_len, self.history_len + 1))  # Fetch y data for t(i+1)
-                }
-
-                if self.transform:
-                    sample_x = self.transform(sample_x)
-                    # Add static vars, if any, to the return dictionary
-                    if "static" in sample_x:
-                        concatenated_samples["static"] = []
-                    if "TOA" in sample_x:
-                        concatenated_samples["TOA"] = []
-
-                for key in concatenated_samples.keys():
-                    concatenated_samples[key] = sample_x[key].squeeze(0) if self.history_len == 1 else sample_x[key]
-
-                concatenated_samples['forecast_hour'] = k + 1
-                concatenated_samples['stop_forecast'] = (
-                            k == (len(data_lookup) - self.history_len - 1))  # Adjust stopping condition
-                concatenated_samples['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[-1]
-
-                yield concatenated_samples
-
-                if concatenated_samples['stop_forecast']:
-                    break
+# ============================= #
+# MOVED to train_multistep.py
+# ============================= #
+# class DistributedSequentialDataset(torch.utils.data.IterableDataset):
+#     # https://colab.research.google.com/drive/1OFLZnX9y5QUFNONuvFsxOizq4M-tFvk-?usp=sharing#scrollTo=CxSCQPOMHgwo
+
+#     def __init__(self, filenames, history_len, forecast_len, skip_periods, rank, world_size, shuffle=False,
+#                  transform=None, rollout_p=0.0):
+
+#         self.dataset = ERA5Dataset(
+#             filenames=filenames,
+#             history_len=history_len,
+#             forecast_len=forecast_len,
+#             skip_periods=skip_periods,
+#             transform=transform
+#         )
+#         self.meta_data_dict = self.dataset.meta_data_dict
+#         self.all_fils = self.dataset.all_fils
+#         self.history_len = history_len
+#         self.forecast_len = forecast_len
+#         self.filenames = filenames
+#         self.transform = transform
+#         self.rank = rank
+#         self.world_size = world_size
+#         self.shuffle = shuffle
+#         self.skip_periods = skip_periods
+#         self.current_epoch = 0
+#         self.rollout_p = rollout_p
+
+#     def __len__(self):
+#         tlen = 0
+#         for bb in self.all_fils:
+#             tlen += (len(bb['time']) - self.forecast_len)
+#         return tlen
+
+#     def set_epoch(self, epoch):
+#         self.current_epoch = epoch
+
+#     def set_rollout_prob(self, p):
+#         self.rollout_p = p
+
+#     def __iter__(self):
+#         worker_info = get_worker_info()
+#         num_workers = worker_info.num_workers if worker_info is not None else 1
+#         worker_id = worker_info.id if worker_info is not None else 0
+#         sampler = DistributedSampler(self, num_replicas=num_workers * self.world_size,
+#                                      rank=self.rank * num_workers + worker_id, shuffle=self.shuffle)
+#         sampler.set_epoch(self.current_epoch)
+
+#         for index in iter(sampler):
+#             result_key = find_key_for_number(index, self.meta_data_dict)
+#             true_ind = index - self.meta_data_dict[result_key][1]
+
+#             if true_ind > (len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 1)):
+#                 true_ind = len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 3)
+
+#             indices = list(range(true_ind, true_ind + self.history_len + self.forecast_len))
+#             stop_forecast = False
+
+#             for k, ind in enumerate(indices):
+
+#                 concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': [], "static": [], "TOA": []}
+#                 sliced = xr.open_zarr(self.filenames[int(result_key)], consolidated=True).isel(
+#                     time=slice(ind, ind + self.history_len + self.forecast_len + 1, self.skip_periods))
+#                 sample = {
+#                     'x': sliced.isel(time=slice(k, k + self.history_len, 1)),
+#                     'y': sliced.isel(time=slice(k + self.history_len, k + self.history_len + 1, 1)),
+#                     't': sliced.time.values.astype('datetime64[s]').astype(int),
+#                 }
+
+#                 if self.transform:
+#                     sample = self.transform(sample)
+
+#                 for key in concatenated_samples.keys():
+#                     concatenated_samples[key] = sample[key].squeeze()
+
+#                 stop_forecast = (torch.rand(1).item() < self.rollout_p)
+#                 stop_forecast = stop_forecast or (k == self.forecast_len)
+
+#                 concatenated_samples['forecast_hour'] = k
+#                 concatenated_samples['index'] = index
+#                 concatenated_samples['stop_forecast'] = stop_forecast
+
+#                 yield concatenated_samples
+
+#                 if stop_forecast:
+#                     break
+
+#                 if (k == self.forecast_len):
+#                     break
+
+
+# =========================================== #
+# This class may have the one-step-off problem
+# =========================================== #
+# class PredictForecast(torch.utils.data.IterableDataset):
+#     def __init__(self,
+#                  filenames,
+#                  forecasts,
+#                  history_len,
+#                  forecast_len,
+#                  skip_periods,
+#                  rank,
+#                  world_size,
+#                  shuffle=False,
+#                  transform=None,
+#                  rollout_p=0.0,
+#                  start_time=None,
+#                  stop_time=None,
+#                  which_forecast=None):
+
+#         self.dataset = ERA5Dataset(
+#             filenames=filenames,
+#             history_len=history_len,
+#             forecast_len=forecast_len,
+#             skip_periods=skip_periods,
+#             transform=transform
+#         )
+#         self.meta_data_dict = self.dataset.meta_data_dict
+#         self.all_files = self.dataset.all_fils
+#         self.history_len = history_len
+#         self.forecast_len = forecast_len
+#         self.filenames = filenames
+#         self.transform = transform
+#         self.rank = rank
+#         self.world_size = world_size
+#         self.shuffle = shuffle
+#         self.skip_periods = skip_periods
+#         self.current_epoch = 0
+#         self.rollout_p = rollout_p
+#         self.forecasts = forecasts
+#         self.skip_periods = skip_periods if skip_periods is not None else 1
+#         self.which_forecast = which_forecast
+
+#     def find_start_stop_indices(self, index):
+#         start_time = self.forecasts[index][0]
+#         date_object = datetime.datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
+#         shifted_hours = self.skip_periods * self.history_len
+#         date_object = date_object - datetime.timedelta(hours=shifted_hours)
+#         self.forecasts[index][0] = date_object.strftime('%Y-%m-%d %H:%M:%S')
+
+#         datetime_objs = [np.datetime64(date) for date in self.forecasts[index]]
+#         start_time, stop_time = [str(datetime_obj) + '.000000000' for datetime_obj in datetime_objs]
+#         self.start_time = np.datetime64(start_time).astype(datetime.datetime)
+#         self.stop_time = np.datetime64(stop_time).astype(datetime.datetime)
+
+#         info = {}
+
+#         for idx, dataset in enumerate(self.all_files):
+#             start_time = np.datetime64(dataset['time'].min().values).astype(datetime.datetime)
+#             stop_time = np.datetime64(dataset['time'].max().values).astype(datetime.datetime)
+#             track_start = False
+#             track_stop = False
+
+#             if start_time <= self.start_time <= stop_time:
+#                 # Start time is in this file, use start time index
+#                 dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
+#                 start_idx = np.searchsorted(dataset, self.start_time)
+#                 start_idx = max(0, min(start_idx, len(dataset) - 1))
+#                 track_start = True
+
+#             elif start_time < self.stop_time and stop_time > self.start_time:
+#                 # File overlaps time range, use full file
+#                 start_idx = 0
+#                 track_start = True
+
+#             if start_time <= self.stop_time <= stop_time:
+#                 # Stop time is in this file, use stop time index
+#                 if isinstance(dataset, np.ndarray):
+#                     pass
+#                 else:
+#                     dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
+#                 stop_idx = np.searchsorted(dataset, self.stop_time)
+#                 stop_idx = max(0, min(stop_idx, len(dataset) - 1))
+#                 track_stop = True
+
+#             elif start_time < self.stop_time and stop_time > self.start_time:
+#                 # File overlaps time range, use full file
+#                 stop_idx = len(dataset) - 1
+#                 track_stop = True
+
+#             # Only include files that overlap the time range
+#             if track_start and track_stop:
+#                 info[idx] = ((idx, start_idx), (idx, stop_idx))
+
+#         indices = []
+#         for dataset_idx, (start, stop) in info.items():
+#             for i in range(start[1], stop[1] + 1):
+#                 indices.append((start[0], i))
+#         return indices
+
+#     def __len__(self):
+#         return len(self.forecasts)
+
+#     def __iter__(self):
+#         worker_info = get_worker_info()
+#         num_workers = worker_info.num_workers if worker_info is not None else 1
+#         worker_id = worker_info.id if worker_info is not None else 0
+#         sampler = DistributedSampler(self, num_replicas=num_workers * self.world_size,
+#                                      rank=self.rank * num_workers + worker_id, shuffle=self.shuffle)
+
+#         for index in sampler:
+
+#             data_lookup = self.find_start_stop_indices(index)
+
+#             for k, (file_key, time_key) in enumerate(data_lookup):
+#                 concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
+#                 sliced_x = xr.open_zarr(self.filenames[file_key], consolidated=True).isel(
+#                     time=slice(time_key, time_key + self.history_len + 1))
+
+#                 # Check if additional data from the next file is needed
+#                 if len(sliced_x['time']) < self.history_len + 1:
+#                     # Load excess data from the next file
+#                     next_file_idx = self.filenames.index(self.filenames[file_key]) + 1
+#                     if next_file_idx == len(self.filenames):
+#                         raise OSError("You have reached the end of the available data. Exiting.")
+#                     sliced_x_next = xr.open_zarr(
+#                         self.filenames[next_file_idx],
+#                         consolidated=True).isel(time=slice(0, self.history_len + 1 - len(sliced_x['time'])))
+
+#                     # Concatenate excess data from the next file with the current data
+#                     sliced_x = xr.concat([sliced_x, sliced_x_next], dim='time')
+
+#                 sample_x = {
+#                     'x': sliced_x.isel(time=slice(0, self.history_len)),
+#                     'y': sliced_x.isel(time=slice(self.history_len, self.history_len + 1))  # Fetch y data for t(i+1)
+#                 }
+
+#                 if self.transform:
+#                     sample_x = self.transform(sample_x)
+#                     # Add static vars, if any, to the return dictionary
+#                     if "static" in sample_x:
+#                         concatenated_samples["static"] = []
+#                     if "TOA" in sample_x:
+#                         concatenated_samples["TOA"] = []
+
+#                 for key in concatenated_samples.keys():
+#                     concatenated_samples[key] = sample_x[key].squeeze(0) if self.history_len == 1 else sample_x[key]
+
+#                 concatenated_samples['forecast_hour'] = k + 1
+#                 concatenated_samples['stop_forecast'] = (
+#                             k == (len(data_lookup) - self.history_len - 1))  # Adjust stopping condition
+#                 concatenated_samples['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[-1]
+
+#                 yield concatenated_samples
+
+#                 if concatenated_samples['stop_forecast']:
+#                     break
+
+# =========================================== #
+# This class may have the one-step-off problem
+# =========================================== #
+# class PredictForecastRollout(torch.utils.data.IterableDataset):
+#     def __init__(self,
+#                  filenames,
+#                  forecasts,
+#                  history_len,
+#                  forecast_len,
+#                  skip_periods,
+#                  rank,
+#                  world_size,
+#                  shuffle=False,
+#                  transform=None,
+#                  rollout_p=0.0,
+#                  start_time=None,
+#                  stop_time=None,
+#                  which_forecast=None):
+
+#         self.dataset = ERA5Dataset(
+#             filenames=filenames,
+#             history_len=history_len,
+#             forecast_len=forecast_len,
+#             skip_periods=skip_periods,
+#             transform=transform
+#         )
+#         self.meta_data_dict = self.dataset.meta_data_dict
+#         self.all_files = self.dataset.all_fils
+#         self.history_len = history_len
+#         self.forecast_len = forecast_len
+#         self.filenames = filenames
+#         self.transform = transform
+#         self.rank = rank
+#         self.world_size = world_size
+#         self.shuffle = shuffle
+#         self.skip_periods = skip_periods
+#         self.current_epoch = 0
+#         self.rollout_p = rollout_p
+#         self.forecasts = forecasts
+#         self.skip_periods = skip_periods if skip_periods is not None else 1
+#         self.which_forecast = which_forecast
+
+#     def find_start_stop_indices(self, index):
+#         start_time = self.forecasts[index][0]
+#         date_object = datetime.datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
+#         shifted_hours = self.skip_periods * self.history_len
+#         date_object = date_object - datetime.timedelta(hours=shifted_hours)
+#         self.forecasts[index][0] = date_object.strftime('%Y-%m-%d %H:%M:%S')
+
+#         datetime_objs = [np.datetime64(date) for date in self.forecasts[index]]
+#         start_time, stop_time = [str(datetime_obj) + '.000000000' for datetime_obj in datetime_objs]
+#         self.start_time = np.datetime64(start_time).astype(datetime.datetime)
+#         self.stop_time = np.datetime64(stop_time).astype(datetime.datetime)
+
+#         info = {}
+
+#         for idx, dataset in enumerate(self.all_files):
+#             start_time = np.datetime64(dataset['time'].min().values).astype(datetime.datetime)
+#             stop_time = np.datetime64(dataset['time'].max().values).astype(datetime.datetime)
+#             track_start = False
+#             track_stop = False
+
+#             if start_time <= self.start_time <= stop_time:
+#                 # Start time is in this file, use start time index
+#                 dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
+#                 start_idx = np.searchsorted(dataset, self.start_time)
+#                 start_idx = max(0, min(start_idx, len(dataset) - 1))
+#                 track_start = True
+
+#             elif start_time < self.stop_time and stop_time > self.start_time:
+#                 # File overlaps time range, use full file
+#                 start_idx = 0
+#                 track_start = True
+
+#             if start_time <= self.stop_time <= stop_time:
+#                 # Stop time is in this file, use stop time index
+#                 if isinstance(dataset, np.ndarray):
+#                     pass
+#                 else:
+#                     dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
+#                 stop_idx = np.searchsorted(dataset, self.stop_time)
+#                 stop_idx = max(0, min(stop_idx, len(dataset) - 1))
+#                 track_stop = True
+
+#             elif start_time < self.stop_time and stop_time > self.start_time:
+#                 # File overlaps time range, use full file
+#                 stop_idx = len(dataset) - 1
+#                 track_stop = True
+
+#             # Only include files that overlap the time range
+#             if track_start and track_stop:
+#                 info[idx] = ((idx, start_idx), (idx, stop_idx))
+
+#         indices = []
+#         for dataset_idx, (start, stop) in info.items():
+#             for i in range(start[1], stop[1] + 1):
+#                 indices.append((start[0], i))
+#         return indices
+
+#     def __len__(self):
+#         return len(self.forecasts)
+
+#     def __iter__(self):
+#         worker_info = get_worker_info()
+#         num_workers = worker_info.num_workers if worker_info is not None else 1
+#         worker_id = worker_info.id if worker_info is not None else 0
+#         sampler = DistributedSampler(self, num_replicas=num_workers * self.world_size,
+#                                      rank=self.rank * num_workers + worker_id, shuffle=self.shuffle)
+
+#         for index in sampler:
+
+#             data_lookup = self.find_start_stop_indices(index)
+
+#             for k, (file_key, time_key) in enumerate(data_lookup):
+#                 concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
+#                 sliced_x = xr.open_zarr(self.filenames[file_key], consolidated=True).isel(
+#                     time=slice(time_key, time_key + self.history_len + 1))
+
+#                 # Check if additional data from the next file is needed
+#                 if len(sliced_x['time']) < self.history_len + 1:
+#                     # Load excess data from the next file
+#                     next_file_idx = self.filenames.index(self.filenames[file_key]) + 1
+#                     if next_file_idx == len(self.filenames):
+#                         raise OSError("You have reached the end of the available data. Exiting.")
+#                     sliced_x_next = xr.open_zarr(
+#                         self.filenames[next_file_idx],
+#                         consolidated=True).isel(time=slice(0, self.history_len + 1 - len(sliced_x['time'])))
+
+#                     # Concatenate excess data from the next file with the current data
+#                     sliced_x = xr.concat([sliced_x, sliced_x_next], dim='time')
+
+#                 sample_x = {
+#                     'x': sliced_x.isel(time=slice(0, self.history_len)),
+#                     'y': sliced_x.isel(time=slice(self.history_len, self.history_len + 1))  # Fetch y data for t(i+1)
+#                 }
+
+#                 if self.transform:
+#                     sample_x = self.transform(sample_x)
+#                     # Add static vars, if any, to the return dictionary
+#                     if "static" in sample_x:
+#                         concatenated_samples["static"] = []
+#                     if "TOA" in sample_x:
+#                         concatenated_samples["TOA"] = []
+
+#                 for key in concatenated_samples.keys():
+#                     concatenated_samples[key] = sample_x[key].squeeze(0) if self.history_len == 1 else sample_x[key]
+
+#                 concatenated_samples['forecast_hour'] = k + 1
+#                 concatenated_samples['stop_forecast'] = (
+#                             k == (len(data_lookup) - self.history_len - 1))  # Adjust stopping condition
+#                 concatenated_samples['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[-1]
+
+#                 yield concatenated_samples
+
+#                 break
+
+# =========================================== #
+# This class may have the one-step-off problem
+# =========================================== #
+# class PredictForecastQuantile(PredictForecast):
+
+#     def __init__(self,
+#                  conf,
+#                  filenames,
+#                  forecasts,
+#                  history_len,
+#                  forecast_len,
+#                  skip_periods,
+#                  rank,
+#                  world_size,
+#                  shuffle=False,
+#                  transform=None,
+#                  rollout_p=0.0,
+#                  start_time=None,
+#                  stop_time=None):
+
+#         from credit.transforms import load_transforms
+
+#         transform = load_transforms(conf)
+
+#         self.dataset = Dataset_BridgeScaler(
+#             conf,
+#             conf_dataset='bs_years_test',
+#             transform=transform
+#         )
+
+#         # Need information on the saved files
+#         self.all_files = [get_forward_data(filename=fn) for fn in sorted(filenames)]
+#         # Set data places:
+#         indo = 0
+#         self.meta_data_dict = {}
+#         for ee, bb in enumerate(self.all_files):
+#             self.meta_data_dict[str(ee)] = [len(bb['time']), indo, indo + len(bb['time'])]
+#             indo += len(bb['time']) + 1
+
+#         self.history_len = history_len
+#         self.forecast_len = forecast_len
+#         self.filenames = filenames
+#         self.transform = transform
+#         self.rank = rank
+#         self.world_size = world_size
+#         self.shuffle = shuffle
+#         self.skip_periods = skip_periods
+#         self.current_epoch = 0
+#         self.rollout_p = rollout_p
+#         self.forecasts = forecasts
+#         self.skip_periods = skip_periods if skip_periods is not None else 1
+
+#     def find_start_stop_indices(self, index):
+#         start_time = self.forecasts[index][0]
+#         date_object = datetime.datetime.strptime(start_time, '%Y-%m-%d %H:%M:%S')
+#         shifted_hours = self.skip_periods * self.history_len
+#         date_object = date_object - datetime.timedelta(hours=shifted_hours)
+#         self.forecasts[index][0] = date_object.strftime('%Y-%m-%d %H:%M:%S')
+
+#         datetime_objs = [np.datetime64(date) for date in self.forecasts[index]]
+#         start_time, stop_time = [str(datetime_obj) + '.000000000' for datetime_obj in datetime_objs]
+#         self.start_time = np.datetime64(start_time).astype(datetime.datetime)
+#         self.stop_time = np.datetime64(stop_time).astype(datetime.datetime)
+
+#         info = {}
+
+#         for idx, dataset in enumerate(self.all_files):
+#             start_time = np.datetime64(dataset['time'].min().values).astype(datetime.datetime)
+#             stop_time = np.datetime64(dataset['time'].max().values).astype(datetime.datetime)
+#             track_start = False
+#             track_stop = False
+
+#             if start_time <= self.start_time <= stop_time:
+#                 # Start time is in this file, use start time index
+#                 dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
+#                 start_idx = np.searchsorted(dataset, self.start_time)
+#                 start_idx = max(0, min(start_idx, len(dataset) - 1))
+#                 track_start = True
+
+#             elif start_time < self.stop_time and stop_time > self.start_time:
+#                 # File overlaps time range, use full file
+#                 start_idx = 0
+#                 track_start = True
+
+#             if start_time <= self.stop_time <= stop_time:
+#                 # Stop time is in this file, use stop time index
+#                 if isinstance(dataset, np.ndarray):
+#                     pass
+#                 else:
+#                     dataset = np.array([np.datetime64(x.values).astype(datetime.datetime) for x in dataset['time']])
+#                 stop_idx = np.searchsorted(dataset, self.stop_time)
+#                 stop_idx = max(0, min(stop_idx, len(dataset) - 1))
+#                 track_stop = True
+
+#             elif start_time < self.stop_time and stop_time > self.start_time:
+#                 # File overlaps time range, use full file
+#                 stop_idx = len(dataset) - 1
+#                 track_stop = True
+
+#             # Only include files that overlap the time range
+#             if track_start and track_stop:
+#                 info[idx] = ((idx, start_idx), (idx, stop_idx))
+
+#         indices = []
+#         for dataset_idx, (start, stop) in info.items():
+#             for i in range(start[1], stop[1] + 1):
+#                 indices.append((start[0], i))
+#         return indices
+
+#     def __len__(self):
+#         return len(self.forecasts)
+
+#     def __iter__(self):
+#         worker_info = get_worker_info()
+#         num_workers = worker_info.num_workers if worker_info is not None else 1
+#         worker_id = worker_info.id if worker_info is not None else 0
+#         sampler = DistributedSampler(self, num_replicas=num_workers * self.world_size,
+#                                      rank=self.rank * num_workers + worker_id, shuffle=self.shuffle)
+
+#         for index in sampler:
+
+#             data_lookup = self.find_start_stop_indices(index)
+
+#             for k, (file_key, time_key) in enumerate(data_lookup):
+#                 concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': []}
+#                 sliced_x = xr.open_zarr(self.filenames[file_key], consolidated=True).isel(
+#                     time=slice(time_key, time_key + self.history_len + 1))
+
+#                 # Check if additional data from the next file is needed
+#                 if len(sliced_x['time']) < self.history_len + 1:
+#                     # Load excess data from the next file
+#                     next_file_idx = self.filenames.index(self.filenames[file_key]) + 1
+#                     if next_file_idx == len(self.filenames):
+#                         raise OSError("You have reached the end of the available data. Exiting.")
+#                     sliced_x_next = xr.open_zarr(
+#                         self.filenames[next_file_idx],
+#                         consolidated=True).isel(time=slice(0, self.history_len + 1 - len(sliced_x['time'])))
+
+#                     # Concatenate excess data from the next file with the current data
+#                     sliced_x = xr.concat([sliced_x, sliced_x_next], dim='time')
+
+#                 sample_x = {
+#                     'x': sliced_x.isel(time=slice(0, self.history_len)),
+#                     'y': sliced_x.isel(time=slice(self.history_len, self.history_len + 1))  # Fetch y data for t(i+1)
+#                 }
+
+#                 if self.transform:
+#                     sample_x = self.transform(sample_x)
+#                     # Add static vars, if any, to the return dictionary
+#                     if "static" in sample_x:
+#                         concatenated_samples["static"] = []
+#                     if "TOA" in sample_x:
+#                         concatenated_samples["TOA"] = []
+
+#                 for key in concatenated_samples.keys():
+#                     concatenated_samples[key] = sample_x[key].squeeze(0) if self.history_len == 1 else sample_x[key]
+
+#                 concatenated_samples['forecast_hour'] = k + 1
+#                 concatenated_samples['stop_forecast'] = (
+#                             k == (len(data_lookup) - self.history_len - 1))  # Adjust stopping condition
+#                 concatenated_samples['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[-1]
+
+#                 yield concatenated_samples
+
+#                 if concatenated_samples['stop_forecast']:
+#                     break
