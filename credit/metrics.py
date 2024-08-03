@@ -1,6 +1,7 @@
 import numpy as np
 import xarray as xr
 import torch
+from credit.loss import latititude_weights
 
 # from credit.data_conversions import dataConverter
 # from weatherbench2.derived_variables import ZonalEnergySpectrum
@@ -22,10 +23,7 @@ class LatWeightedMetrics:
 
         self.w_lat = None
         if conf["loss"]["use_latitude_weights"]:
-            lat = xr.open_dataset(lat_file)["latitude"].values
-            w_lat = np.cos(np.deg2rad(lat))
-            w_lat = w_lat / w_lat.mean()
-            self.w_lat = torch.from_numpy(w_lat).unsqueeze(0).unsqueeze(-1)
+            self.w_lat = latititude_weights(conf)[:,10].unsqueeze(0).unsqueeze(-1)
 
         self.w_var = None
         if conf["loss"]["use_variable_weights"]:
