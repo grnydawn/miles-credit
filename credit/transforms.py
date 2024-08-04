@@ -285,13 +285,13 @@ class Normalize_ERA5_and_Forcing:
                 if isinstance(value, xr.Dataset):
                     # training input
                     if key == 'historical_ERA5_images':
-
+                        
                         # get all the input vars
                         varname_inputs = value.keys()
 
                         # loop through dataset variables, handle forcing and static differently
                         for varname in varname_inputs:
-
+                            
                             # if forcing and static skip it, otherwise do z-score
                             if (varname in self.varname_forcing_static) is False:
                                 value[varname] = (value[varname] - self.mean_ds[varname]) / self.std_ds[varname]
@@ -691,6 +691,11 @@ class ToTensor_ERA5_and_Forcing:
                         list_vars_forcing_static = []
                         for var_name in varname_forcing_static:
                             var_value = value[var_name].values
+                            # # ==================================== #
+                            # # QUICK TESTS ON THE NEW TSI
+                            # if var_name == 'tsi':
+                            #     var_value = var_value / 2540585.74 / 6
+                            # # ==================================== #
                             list_vars_forcing_static.append(var_value)
     
                         numpy_vars_forcing_static = np.array(list_vars_forcing_static)
@@ -830,8 +835,7 @@ class ToTensor_ERA5_and_Forcing:
                 if self.flag_surface:    
                     return_dict['y_surf'] = x_surf
                     
-                return_dict['y'] = x_upper_air
-                
+                return_dict['y'] = x_upper_air  
         return return_dict
 
 
