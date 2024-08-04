@@ -735,11 +735,11 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
 
 
         # dynamic forcing variables
-        if varname_dyn_forcing is not None:
+        if self.varname_dyn_forcing is not None:
             sliced_dyn_forcing = self.ds_read_and_subset(self.filename_dyn_forcing[i_file], 
                                                          i_init_start,
                                                          i_init_end+1,
-                                                         varname_dyn_forcing)
+                                                         self.varname_dyn_forcing)
             # merge surface to sliced_x
             sliced_dyn_forcing['time'] = sliced_x['time']
             sliced_x = sliced_x.merge(sliced_dyn_forcing)
