@@ -120,7 +120,6 @@ def load_dataset_and_sampler(conf,
     if is_train:
         history_len = history_len
         forecast_len = forecast_len
-        # print out training / validation
         name = "training"
     else:
         history_len = valid_history_len
@@ -274,8 +273,6 @@ def main(rank, world_size, conf, trial=False):
     
         # check and glob surface files
         if ('surface_variables' in conf['data']) and (len(conf['data']['surface_variables']) > 0):
-            
-            print('collecting surface files')
             surface_files = sorted(glob.glob(conf["data"]["save_loc_surface"]))
             
         else:
@@ -283,8 +280,6 @@ def main(rank, world_size, conf, trial=False):
     
         # check and glob dyn forcing files
         if ('dynamic_forcing_variables' in conf['data']) and (len(conf['data']['dynamic_forcing_variables']) > 0):
-    
-            print('collecting dynamic forcing files')
             dyn_forcing_files = sorted(glob.glob(conf["data"]["save_loc_dynamic_forcing"]))
             
         else:
@@ -292,8 +287,6 @@ def main(rank, world_size, conf, trial=False):
     
         # check and glob diagnostic files
         if ('diagnostic_variables' in conf['data']) and (len(conf['data']['diagnostic_variables']) > 0):
-    
-            print('collecting diagnostic files')
             diagnostic_files = sorted(glob.glob(conf["data"]["save_loc_diagnostic"]))
             
         else:

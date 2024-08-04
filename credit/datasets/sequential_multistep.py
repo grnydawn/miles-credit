@@ -483,10 +483,6 @@ def worker(
             int(historical_ERA5_images.time.values[0].astype('datetime64[s]').astype(int)),
             int(target_ERA5_images.time.values[0].astype('datetime64[s]').astype(int))
         ]
-
-        # # print out to check input and target datetimes
-        # print('Input time: {}'.format(np.array(historical_ERA5_images['time'])))
-        # print('Target time: {}'.format(np.array(target_ERA5_images['time'])))
     
     except Exception as e:
         logger.error(f"Error processing index {tuple_index}: {e}")
@@ -658,10 +654,6 @@ class DistributedSequentialDatasetBasic(DistributedSequentialDataset):
                     int(historical_ERA5_images.time.values[0].astype('datetime64[s]').astype(int)),
                     int(target_ERA5_images.time.values[0].astype('datetime64[s]').astype(int))
                 ]
-
-                # # print out to check input and target datetimes
-                # print('Input time: {}'.format(np.array(historical_ERA5_images['time'])))
-                # print('Target time: {}'.format(np.array(target_ERA5_images['time'])))
                 
                 yield sample
 
