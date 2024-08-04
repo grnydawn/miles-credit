@@ -6,7 +6,6 @@ import sys
 import yaml
 import logging
 import warnings
-#import traceback
 from glob import glob
 from pathlib import Path
 from argparse import ArgumentParser
@@ -20,7 +19,6 @@ import xarray as xr
 import numpy as np
 
 # ---------- #
-# AI libs
 import torch
 import torch.distributed as dist
 from torchvision import transforms
@@ -97,8 +95,16 @@ def predict(rank, world_size, conf, p):
         varname_surface = conf['data']['surface_variables']
     else:
         surface_files = None
-        varname_surface = None 
-    
+        varname_surface = None
+        
+    ## dynamic forcing variables
+    if "save_loc_dynamic_forcing" in conf["data"]:
+        dyn_forcing_files = sorted(glob(conf["data"]["save_loc_dynamic_forcing"]))
+        varname_dyn_forcing = conf['data']['dynamic_forcing_variables']
+    else:
+        dyn_forcing_files = None
+        varname_dyn_forcing = None 
+        
     ## forcing variables
     if ('forcing_variables' in conf['data']) and (len(conf['data']['forcing_variables']) > 0):
         forcing_files = conf['data']['save_loc_forcing']
@@ -121,10 +127,12 @@ def predict(rank, world_size, conf, p):
         conf, 
         varname_upper_air,
         varname_surface,
+        varname_dyn_forcing,
         varname_forcing,
         varname_static,
         filenames=all_ERA_files,
         filename_surface=surface_files,
+        filename_dyn_forcing=dyn_forcing_files,
         filename_forcing=forcing_files,
         filename_static=static_files,
         fcst_datetime=load_forecasts(conf),
@@ -135,6 +143,7 @@ def predict(rank, world_size, conf, p):
         rollout_p=0.0,
         which_forecast=None
     )
+    
     # setup the dataloder
     data_loader = torch.utils.data.DataLoader(
         dataset,

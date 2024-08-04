@@ -19,14 +19,20 @@ data:
     surface_variables: ['Z500']
     save_loc_surface: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/TOTAL_*'
 
+    # dynamic forcing variables, must be YEARLY zarr or nc with (time, latitude, longitude) coords
+    # files must have the listed variable names
+    # surface variables will be normalized by the dataloader, users do not need to normalize them
+    dynamic_forcing_variables: ['tsi',]
+    save_loc_dynamic_forcing: '/glade/derecho/scratch/dgagne/credit_solar_6h_0.25deg/*.nc'
+
     # diagnostic variables, must be YEARLY zarr or nc with (time, latitude, longitude) coords
     # files must have the listed variable names 
     # diagnostic  variables will be normalized by the dataloader, users do not need to normalize them
     diagnostic_variables: ['tp'] 
     save_loc_diagnostic: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/ERA5_regrid_tp_*'
     
-    # forcing variables, must be a single zarr or nc with (time, latitude, longitude) coords
-    # forcing variables must be normalized by the user 
+    # periodicc forcing variables, must be a single zarr or nc with (time, latitude, longitude) coords
+    # periodic forcing variables must be normalized by the user 
     forcing_variables: ['TSI']   
     save_loc_forcing: '/glade/campaign/cisl/aiml/ksha/CREDIT/forcing_norm_6h.nc'
     
@@ -81,8 +87,19 @@ data:
     # 'std_new' has stacks forcing first, and then static into batches, 'std' stacks static first.
     # use True if the model was trained using the old 'std' and switching to 'std_new'
     static_first: False     
-                            
-                            
+    
+trainer:
+    # the keyword that controls GPU usage
+    # fsdp: fully sharded data parallel
+    # ddp: distributed data parallel
+    # none: CPU-based training
+    mode: fsdp
+
+    # choose your training routine
+    # standard: single-step training or multi-step training with one-shot
+    # multi-step: full multi-step training (without one-shot)
+    type: standard
+                 
 predict:
     forecasts:
         type: "custom"       # keep it as "custom"
