@@ -147,33 +147,33 @@ class Sample(TypedDict):
 #     end: int
 
 
-def get_contiguous_segments(dt_index: pd.DatetimeIndex, min_timesteps: int, max_gap: pd.Timedelta) -> Iterable[Segment]:
-    """Chunk datetime index into contiguous segments, each at least min_timesteps long.
+# def get_contiguous_segments(dt_index: pd.DatetimeIndex, min_timesteps: int, max_gap: pd.Timedelta) -> Iterable[Segment]:
+#     """Chunk datetime index into contiguous segments, each at least min_timesteps long.
 
-    max_gap defines the threshold for what constitutes a 'gap' between contiguous segments.
+#     max_gap defines the threshold for what constitutes a 'gap' between contiguous segments.
 
-    Throw away any timesteps in a sequence shorter than min_timesteps long.
-    """
-    gap_mask = np.diff(dt_index) > max_gap
-    gap_indices = np.argwhere(gap_mask)[:, 0]
+#     Throw away any timesteps in a sequence shorter than min_timesteps long.
+#     """
+#     gap_mask = np.diff(dt_index) > max_gap
+#     gap_indices = np.argwhere(gap_mask)[:, 0]
 
-    # gap_indicies are the indices into dt_index for the timestep immediately before the gap.
-    # e.g. if the datetimes at 12:00, 12:05, 18:00, 18:05 then gap_indicies will be [1].
-    segment_boundaries = gap_indices + 1
+#     # gap_indicies are the indices into dt_index for the timestep immediately before the gap.
+#     # e.g. if the datetimes at 12:00, 12:05, 18:00, 18:05 then gap_indicies will be [1].
+#     segment_boundaries = gap_indices + 1
 
-    # Capture the last segment of dt_index.
-    segment_boundaries = np.concatenate((segment_boundaries, [len(dt_index)]))
+#     # Capture the last segment of dt_index.
+#     segment_boundaries = np.concatenate((segment_boundaries, [len(dt_index)]))
 
-    segments = []
-    start_i = 0
-    for end_i in segment_boundaries:
-        n_timesteps = end_i - start_i
-        if n_timesteps >= min_timesteps:
-            segment = Segment(start=start_i, end=end_i)
-            segments.append(segment)
-        start_i = end_i
+#     segments = []
+#     start_i = 0
+#     for end_i in segment_boundaries:
+#         n_timesteps = end_i - start_i
+#         if n_timesteps >= min_timesteps:
+#             segment = Segment(start=start_i, end=end_i)
+#             segments.append(segment)
+#         start_i = end_i
 
-    return segments
+#     return segments
 
 def flatten_list(list_of_lists):
     """
