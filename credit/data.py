@@ -2,9 +2,17 @@
 data.py 
 -------------------------------------------------------
 Content:
-    - get_forward_data(filename) -> xr.DataArray
+    - generate_datetime(start_time, end_time, interval_hr)
+    - hour_to_nanoseconds(input_hr)
+    - nanoseconds_to_year(nanoseconds_value)
+    - extract_month_day_hour(dates)
+    - find_common_indices(list1, list2)
+    - concat_and_reshape(x1, x2)
+    - reshape_only(x1)
+    - get_forward_data(filename)
     - drop_var_from_dataset()
     - ERA5_and_Forcing_Dataset(torch.utils.data.Dataset)
+    - Predict_Dataset(torch.utils.data.IterableDataset)
 
 Yingkai Sha
 ksha@ucar.edu
@@ -616,16 +624,21 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
 
 class Predict_Dataset(torch.utils.data.IterableDataset):
     '''
-    Same as ERA5_and_Forcing_Dataset() but for prediction only
+    Same as ERA5_and_Forcing_Dataset() but work with rollout_to_netcdf_new.py
+
+    *ksha: dynamic forcing has been added to the rollout-only Dataset, but it has 
+    not been tested. Once the new tsi is ready, this dataset class will be tested
     '''
     def __init__(self,
                  conf, 
                  varname_upper_air,
                  varname_surface,
+                 varname_dyn_forcing,
                  varname_forcing,
                  varname_static,
                  filenames,
                  filename_surface,
+                 filename_dyn_forcing,
                  filename_forcing,
                  filename_static,
                  fcst_datetime,
@@ -652,14 +665,16 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         self.which_forecast = which_forecast # <-- got from the old roll-out. Dont know 
         
         # -------------------------------------- #
-        self.filenames = sorted(filenames) # <---------------- a list of files
-        self.filename_surface = sorted(filename_surface) # <-- a list of files
+        self.filenames = sorted(filenames) # <------------------------ a list of files
+        self.filename_surface = sorted(filename_surface) # <---------- a list of files
+        self.filename_dyn_forcing = sorted(filename_dyn_forcing) # <-- a list of files
         self.filename_forcing = filename_forcing # <-- single file
         self.filename_static = filename_static # <---- single file
         
         # -------------------------------------- #
         self.varname_upper_air = varname_upper_air
         self.varname_surface = varname_surface
+        self.varname_dyn_forcing = varname_dyn_forcing
         self.varname_forcing = varname_forcing
         self.varname_static = varname_static
 
@@ -693,7 +708,6 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         if self.skip_periods is None:
             self.skip_periods = 1
             
-
     def ds_read_and_subset(self, filename, time_start, time_end, varnames):
         sliced_x = xr.open_zarr(filename, consolidated=True)
         sliced_x = sliced_x.isel(time=slice(time_start, time_end))
@@ -718,7 +732,18 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
             # merge surface to sliced_x
             sliced_surface['time'] = sliced_x['time']
             sliced_x = sliced_x.merge(sliced_surface)
-            
+
+
+        # dynamic forcing variables
+        if varname_dyn_forcing is not None:
+            sliced_dyn_forcing = self.ds_read_and_subset(self.filename_dyn_forcing[i_file], 
+                                                         i_init_start,
+                                                         i_init_end+1,
+                                                         varname_dyn_forcing)
+            # merge surface to sliced_x
+            sliced_dyn_forcing['time'] = sliced_x['time']
+            sliced_x = sliced_x.merge(sliced_dyn_forcing)
+        
         # forcing / static
         if self.filename_forcing is not None:
             sliced_forcing = xr.open_dataset(self.filename_forcing)
@@ -886,9 +911,12 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
                 if output_dict['stop_forecast']:
                     break
                     
-# ========================================= #
+# =============================================== #
 # This dataset works for hourly model only
-# ========================================= #
+# it does not support forcing & static here
+# but it pairs to the ToTensor that adds
+# TOA (which has problem) and other static fields 
+# =============================================== #
 class ERA5Dataset(torch.utils.data.Dataset):
 
     def __init__(
@@ -1120,12 +1148,10 @@ class ERA5Dataset(torch.utils.data.Dataset):
 
 #         return sample
 
-# Note: DistributedSequentialDataset & DistributedSequentialDataset
-# are legacy; they wrap ERA5Dataset to send data batches to GPUs for
-# (1 class of?) huge sharded models, but otherwise have been
-# superseded by ERA5Dataset.
-
-
+# ================================= #
+# This dataset is old, but not sure
+# if anyone still uses it
+# ================================= #
 class Dataset_BridgeScaler(torch.utils.data.Dataset):
     def __init__(
             self,
@@ -1293,77 +1319,12 @@ class Dataset_BridgeScaler(torch.utils.data.Dataset):
                 sample = self.transform(sample)
             return sample
 
-
-class SequentialDataset(torch.utils.data.Dataset):
-
-    def __init__(self, filenames, history_len=1, forecast_len=2, skip_periods=1, transform=None, random_forecast=True):
-        self.dataset = ERA5Dataset(
-            filenames=filenames,
-            history_len=history_len,
-            forecast_len=forecast_len,
-            transform=transform
-        )
-        self.meta_data_dict = self.dataset.meta_data_dict
-        self.all_fils = self.dataset.all_fils
-        self.history_len = history_len
-        self.forecast_len = forecast_len
-        self.filenames = filenames
-        self.transform = transform
-        self.skip_periods = skip_periods
-        self.random_forecast = random_forecast
-        self.iteration_count = 0
-        self.current_epoch = 0
-        self.adjust_forecast = 0
-
-        self.index_list = []
-        for i, x in enumerate(self.all_fils):
-            times = x['time'].values
-            slices = np.arange(0, times.shape[0] - (self.forecast_len + 1))
-            self.index_list += [(i, slice) for slice in slices]
-
-    def __len__(self):
-        return len(self.index_list)
-
-    def set_params(self, epoch):
-        self.current_epoch = epoch
-        self.iteration_count = 0
-
-    def __getitem__(self, index):
-
-        if self.random_forecast and (self.iteration_count % self.forecast_len == 0):
-            # Randomly choose a starting point within a valid range
-            max_start = len(self.index_list) - (self.forecast_len + 1)
-            self.adjust_forecast = np.random.randint(0, max_start + 1)
-
-        index = (index + self.adjust_forecast) % self.__len__()
-        file_id, slice_idx = self.index_list[index]
-
-        dataset = xr.open_zarr(self.filenames[file_id], consolidated=True).isel(
-            time=slice(slice_idx, slice_idx + self.skip_periods + 1, self.skip_periods))
-
-        sample = {
-            'x': dataset.isel(time=slice(0, 1, 1)),
-            'y': dataset.isel(time=slice(1, 2, 1)),
-        }
-
-        if self.transform:
-            sample = self.transform(sample)
-
-        sample['forecast_hour'] = self.iteration_count
-        sample['forecast_datetime'] = dataset.time.values.astype('datetime64[s]').astype(int)
-        sample['stop_forecast'] = False
-
-        if self.iteration_count == self.forecast_len - 1:
-            sample['stop_forecast'] = True
-
-        # Increment the iteration count
-        self.iteration_count += 1
-
-        return sample
-
-# ============================= #
-# MOVED to train_multistep.py
-# ============================= #
+# ================================================================== #
+# Note: DistributedSequentialDataset & DistributedSequentialDataset
+# are legacy; they wrap ERA5Dataset to send data batches to GPUs for
+# (1 class of?) huge sharded models, but otherwise have been
+# superseded by ERA5Dataset.
+# ================================================================== #
 # class DistributedSequentialDataset(torch.utils.data.IterableDataset):
 #     # https://colab.research.google.com/drive/1OFLZnX9y5QUFNONuvFsxOizq4M-tFvk-?usp=sharing#scrollTo=CxSCQPOMHgwo
 
@@ -1451,6 +1412,80 @@ class SequentialDataset(torch.utils.data.Dataset):
 
 #                 if (k == self.forecast_len):
 #                     break
+
+# ================================================================== #
+# Note: DistributedSequentialDataset & DistributedSequentialDataset
+# are legacy; they wrap ERA5Dataset to send data batches to GPUs for
+# (1 class of?) huge sharded models, but otherwise have been
+# superseded by ERA5Dataset.
+# ================================================================== #
+class SequentialDataset(torch.utils.data.Dataset):
+
+    def __init__(self, filenames, history_len=1, forecast_len=2, skip_periods=1, transform=None, random_forecast=True):
+        self.dataset = ERA5Dataset(
+            filenames=filenames,
+            history_len=history_len,
+            forecast_len=forecast_len,
+            transform=transform
+        )
+        self.meta_data_dict = self.dataset.meta_data_dict
+        self.all_fils = self.dataset.all_fils
+        self.history_len = history_len
+        self.forecast_len = forecast_len
+        self.filenames = filenames
+        self.transform = transform
+        self.skip_periods = skip_periods
+        self.random_forecast = random_forecast
+        self.iteration_count = 0
+        self.current_epoch = 0
+        self.adjust_forecast = 0
+
+        self.index_list = []
+        for i, x in enumerate(self.all_fils):
+            times = x['time'].values
+            slices = np.arange(0, times.shape[0] - (self.forecast_len + 1))
+            self.index_list += [(i, slice) for slice in slices]
+
+    def __len__(self):
+        return len(self.index_list)
+
+    def set_params(self, epoch):
+        self.current_epoch = epoch
+        self.iteration_count = 0
+
+    def __getitem__(self, index):
+
+        if self.random_forecast and (self.iteration_count % self.forecast_len == 0):
+            # Randomly choose a starting point within a valid range
+            max_start = len(self.index_list) - (self.forecast_len + 1)
+            self.adjust_forecast = np.random.randint(0, max_start + 1)
+
+        index = (index + self.adjust_forecast) % self.__len__()
+        file_id, slice_idx = self.index_list[index]
+
+        dataset = xr.open_zarr(self.filenames[file_id], consolidated=True).isel(
+            time=slice(slice_idx, slice_idx + self.skip_periods + 1, self.skip_periods))
+
+        sample = {
+            'x': dataset.isel(time=slice(0, 1, 1)),
+            'y': dataset.isel(time=slice(1, 2, 1)),
+        }
+
+        if self.transform:
+            sample = self.transform(sample)
+
+        sample['forecast_hour'] = self.iteration_count
+        sample['forecast_datetime'] = dataset.time.values.astype('datetime64[s]').astype(int)
+        sample['stop_forecast'] = False
+
+        if self.iteration_count == self.forecast_len - 1:
+            sample['stop_forecast'] = True
+
+        # Increment the iteration count
+        self.iteration_count += 1
+
+        return sample
+
 
 
 # =========================================== #
