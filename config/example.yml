@@ -1,5 +1,5 @@
 # --------------------------------------------------------------------------------------------------------------------- #
-# This is an example yaml file that explains how to configure, train, and use AI weather prediciton models in CREDIT
+# This is an example yaml file that explains how to define, train, and use AI weather prediciton models in CREDIT
 #
 # Yingkai Sha
 # ksha@ucar.edu
@@ -112,6 +112,12 @@ trainer:
     # ddp: distributed data parallel
     # none: CPU-based training
     mode: fsdp
+    
+    # fsdp-specific GPU optimization
+    # allow FSDP offloads gradients to CPU and free GPU memory
+    cpu_offload: True
+    # save forward pass activation to checkpoints and free GPU memory
+    activation_checkpoint: True
 
     # choose your training routine
     # type: standard --> single-step training or multi-step training with one-shot: True
@@ -122,7 +128,9 @@ trainer:
     
     # load existing weights / optimier state
     load_weights: True
-    load_optimizer: False
+    load_optimizer: True
+    # update learning rate to optimizer.param_groups
+    update_learning_rate: True
     
     # learning rate
     learning_rate: 1.0e-03
@@ -153,11 +161,31 @@ trainer:
 
     # Pytorch scheduler
     # if True, specify your scheduler 
-    use_scheduler: False
+    use_scheduler: True
     # examples:
-    # scheduler: {scheduler_type: 'cosine-annealing', first_cycle_steps: 2000, cycle_mult: 6.0, max_lr: 5.0e-04, min_lr: 5.0e-07, warmup_steps: 1999, gamma: 0.7}
-    # scheduler: {scheduler_type: 'plateau', mode: min, factor: 0.1, patience: 5, cooldown: 2, min_lr: 1e-6, epsilon: 1e-8, verbose: true, threshold: 1e-4}
-    # scheduler: {scheduler_type: 'lambda'}
+    scheduler:
+        # example: cosine-annealing
+        scheduler_type: 'cosine-annealing'
+        first_cycle_steps: 2000
+        cycle_mult: 6.0
+        max_lr: 5.0e-04
+        min_lr: 5.0e-07
+        warmup_steps: 1999
+        gamma: 0.7
+        
+        # # example plateau
+        # scheduler_type: 'plateau'
+        # mode: 'min'
+        # factor: 0.1
+        # patience: 5
+        # cooldown: 2
+        # min_lr: 1e-6
+        # epsilon: 1e-8
+        # verbose: True
+        # threshold: 1e-4
+        
+        # # example lambda
+        # scheduler_type: 'lambda'
     
     # rescale loss as loss = loss / grad_accum_every
     grad_accum_every: 1
@@ -169,32 +197,60 @@ trainer:
     valid_thread_workers: 0
 
 model:
-    # CREDIT provides different models, here an example of FuXi is provided
-    # other available models are: crossformer, unet
+    # available models: fuxi, crossformer
     type: "fuxi"
     
-    # input tensor sizes
-    frames: 2               # number of input states (default: 2)
-    image_height: 640       # number of latitude grids (default: 640)
-    image_width: 1280       # number of longitude grids (default: 1280)
-    levels: 15              # number of upper-air variable levels (default: 15)
+    # fuxi example
+    frames: 2               # number of input states
+    image_height: 640       # number of latitude grids
+    image_width: 1280       # number of longitude grids
+    levels: 15              # number of upper-air variable levels
+    channels: 4             # upper-air variable channels
+    surface_channels: 7     # surface variable channels
+    input_only_channels: 3  # dynamic forcing, forcing, static channels
+    output_only_channels: 0 # diagnostic variable channels
     
     # patchify layer
-    patch_height: 4         # number of latitude grids in each 3D patch (default: 16)
-    patch_width: 4          # number of longitude grids in each 3D patch (default: 16)
-    frame_patch_size: 2     # number of input states in each 3D patch (default: 2)
+    patch_height: 4         # number of latitude grids in each 3D patch
+    patch_width: 4          # number of longitude grids in each 3D patch
+    frame_patch_size: 2     # number of input states in each 3D patch
     
     # hidden layers
     dim: 1024               # dimension (default: 1536)
     num_groups: 32          # number of groups (default: 32)
-    channels: 4             # upper-air variable channels (default: 4)
-    surface_channels: 7     # surface variable channels (default: 7)
-    input_only_channels: 3  # dynamic forcing, forcing, static channels
-    output_only_channels: 0 # diagnostic variable channels
     num_heads: 8            # number of heads (default: 8)
     window_size: 7          # window size (default: 7)
     depth: 16               # number of swin transformers (default: 48)
+
+    # # crossformer example
+    # type: "crossformer"
+    # frames: 1                         # number of input states (default: 1)
+    # image_height: 640                 # number of latitude grids (default: 640)
+    # image_width: 1280                 # number of longitude grids (default: 1280)
+    # levels: 15                        # number of upper-air variable levels (default: 15)
+    # channels: 4                       # upper-air variable channels
+    # surface_channels: 7               # surface variable channels
+    # input_only_channels: 3            # dynamic forcing, forcing, static channels
+    # output_only_channels: 0           # diagnostic variable channels
     
+    # patch_width: 1                    # number of latitude grids in each 3D patch (default: 1)
+    # patch_height: 1                   # number of longitude grids in each 3D patch (default: 1)
+    # frame_patch_size: 1               # number of input states in each 3D patch (default: 1)
+    
+    # dim: [512, 1024, 2048, 4096]      # dimensionality of each layer
+    # depth: [2, 2, 8, 2]               # depth of each layer
+    # global_window_size: [2, 2, 2, 1]  # global window size for each layer
+    # local_window_size: 2              # local window size
+    # cross_embed_kernel_sizes:         # kernel sizes for cross-embedding
+    # - [4, 8, 16, 32]
+    # - [2, 4]
+    # - [2, 4]
+    # - [2, 4]
+    # cross_embed_strides: [2, 2, 2, 2] # Strides for cross-embedding (default: [4, 2, 2, 2])
+    # attn_dropout: 0.                  # Dropout probability for attention layers (default: 0.0)
+    # ff_dropout: 0.                    # Dropout probability for feed-forward layers (default: 0.0)
+    
+    # for BOTH fuxi and crossformer 
     # map boundary padding
     pad_lon: 80             # number of grids to pad on 0 and 360 deg lon
     pad_lat: 80             # number of grids to pad on -90 and 90 deg lat
@@ -289,8 +345,7 @@ pbs:
     queue: 'main'
     
     # examaple for casper
-    # pbs:
-    # conda: "credit"
+    # conda: "/glade/work/ksha/miniconda3/envs/credit"
     # job_name: 'train_model'
     # nodes: 1
     # ncpus: 8
