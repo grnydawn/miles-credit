@@ -119,10 +119,10 @@ model:
     patch_height: 1                   # number of longitude grids in each 3D patch (default: 1)
     frame_patch_size: 1               # number of input states in each 3D patch (default: 1)
     
-    dim: [512, 1024, 2048, 4096]      # dimensionality of each layer
-    depth: [2, 2, 8, 2]               # depth of each layer
-    global_window_size: [2, 2, 2, 1]  # global window size for each layer
-    local_window_size: 2              # local window size
+    dim: [128, 256, 512, 1024]        # Dimensionality of each layer
+    depth: [2, 2, 8, 2]               # Depth of each layer
+    global_window_size: [10, 5, 2, 1] # Global window size for each layer
+    local_window_size: 10             # Local window size
     cross_embed_kernel_sizes:         # kernel sizes for cross-embedding
     - [4, 8, 16, 32]
     - [2, 4]
