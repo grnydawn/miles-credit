@@ -232,6 +232,10 @@ def load_model_states_and_optimizer(conf, model, device):
         scheduler = load_scheduler(optimizer, conf)
         scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
 
+        # Update the config file to the current epoch
+        if "reload_epoch" in conf["trainer"] and conf["trainer"]["reload_epoch"]:
+            conf["trainer"]["start_epoch"] = ckpt["epoch"] + 1
+
         if scheduler is not None:
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
@@ -242,7 +246,7 @@ def load_model_states_and_optimizer(conf, model, device):
         for param_group in optimizer.param_groups:
             param_group['lr'] = learning_rate
 
-    return model, optimizer, scheduler, scaler
+    return conf, model, optimizer, scheduler, scaler
 
 
 def main(rank, world_size, conf, trial=False):
@@ -417,7 +421,7 @@ def main(rank, world_size, conf, trial=False):
 
     # Load model weights (if any), an optimizer, scheduler, and gradient scaler
 
-    model, optimizer, scheduler, scaler = load_model_states_and_optimizer(conf, model, device)
+    conf, model, optimizer, scheduler, scaler = load_model_states_and_optimizer(conf, model, device)
 
     # Train and validation losses
 
