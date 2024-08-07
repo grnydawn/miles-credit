@@ -88,15 +88,15 @@ trainer:
     valid_batches_per_epoch: 20
     stopping_patience: 50
     
-    # total number of epochs
-    # can also use --> train_one_epoch: True
     start_epoch: 0
-    epochs: 20 
+    reload_epoch: True
+    epochs: &epochs 70
     
+    use_scheduler: True
+    scheduler: {'scheduler_type': 'cosine-annealing', 'T_max': *epochs,  'last_epoch': -1}
+
     # Automatic Mixed Precision: False
     amp: False
-    
-    use_scheduler: False
     
     # rescale loss as loss = loss / grad_accum_every
     grad_accum_every: 1 
