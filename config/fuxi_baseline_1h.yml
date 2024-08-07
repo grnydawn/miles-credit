@@ -70,7 +70,7 @@ trainer:
     
     # use fsdp
     mode: fsdp
-    cpu_offload: True
+    cpu_offload: False # <------ can cause CPU memory problem ("Expects storage to be allocated")
     activation_checkpoint: True
     
     load_weights: False # <----- change if load weights

@@ -70,7 +70,7 @@ trainer:
     
     # use fsdp
     mode: fsdp
-    cpu_offload: True
+    cpu_offload: False # <------ can cause CPU memory problem ("Expects storage to be allocated")
     activation_checkpoint: True
     
     load_weights: False # <----- change if load weights
@@ -177,7 +177,7 @@ predict:
 pbs: #derecho
     conda: "/glade/work/ksha/miniconda3/envs/credit"
     project: "NAML0001"
-    job_name: "fuxi_1h"
+    job_name: "fuxi_6h"
     walltime: "12:00:00"
     nodes: 8
     ncpus: 64
