@@ -282,8 +282,8 @@ class Fuxi(BaseModel):
                  num_groups=32,
                  channels=4,
                  surface_channels=7,
-                 static_channels=0,
-                 diagnostic_channels=0,
+                 input_only_channels=0,
+                 output_only_channels=0,
                  num_heads=8,
                  depth=48,
                  window_size=7,
@@ -301,8 +301,8 @@ class Fuxi(BaseModel):
         # number of channels = levels * varibales per level + surface variables
         #in_chans = out_chans = levels * channels + surface_channels
         
-        in_chans = channels * levels + surface_channels + static_channels
-        out_chans = channels * levels + surface_channels + diagnostic_channels
+        in_chans = channels * levels + surface_channels + input_only_channels
+        out_chans = channels * levels + surface_channels + output_only_channels
         
         # input resolution = number of embedded patches / 2
         # divide by two because "u_trasnformer" has a down-sampling block
@@ -423,8 +423,8 @@ if __name__ == "__main__":
     num_groups = 32       # Number of groups (default: 32)
     channels = 4          # Channels (default: 4)
     surface_channels = 7  # Surface channels (default: 7)
-    static_channels = 2
-    diagnostic_channels = 0
+    input_only_channels = 2
+    output_only_channels = 0
     num_heads = 8         # Number of heads (default: 8)
     window_size = 7       # Window size (default: 7)
     depth = 8            # Depth of the swin transformer (default: 48)
@@ -440,8 +440,8 @@ if __name__ == "__main__":
     model = Fuxi(
         channels=channels,
         surface_channels=surface_channels,
-        static_channels=static_channels,
-        diagnostic_channels=diagnostic_channels,
+        input_only_channels=input_only_channels,
+        output_only_channels=output_only_channels,
         levels=levels,
         image_height=image_height,
         image_width=image_width,
@@ -459,7 +459,7 @@ if __name__ == "__main__":
     # test the model
     
     # pass an input tensor to test the graph
-    input_tensor = torch.randn(2, channels * levels + surface_channels + static_channels, 
+    input_tensor = torch.randn(2, channels * levels + surface_channels + input_only_channels, 
                                frames, image_height, image_width).to("cuda")    
     
     y_pred = model(input_tensor.to("cuda"))

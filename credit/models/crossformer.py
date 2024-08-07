@@ -307,8 +307,8 @@ class CrossFormer(BaseModel):
         frames=2,
         channels=4,
         surface_channels=7,
-        static_channels=3,
-        diagnostic_channels=0,
+        input_only_channels=3,
+        output_only_channels=0,
         levels=15,
         dim=(64, 128, 256, 512),
         depth=(2, 2, 8, 2),
@@ -345,10 +345,10 @@ class CrossFormer(BaseModel):
         self.use_spectral_norm = use_spectral_norm
 
         # input channels
-        input_channels = channels * levels + surface_channels + static_channels
+        input_channels = channels * levels + surface_channels + input_only_channels
 
         # output channels
-        output_channels = channels * levels + surface_channels + diagnostic_channels
+        output_channels = channels * levels + surface_channels + output_only_channels
 
         dim = cast_tuple(dim, 4)
         depth = cast_tuple(depth, 4)
@@ -511,12 +511,12 @@ if __name__ == "__main__":
     frames = 2
     channels = 4
     surface_channels = 7
-    static_channels = 3
+    input_only_channels = 3
     frame_patch_size = 2
     pad_lon = 80
     pad_lat = 80
 
-    input_tensor = torch.randn(1, channels * levels + surface_channels + static_channels, frames, image_height, image_width).to("cuda")
+    input_tensor = torch.randn(1, channels * levels + surface_channels + input_only_channels, frames, image_height, image_width).to("cuda")
 
     model = CrossFormer(
         image_height=image_height,
@@ -525,7 +525,7 @@ if __name__ == "__main__":
         frame_patch_size=frame_patch_size,
         channels=channels,
         surface_channels=surface_channels,
-        static_channels=static_channels,
+        input_only_channels=input_only_channels,
         levels=levels,
         dim=(128, 256, 512, 1024),
         depth=(2, 2, 18, 2),

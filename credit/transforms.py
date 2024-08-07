@@ -691,11 +691,6 @@ class ToTensor_ERA5_and_Forcing:
                         list_vars_forcing_static = []
                         for var_name in varname_forcing_static:
                             var_value = value[var_name].values
-                            # # ==================================== #
-                            # # QUICK TESTS ON THE NEW TSI
-                            # if var_name == 'tsi':
-                            #     var_value = var_value / 2540585.74 / 6
-                            # # ==================================== #
                             list_vars_forcing_static.append(var_value)
     
                         numpy_vars_forcing_static = np.array(list_vars_forcing_static)
