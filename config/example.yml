@@ -114,8 +114,10 @@ trainer:
     mode: fsdp
     
     # fsdp-specific GPU optimization
+    #
     # allow FSDP offloads gradients to CPU and free GPU memory
-    cpu_offload: True
+    # !!! can cause CPU out-of-memory if for some large models !!! 
+    cpu_offload: False
     # save forward pass activation to checkpoints and free GPU memory
     activation_checkpoint: True
 
