@@ -507,7 +507,7 @@ def main(rank, world_size, conf, trial=False):
 
     # Load model weights (if any), an optimizer, scheduler, and gradient scaler
 
-   conf, model, optimizer, scheduler, scaler = load_model_states_and_optimizer(conf, model, device)
+    conf, model, optimizer, scheduler, scaler = load_model_states_and_optimizer(conf, model, device)
 
     # Train and validation losses
 
