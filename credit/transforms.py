@@ -430,11 +430,11 @@ class BridgescalerScaleState(object):
                     single_var["level"] = [f"{variable}_{lev:d}" for lev in ds["level"]]
                     transformed_var = self.scaler_3d.transform(single_var, channels_last=False)
                     transformed_var["level"] = ds["level"]
-                    normalized_sample[variable] = transformed_var
+                    normalized_sample[data_id][variable] = transformed_var
                 surface_ds = ds[self.surface_variables].to_dataarray().transpose("time",
                                                                                  "variable", "latitude", "longitude")
                 surface_ds_transformed = self.scaler_surf.transform(surface_ds, channels_last=False)
-                normalized_sample[data_id].merge(surface_ds_transformed.to_dataset(dim="variable"))
+                normalized_sample[data_id] = normalized_sample[data_id].merge(surface_ds_transformed.to_dataset(dim="variable"))
         return normalized_sample
 
 

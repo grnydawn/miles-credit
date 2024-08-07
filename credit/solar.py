@@ -8,6 +8,7 @@ from tqdm import tqdm
 import torch
 from collections.abc import Sequence
 
+
 class TOADataLoader:
     def __init__(self, conf):
         self.TOA = xr.open_dataset(conf["data"]["TOA_forcing_path"]).load()
@@ -30,14 +31,14 @@ class TOADataLoader:
         
 
 def era5_tsi_data() -> xr.DataArray:
-  """A TsiDataProvider that returns ERA5 compatible TSI data. From [Graphcast](https://github.com/google-deepmind/graphcast/blob/main/graphcast/solar_radiation.py).
+    """A TsiDataProvider that returns ERA5 compatible TSI data. From [Graphcast](https://github.com/google-deepmind/graphcast/blob/main/graphcast/solar_radiation.py).
 
-  """
-  # ECMWF provided the data used for ERA5, which was hardcoded in the IFS (cycle
-  # 41r2). The values were scaled down to agree better with more recent
-  # observations of the sun.
-  time = np.arange(1951.5, 2035.5, 1.0)
-  tsi = 0.9965 * np.array([
+    """
+    # ECMWF provided the data used for ERA5, which was hardcoded in the IFS (cycle
+    # 41r2). The values were scaled down to agree better with more recent
+    # observations of the sun.
+    time = np.arange(1951.5, 2035.5, 1.0)
+    tsi = 0.9965 * np.array([
       # fmt: off
       # 1951-1995 (non-repeating sequence)
       1365.7765, 1365.7676, 1365.6284, 1365.6564, 1365.7773,
@@ -62,8 +63,8 @@ def era5_tsi_data() -> xr.DataArray:
       1366.6022, 1366.6807, 1366.2300, 1366.0480, 1365.8545,
       1365.8107, 1365.7240, 1365.6918,
       # fmt: on
-  ])
-  return xr.DataArray(tsi, dims=["time"], coords={"time": time})
+    ])
+    return xr.DataArray(tsi, dims=["time"], coords={"time": time})
 
 
 tsi_data = era5_tsi_data()
@@ -72,26 +73,26 @@ tsi_data = era5_tsi_data()
 def get_tsi(
     timestamps: Sequence, tsi_data: xr.DataArray
 ) -> np.array:
-  """Returns TSI values for the given timestamps.
+    """Returns TSI values for the given timestamps.
 
-  TSI values are interpolated from the provided yearly TSI data.
+    TSI values are interpolated from the provided yearly TSI data.
 
-  Args:
+    Args:
     timestamps: Timestamps for which to compute TSI values.
     tsi_data: A DataArray with a single dimension `time` that has coordinates in
       units of years since 0000-1-1. E.g. 2023.5 corresponds to the middle of
       the year 2023.
 
-  Returns:
+    Returns:
     An Array containing interpolated TSI data.
-  """
-  timestamps = pd.DatetimeIndex(timestamps, tz="utc")
-  timestamps_date = pd.DatetimeIndex(timestamps.date, tz="utc")
-  day_fraction = (timestamps - timestamps_date) / pd.Timedelta(days=1)
-  year_length = 365 + timestamps.is_leap_year
-  year_fraction = (timestamps.dayofyear - 1 + day_fraction) / year_length
-  fractional_year = timestamps.year + year_fraction
-  return np.interp(fractional_year, tsi_data.coords["time"].data, tsi_data.data)
+    """
+    timestamps = pd.DatetimeIndex(timestamps, tz="utc")
+    timestamps_date = pd.DatetimeIndex(timestamps.date, tz="utc")
+    day_fraction = (timestamps - timestamps_date) / pd.Timedelta(days=1)
+    year_length = 365 + timestamps.is_leap_year
+    year_fraction = (timestamps.dayofyear - 1 + day_fraction) / year_length
+    fractional_year = timestamps.year + year_fraction
+    return np.interp(fractional_year, tsi_data.coords["time"].data, tsi_data.data)
 
 
 def get_solar_radiation_loc(lon: float, lat: float, altitude: float,
