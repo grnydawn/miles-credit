@@ -1,254 +1,184 @@
-save_loc: "/glade/derecho/scratch/schreck/repos/miles-credit/results/wxformer/quarter/large_multi"
+# --------------------------------------------------------------------------------------------------------------------- #
+# This yaml file implements hourly state-in-state-out crossformer
+# on NSF NCAR HPCs (casper.ucar.edu and derecho.hpc.ucar.edu) 
+# The model is trained on hourly model-level ERA5 data with top solar irradiance, geopotential, and land-sea mask
+# Output variables: model level [U, V, T, Q], single level [SP, t2m], and 500 hPa [U, V, T, Z, Q]
+# --------------------------------------------------------------------------------------------------------------------- #
+save_loc: '/glade/work/ksha/CREDIT_runs/wxformer_1h/'
 seed: 1000
 
 data:
-    # upper-air variables, must be YEARLY zarr or nc with (time, level, latitude, longitude) coords
-    # files must have the listed variable names 
-    # upper-air variables will be normalized by the dataloader, users do not need to normalize them
+    # upper-air variables
     variables: ['U','V','T','Q']
     save_loc: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
-    
-    # surface variables, must be YEARLY zarr or nc with (time, latitude, longitude) coords
-    # files must have the listed variable names
-    # surface variables will be normalized by the dataloader, users do not need to normalize them
+
+    # surface variables
     surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
     save_loc_surface: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
-
-    # diagnostic variables, must be YEARLY zarr or nc with (time, latitude, longitude) coords
-    # files must have the listed variable names 
-    # diagnostic  variables will be normalized by the dataloader, users do not need to normalize them
-    # diagnostic_variables: ['tp'] 
-    # save_loc_diagnostic: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/ERA5_regrid_tp_*'
     
-    # forcing variables, must be a single zarr or nc with (time, latitude, longitude) coords
-    # forcing variables must be normalized by the user 
-    forcing_variables: ['TSI']   
-    save_loc_forcing: '/glade/campaign/cisl/aiml/ksha/CREDIT/forcing_norm.nc'
+    # dynamic forcing variables
+    dynamic_forcing_variables: ['tsi']
+    save_loc_dynamic_forcing: '/glade/derecho/scratch/dgagne/credit_solar_1h_0.25deg/*.nc'
     
-    # static variables must be a single zarr or nc with (latitude, longitude) coords
-    # static variables must be normalized by user 
+    # static variables
     static_variables: ['Z_GDS4_SFC','LSM'] 
-    save_loc_static: '/glade/campaign/cisl/aiml/ksha/CREDIT/static_norm.nc'
-
-    # z-score files, they must be zarr or nc with (level,) coords
-    # they must include all the 'variables', 'surface_variables', 'diagnostic_variables' above
-    mean_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.mean.Lev.SLO.nc'
-    std_path: '/glade/derecho/scratch/schreck/STAGING/All_2010_staged.std.Lev.SLO.nc'
+    save_loc_static: '/glade/campaign/cisl/aiml/ksha/CREDIT/static_norm_old.nc'
     
-    # # years to train the model, [first_year, last_yeat]
+    # mean / std path
+    mean_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/ERA5_mean_1h.nc'
+    std_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/ERA5_std_1h.nc'
+    
+    # train / validation split
     train_years: [1979, 2014]
-    # years to validate the model
-    valid_years: [2014, 2018] 
+    valid_years: [2014, 2018]
     
-    # std_new is the new data workflow that works with z-score
+    # data workflow
     scaler_type: 'std_new'  
-
-    # number of input time frames
-    # 2 for Fuxi, 
-    # 1 for a state-in-state-out model
-    history_len: 2
-    valid_history_len: 2    # keep it the same as "history_len"
-
-    # number of forecast lead times to predict FOR TRAINING 
-    # 0 for single-step training
-    # 1, 2, 3, ... for multi-step training
-    forecast_len: 119
-    # the "forecast_len" used for validation set, can be the same as "forecast_len"
-    valid_forecast_len: 47   
-
-    # TRAINING ONLY
-    # when forecast_len = 0, it does nothing
-    # when forecast_len > 0, it applies training loss to the last (forecasted) lead time only
-    # this option speed-up multi-step training
-    one_shot: True          
-                            
-    # number of hours for each forecast step
-    # lead_time_periods = 6 for 6 hourly model and 6 hourly taining data
-    # lead_time_periods = 1 for hourly model and hourly taining data
-    lead_time_periods: 6
-
-    # *NOT A STABLE FEATURE
-    # this is the keyword that resolves the mismatch between 6 hourly model and hourly data
-    # skip_periods = 6 will train a 6 hourly model on hourly data, by skipping and picking every 6 hour
-    # default is null or skip_periods = 1
+    
+    # number of input states
+    # state-in-state-out
+    history_len: 1
+    valid_history_len: 1
+    
+    # number of forecast steps to compute loss
+    # 0 for single step training / validation
+    # larger than 0 for multi-step training / validation
+    forecast_len: 0
+    valid_forecast_len: 0
+    
+    # one_shot: True --> compute loss on the last forecast step only
+    # one_shot: False --> compute loss on all forecast steps
+    one_shot: True
+    
+    # 1 for hourly model
+    lead_time_periods: 1
+    
+    # do not use skip_period
     skip_periods: null
     
-    # 'std_new' has stacks forcing first, and then static into batches, 'std' stacks static first.
-    # use True if the model was trained using the old 'std' and switching to 'std_new'
-    static_first: True  
+    # compatible with the old 'std'
+    static_first: True
     
 trainer:
-    type: "standard"
-    mode: fsdp # none, ddp, fsdp
+    # type: standard for single-step or one-shot multi-step training
+    # type: multi-step for the "real" multi-step training
+    
+    type: standard # <---------- change to your type
+    
+    # use fsdp
+    mode: fsdp
+    cpu_offload: True
+    activation_checkpoint: True
+    
+    load_weights: False # <----- change if load weights
+    load_optimizer: False # <--- change if load optimizer
+    skip_validation: False
+    
+    learning_rate: 1.0e-03 # <-- change to your lr
+    weight_decay: 0
+    
     train_batch_size: 1
     valid_batch_size: 1
-    batches_per_epoch: 100 # Set to 0 to use len(dataloader)
-    valid_batches_per_epoch: 100
-    learning_rate: 1.0e-07
-    weight_decay: 1.0e-05
-    start_epoch: 110
-    epochs: 111
-    train_one_epoch: True
+    
+    batches_per_epoch: 1000
+    valid_batches_per_epoch: 50
+    stopping_patience: 5
+    
+    # total number of epochs
+    # can also use --> train_one_epoch: True
+    start_epoch: 0
+    epochs: 20 
+
+    # Automatic Mixed Precision: False
     amp: False
-    grad_accum_every: 1
-    grad_max_norm: 1.0
-    thread_workers: 4
-    valid_thread_workers: 4
-    stopping_patience: 50
-    teacher_forcing_ratio: 0.5 #0.9886539666794065
-    stop_rollout: 0.9
-    skip_validation: True
-    load_weights: True
-    load_optimizer: True
+    
     use_scheduler: False
-    activation_checkpoint: True
-    cpu_offload: False
-    update_learning_rate: True
-    #scheduler: {'scheduler_type': 'cosine-annealing', first_cycle_steps: 500, cycle_mult: 6.0, max_lr: 5.0e-04, min_lr: 5.0e-07, warmup_steps: 499, gamma: 0.7}
-    # scheduler: {scheduler_type: plateau, mode: min, factor: 0.1, patience: 5, cooldown: 2, min_lr: 1e-6, epsilon: 1e-8, verbose: true, threshold: 1e-4}
-    scheduler: {'scheduler_type': 'lambda'}
+    
+    # rescale loss as loss = loss / grad_accum_every
+    grad_accum_every: 1 
+    # gradient clipping
+    grad_max_norm: 1.0
+    
+    # number of workers
+    thread_workers: 4
+    valid_thread_workers: 0
   
 model:
+    # crossformer example
     type: "crossformer"
-    image_height: 640    # Image height (default: 640)
-    patch_height: 1      # Patch height (default: 2)
-    image_width: 1280    # Image width (default: 1280)
-    patch_width: 1       # Patch width (default: 2)
-    levels: 15           # Number of levels (default: 15)
-    frames: 2            # Number of frames (default: 2)
-    frame_patch_size: 1  # Frame patch size (default: 2)
-    channels: 4          # Channels (default: 4)
-    surface_channels: 7  # Surface channels (default: 7)
-    static_channels: 3   # Static channels (default: 3)
-    dim: [512, 1024, 2048, 4096]  #[96, 192, 384, 768]          # Dimensionality of each layer (default: [64, 128, 256, 512])
-    depth: [2, 2, 8, 2] #[2, 2, 5, 2]                    # Depth of each layer (default: [2, 2, 8, 2])
-    global_window_size: [2, 2, 2, 1]      # Global window size for each layer (default: [10, 5, 2, 1])
-    local_window_size: 2                  # Local window size (default: 10)
-    cross_embed_kernel_sizes:             # Kernel sizes for cross-embedding (default: [[4, 8, 16, 32], [2, 4], [2, 4], [2, 4]])
+    frames: 1                         # number of input states (default: 1)
+    image_height: 640                 # number of latitude grids (default: 640)
+    image_width: 1280                 # number of longitude grids (default: 1280)
+    levels: 15                        # number of upper-air variable levels (default: 15)
+    channels: 4                       # upper-air variable channels
+    surface_channels: 7               # surface variable channels
+    input_only_channels: 3            # dynamic forcing, forcing, static channels
+    output_only_channels: 0           # diagnostic variable channels
+    
+    patch_width: 1                    # number of latitude grids in each 3D patch (default: 1)
+    patch_height: 1                   # number of longitude grids in each 3D patch (default: 1)
+    frame_patch_size: 1               # number of input states in each 3D patch (default: 1)
+    
+    dim: [512, 1024, 2048, 4096]      # dimensionality of each layer
+    depth: [2, 2, 8, 2]               # depth of each layer
+    global_window_size: [2, 2, 2, 1]  # global window size for each layer
+    local_window_size: 2              # local window size
+    cross_embed_kernel_sizes:         # kernel sizes for cross-embedding
     - [4, 8, 16, 32]
     - [2, 4]
     - [2, 4]
     - [2, 4]
-    cross_embed_strides: [2, 2, 2, 2]     # Strides for cross-embedding (default: [4, 2, 2, 2])
-    attn_dropout: 0.                      # Dropout probability for attention layers (default: 0.0)
-    ff_dropout: 0.                        # Dropout probability for feed-forward layers (default: 0.0)
-    pad_lon: 80
-    pad_lat: 80
-    use_spectral_norm: True
+    cross_embed_strides: [2, 2, 2, 2] # Strides for cross-embedding (default: [4, 2, 2, 2])
+    attn_dropout: 0.                  # Dropout probability for attention layers (default: 0.0)
+    ff_dropout: 0.                    # Dropout probability for feed-forward layers (default: 0.0)
+    
+    # map boundary padding
+    pad_lon: 80             # number of grids to pad on 0 and 360 deg lon
+    pad_lat: 80             # number of grids to pad on -90 and 90 deg lat
     
 loss: 
+    # the main training loss
     training_loss: "mse"
-    use_vgg: False
-    use_power_loss: False # use either power or spectral loss
+    
+    # power loss (x), spectral_loss (x)
+    use_power_loss: False
     use_spectral_loss: False
-    spectral_wavenum_init: 20
-    spectral_lambda_reg: 0.1 # power loss is order of 1e1 (usually between 1-10)
+    
+    # use latitude weighting
     use_latitude_weights: True
     latitude_weights: "/glade/u/home/wchapman/MLWPS/DataLoader/LSM_static_variables_ERA5_zhght.nc"
+    
+    # turn-off variable weighting
     use_variable_weights: False
-    variable_weights:
-        U: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
-        V: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
-        T: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
-        Q: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
-        SP: 0.1
-        t2m: 1.0
-        V500: 0.1
-        U500: 0.1
-        T500: 0.1
-        Z500: 0.1
-        Q500: 0.1
-
+    
 predict:
-    forecasts: 
-        type: "custom"
-        start_year: 2020
-        start_month: 1
-        start_day: 1
-        days: 10
-        start_hours: [0, 12]
-        duration: 384 # 1088
-    # forecasts: [
-    #     ["2020-01-01 00:00:00", "2020-01-10 23:00:00"],
-    #     ["2020-02-01 00:00:00", "2020-02-10 23:00:00"],
-    #     ["2020-03-01 00:00:00", "2020-03-10 23:00:00"],
-    #     ["2020-04-01 00:00:00", "2020-04-10 23:00:00"],
-    #     ["2020-05-01 00:00:00", "2020-05-10 23:00:00"],
-    #     ["2020-06-01 00:00:00", "2020-06-10 23:00:00"],
-    #     ["2020-07-01 00:00:00", "2020-07-10 23:00:00"],
-    #     ["2020-08-01 00:00:00", "2020-08-10 23:00:00"],
-    #     ["2020-09-01 00:00:00", "2020-09-10 23:00:00"],
-    #     ["2020-10-01 00:00:00", "2020-10-10 23:00:00"],
-    #     ["2020-11-01 00:00:00", "2020-11-10 23:00:00"],
-    #     ["2020-12-01 00:00:00", "2020-12-10 23:00:00"]
-    # ]
-    # use_laplace_filter: True
-    # filter_every: 3
-    save_forecast: "/glade/derecho/scratch/schreck/credit/large/" # "/glade/campaign/cisl/aiml/credit/large/"
-    save_format: "nc"
-
-visualization:
-    sigma_level_visualize:
-        variable_keys: [] #['U','V','T','Q']  # variable keys as defined in **[data][variables][...]**
-        visualize_levels: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]     # sigma levels (by their indices) to visualize 
-        variable_names: ['U wind [m/s]', # the name of each variable
-                         'V wind [m/s]', # must be consistent with **variable_indices**
-                         'Air temperature [$^\circ$K]',
-                         'Specific humidity [kg/kg]']
-        variable_factors: [1, 1, 1, 1]
-        variable_range: [auto, auto, auto, auto, auto, auto, auto, auto, auto, auto, auto, auto, auto, auto, auto] # use auto or provide a list of [min_var, max_var]; it applies to all levels
-        colormaps: ['Spectral_r', 'Spectral_r', 'viridis_plasma', 'YlGn']
-        file_name_prefix: 'global_sigma'
-    diagnostic_variable_visualize:
-        variable_keys: [] # ['V500', 'U500','T500','Z500','Q500']
-        visualize_levels: ['none', 'none', 'none', 'none', 'none'] # none for single level variables
-        variable_names: ['500 hPa V Wind [m/s]', 
-                         '500 hPa U Wind [m/s]',
-                         '500 hPa Air temperature [$^\circ$K]',
-                         '500 hPa Geopotential Height [km]',
-                         '500 hPa Specific humidity [kg/kg]']
-        variable_factors: [1, 1, 1, 0.001, 1]
-        variable_range: [auto, auto, [220, 300], [50, 60], auto]
-        colormaps: ['Spectral_r', 'Spectral_r', 'viridis_plasma', 'Spectral_r', 'YlGn']
-        file_name_prefix: 'global_diagnostics'
-    surface_visualize:
-        variable_keys: [] # ['SP','t2m']
-        visualize_levels: ['none', 'none']
-        variable_names: ['Surface Pressure [hPa]', 
-                         '2-m Air Temperature [$^\circ$K]']
-        variable_factors: [0.01, 1]
-        variable_range: [[650, 1100], [200, 350]]
-        colormaps: ['Spectral', 'viridis_plasma',]
-        file_name_prefix: 'global_surface'
-    map_projection: 'EckertIII' # PlateCarree, LambertCylindrical, Miller, EckertIII, Mollweide, Robinson
-    save_options: {'dpi':250, 
-                   'orientation':'portrait', 
-                   'bbox_inches':'tight', 
-                   'pad_inches':0.1, 
-                   'transparent':False,
-                   'format':'png'}
-    video_format: 'gif' # gif, mp4, none
+    forecasts:
+        type: "custom"       # keep it as "custom"
+        start_year: 2020     # year of the first initialization (where rollout will start)
+        start_month: 1       # month of the first initialization
+        start_day: 1         # day of the first initialization
+        start_hours: [0, 12] # hour-of-day for each initialization, 0 for 00Z, 12 for 12Z
+        duration: 30         # number of days to initialize, starting from the (year, mon, day) above
+                             # duration should be divisible by the number of GPUs 
+                             # (e.g., duration: 384 for 365-day rollout using 32 GPUs)
+        days: 2              # forecast lead time as days (1 means 24-hour forecast)
+        
+    save_forecast: '/glade/derecho/scratch/ksha/CREDIT/wxformer_1h/'
+    save_vars: ['SP','t2m','V500','U500','T500','Z500','Q500']
+    
+    # turn-off low-pass filter
+    use_laplace_filter: False
+    
+    # deprecated
+    # save_format: "nc"
 
 pbs: #derecho
-    conda: "credit"
+    conda: "/glade/work/ksha/miniconda3/envs/credit"
     project: "NAML0001"
-    job_name: "xformer-fsdp"
+    job_name: "wxformer_1h"
     walltime: "12:00:00"
-    nodes: 1
+    nodes: 8
     ncpus: 64
     ngpus: 4
     mem: '480GB'
     queue: 'main'
-    
-# pbs: # casper
-#     conda: "/glade/work/schreck/miniconda3/envs/evidential"
-#     job_name: 'latlon'
-#     nodes: 1
-#     ncpus: 8
-#     ngpus: 1
-#     mem: '128GB'
-#     walltime: '12:00:00'
-#     gpu_type: 'a100'
-#     cpu_type: 'milan'
-#     project: 'NAML0001'
-#     queue: 'casper'
