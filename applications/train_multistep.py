@@ -234,7 +234,7 @@ def load_model_states_and_optimizer(conf, model, device):
 
         # Update the config file to the current epoch
         if "reload_epoch" in conf["trainer"] and conf["trainer"]["reload_epoch"]:
-            conf["trainer"]["start_epoch"] = ckpt["epoch"] + 1
+            conf["trainer"]["start_epoch"] = checkpoint["epoch"] + 1
 
         if scheduler is not None:
             scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
