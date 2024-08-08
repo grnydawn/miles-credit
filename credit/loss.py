@@ -169,22 +169,15 @@ class PSDLoss(nn.Module):
 
 
 def latititude_weights(conf):
-    cos_lat = xr.open_dataset(conf["loss"]["latitude_weights"])["coslat"].values
-    # Normalize over lat
-    cos_lat_sum = cos_lat.sum(axis=0) / cos_lat.shape[0]
-    L = cos_lat / cos_lat_sum
+    _lat = xr.open_dataset(conf["loss"]["latitude_weights"])["latitude"].values
+    dims_lon = xr.open_dataset(conf["loss"]["latitude_weights"])["longitude"].shape[0]
+
+    weights = np.cos(np.deg2rad(_lat))
+    weights = weights / np.mean(weights)
+    repeated_weights = np.repeat(weights[np.newaxis, :], dims_lon, axis=0)
+    L= repeated_weights.T
+    
     return torch.from_numpy(L).float()
-
-#     # Compute the latitude-weighting factor for each row
-#     L = cos_lat / cos_lat_sum
-#     L = L / L.sum()
-
-#     min_val = np.min(L) // 2
-#     max_val = np.max(L)
-#     normalized_L = (L - min_val) / (max_val - min_val)
-
-#     return torch.from_numpy(normalized_L).float()
-
 
 def variable_weights(conf, channels, surface_channels, frames):
     # Load weights for U, V, T, Q
@@ -230,10 +223,7 @@ class VariableTotalLoss2D(torch.nn.Module):
 
         self.lat_weights = None
         if conf["loss"]["use_latitude_weights"]:
-            lat = xr.open_dataset(lat_file)["latitude"].values
-            w_lat = np.cos(np.deg2rad(lat))
-            w_lat = w_lat / w_lat.mean()
-            self.lat_weights = torch.from_numpy(w_lat).unsqueeze(0).unsqueeze(-1)
+            self.lat_weights = latititude_weights(conf)[:,10].unsqueeze(0).unsqueeze(-1)
 
         self.var_weights = None
         if conf["loss"]["use_variable_weights"]:

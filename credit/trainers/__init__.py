@@ -5,7 +5,8 @@ import logging
 # Import trainer classes
 from credit.trainers.trainerERA5_v1 import Trainer as TrainerDeprecated
 from credit.trainers.trainerERA5_v2 import Trainer as TrainerStandard
-from credit.trainers.trainerERA5_multistep import Trainer as TrainerMultiStep
+from credit.trainers.trainerERA5_multistep_v1 import Trainer as TrainerMultiStepV1
+from credit.trainers.trainerERA5_multistep_v2 import Trainer as TrainerMultiStepV2
 from credit.trainers.trainer404 import Trainer as Trainer404
 
 logger = logging.getLogger(__name__)
@@ -15,7 +16,8 @@ logger = logging.getLogger(__name__)
 trainer_types = {
     "standard-deprecated": (TrainerDeprecated, "Loading a deprecated version of the standard trainer. It will not work with forcing config options."),
     "standard": (TrainerStandard, "Loading a standard trainer."),
-    "multi-step": (TrainerMultiStep, "Loading a multi-step trainer."),
+    "multi-step-deprecated": (TrainerMultiStepV1, "Loading a multi-step trainer."),
+    "multi-step": (TrainerMultiStepV2, "Loading a multi-step trainer."),
     "conus404": (Trainer404, "Loading a standard trainer for the CONUS404 dataset.")
 }
 

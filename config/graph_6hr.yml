@@ -1,4 +1,4 @@
-save_loc: "/glade/work/$USER/repos/global/miles-credit/results/wxformer_6h/"
+save_loc: "/glade/derecho/scratch/akn7/STAGING/miles-credit/results/graph_new/one/"
 seed: 1000
 
 data:
@@ -23,12 +23,11 @@ data:
     skip_periods: null
     
 trainer:
-    type: "standard"
     mode: none # none, ddp, fsdp
     train_batch_size: 1
     valid_batch_size: 1
     batches_per_epoch: 1000 # Set to 0 to use len(dataloader)
-    valid_batches_per_epoch: 100
+    valid_batches_per_epoch: 10
     learning_rate: 5.0e-04
     weight_decay: 1.0e-05
     start_epoch: 1
@@ -51,31 +50,19 @@ trainer:
     scheduler: {'scheduler_type': 'lambda'}
 
 model:
-    type: "crossformer"
-    image_height: 640    # Image height (default: 640)
-    patch_height: 1      # Patch height (default: 2)
-    image_width: 1280    # Image width (default: 1280)
-    patch_width: 1       # Patch width (default: 2)
+    type: "graph"
     levels: 15           # Number of levels (default: 15)
-    frames: 1            # Number of frames (default: 2)
-    frame_patch_size: 2  # Frame patch size (default: 2)
-    channels: 4          # Channels (default: 4)
-    surface_channels: 7  # Surface channels (default: 7)
-    dim: [128, 256, 512, 1024]              # Dimensionality of each layer (default: [64, 128, 256, 512])
-    depth: [2, 2, 8, 2]                    # Depth of each layer (default: [2, 2, 8, 2])
-    global_window_size: [10, 5, 2, 1]      # Global window size for each layer (default: [10, 5, 2, 1])
-    local_window_size: 10                  # Local window size (default: 10)
-    cross_embed_kernel_sizes:             # Kernel sizes for cross-embedding (default: [[4, 8, 16, 32], [2, 4], [2, 4], [2, 4]])
-    - [4, 8, 16, 32]
-    - [2, 4]
-    - [2, 4]
-    - [2, 4]
-    cross_embed_strides: [2, 2, 2, 2]     # Strides for cross-embedding (default: [4, 2, 2, 2])
-    attn_dropout: 0.                      # Dropout probability for attention layers (default: 0.0)
-    ff_dropout: 0.                        # Dropout probability for feed-forward layers (default: 0.0)
-    pad_lon: 80
-    pad_lat: 80
+    history_len: 2      # Number of time steps used as input (default: 2)
+    n_variables: 4          # Atmospheric variables (default: 4)
+    n_surface_variables: 7  # Surface channels (default: 7)
+    n_static_variables: 3
+    hidden_size: 256      # Dimension of latent vectors (default: 128)
+    dim_head: 64                # Dim of heads (default: 32)
+    dropout: 0.                      # Dropout probability for attention layers (default: 0.0)
+    n_blocks: 4                       # Number of GraphTransform blocks (default: 2)
+    edge_path: "/glade/derecho/scratch/dgagne/credit_scalers/grid_edge_pairs_k_49_onedeg_ball.nc"
     use_spectral_norm: True
+    use_edge_attr: True
     
 loss: 
     training_loss: "mse"
@@ -103,7 +90,7 @@ loss:
 predict:
     forecasts: 
         type: "custom"
-        start_year: 2020
+        start_year: 2018
         start_month: 6
         start_day: 1
         days: 10
@@ -146,7 +133,7 @@ visualization:
                          '500 hPa Geopotential Height [km]',
                          '500 hPa Specific humidity [kg/kg]']
         variable_factors: [1, 1, 1, 0.001, 1]
-        variable_range: [auto, auto, [220, 300], [50, 60], auto]
+        variable_range: [[-20, 20], [-30, 30], [220, 300], [50, 60], [-0.003, 0.003]]
         colormaps: ['Spectral_r', 'Spectral_r', 'viridis_plasma', 'Spectral_r', 'YlGn']
         file_name_prefix: 'global_diagnostics'
     surface_visualize:
