@@ -181,6 +181,14 @@ class BaseTrainer(ABC):
         skip_validation = conf['trainer']['skip_validation'] if 'skip_validation' in conf['trainer'] else False
         flag_load_weights = conf['trainer']['load_weights']
 
+        # =========================================== #
+        # user can specify to run a fixed number of epochs
+        if 'num_epoch' in conf['trainer']:
+            print('the current job will run {} epochs max'.format(conf['trainer']['num_epoch']))
+        else:
+            conf['trainer']['num_epoch'] = 9999
+        # =========================================== #
+        
         # Reload the results saved in the training csv if continuing to train
         if (start_epoch == 0) or (flag_load_weights is False):
             results_dict = defaultdict(list)
@@ -198,9 +206,14 @@ class BaseTrainer(ABC):
                 if key == "index":
                     continue
                 results_dict[key] = list(saved_results[key])
-
+                
+        count = 0
         for epoch in range(start_epoch, epochs):
 
+            if count > conf['trainer']['num_epoch']:
+                print('{} epochs completed, exit'.format(conf['trainer']['num_epoch']))
+                break;
+            
             logging.info(f"Beginning epoch {epoch}")
 
             if not isinstance(train_loader.dataset, IterableDataset):
@@ -369,6 +382,8 @@ class BaseTrainer(ABC):
                 logging.info(f"Trial {trial.number} is stopping early")
                 break
 
+            count += 1
+            
             # Stop training if we get too close to the wall time
             if 'stop_after_epoch' in conf['trainer']:
                 if conf['trainer']['stop_after_epoch']:
