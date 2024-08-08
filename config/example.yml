@@ -156,6 +156,9 @@ trainer:
     
     # total number of epochs
     start_epoch: 0
+    # the trainer will stop after iterating a given number of epochs
+    # this works for any start_epoch and reload_epoch: True
+    num_epoch: 10
     # epcoh is saved in the checkpot.pt, this option reads the last epoch 
     # of the previous job and continue from there
     # useful for epoch-dependent schedulers
