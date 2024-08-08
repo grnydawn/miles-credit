@@ -397,10 +397,10 @@ class BridgescalerScaleState(object):
         x_3d_da = xr.DataArray(x_3d.numpy(),
                                dims=("time", "variable", "latitude", "longitude"),
                                coords=dict(variable=self.var_levels))
-        x_3d_transformed[:] = self.scaler_3d.inverse_transform(x_3d_da, channels_last=False).values
+        x_3d_transformed.numpy()[:] = self.scaler_3d.inverse_transform(x_3d_da, channels_last=False).values
         x_surface_da = xr.DataArray(x_surface.numpy(), dims=("time", "variable", "latitude", "longitude"),
                                     coords=dict(variable=self.surface_variables))
-        x_surface_transformed[:] = self.scaler_surf.inverse_transform(x_surface_da, channels_last=False).values
+        x_surface_transformed.numpy()[:] = self.scaler_surf.inverse_transform(x_surface_da, channels_last=False).values
         x_transformed = torch.cat((x_3d_transformed, x_surface_transformed), dim=1)
         return x_transformed.to(device)
 
@@ -413,10 +413,10 @@ class BridgescalerScaleState(object):
         x_3d_da = xr.DataArray(x_3d.numpy(),
                                dims=("time", "variable", "latitude", "longitude"),
                                coords=dict(variable=self.var_levels))
-        x_3d_transformed[:] = self.scaler_3d.transform(x_3d_da, channels_last=False).values
+        x_3d_transformed.numpy()[:] = self.scaler_3d.transform(x_3d_da, channels_last=False).values
         x_surface_da = xr.DataArray(x_surface.numpy(), dims=("time", "variable", "latitude", "longitude"),
                                     coords=dict(variable=self.surface_variables))
-        x_surface_transformed[:] = self.scaler_surf.transform(x_surface_da, channels_last=False).values
+        x_surface_transformed.numpy()[:] = self.scaler_surf.transform(x_surface_da, channels_last=False).values
         x_transformed = torch.cat((x_3d_transformed, x_surface_transformed), dim=1)
         return x_transformed.to(device)
 
