@@ -681,9 +681,14 @@ class SwinTransformerV2Cr(BaseModel):
         patch_size: int = 4,
         window_size: Optional[int] = None,
         img_window_ratio: int = 32,
-        in_chans: int = 3,
-        in_frames: int = 1,
-        out_chans: int = 3,
+        channels: int = 4,
+        levels: int = 15,
+        surface_channels: int = 7,
+        input_only_channels: int = 3,
+        output_only_channels: int = 0,
+        # in_chans: int = 3,
+        frames: int = 1,
+        # out_chans: int = 3,
         embed_dim: int = 96,
         depths: Tuple[int, ...] = (2, 2, 6, 2),
         num_heads: Tuple[int, ...] = (3, 6, 12, 24),
@@ -725,8 +730,9 @@ class SwinTransformerV2Cr(BaseModel):
         self.img_size: Tuple[int, int] = img_size
         self.window_size: int = window_size
         self.num_features: int = int(embed_dim)
-        self.in_frames = in_frames
-        self.out_chans: int = out_chans
+        self.frames = frames
+        self.in_chans = channels * levels + surface_channels + input_only_channels
+        self.out_chans = channels * levels + surface_channels + output_only_channels
         self.feature_info = []
         self.full_pos_embed = full_pos_embed
         self.checkpoint_stages = checkpoint_stages
@@ -739,7 +745,7 @@ class SwinTransformerV2Cr(BaseModel):
         self.patch_embed = PatchEmbed(
             img_size=img_size,
             patch_size=patch_size,
-            in_chans=in_chans,
+            in_chans=self.in_chans,
             embed_dim=embed_dim,
             norm_layer=norm_layer,
         )
@@ -827,7 +833,7 @@ class SwinTransformerV2Cr(BaseModel):
             # Reshape the tensor back to (B, C, 2, new lat, lon) using the values from x_shape
             x = torch.reshape(x, (x_shape[0], x_shape[1], x_shape[2], x_shape[3] + 2 * self.pad_lat, x_shape[4]))
 
-        if self.in_frames > 1:
+        if self.frames > 1:
             x = F.avg_pool3d(x, kernel_size=(2, 1, 1)).squeeze(2)
         else:  # case where only using one time-step as input
             x = x.squeeze(2)
@@ -935,27 +941,35 @@ if __name__ == "__main__":
     image_height = 640  # 640, 192
     image_width = 1280  # 1280, 288
     levels = 15
-    in_frames = 1
+    frames = 1
     channels = 4
     surface_channels = 7
-    static_channels = 3
+    input_only_channels = 3
+    output_only_channels = 0
     frame_patch_size = 2
     pad_lat = 40  # 48
     pad_lon = 40  # 32
 
-    in_chans = channels * levels + surface_channels + static_channels
-    out_chans = channels * levels + surface_channels
+    patch_size = 16 # 4
+    depths = 12
+    num_heads = 8
 
-    input_tensor = torch.randn(1, in_chans, in_frames, image_height, image_width).to("cuda")
+    in_chans = channels * levels + surface_channels + input_only_channels
+    out_chans = channels * levels + surface_channels + output_only_channels
+
+    input_tensor = torch.randn(1, in_chans, frames, image_height, image_width).to("cuda")
 
     model = SwinTransformerV2Cr(
         img_size=(image_height, image_width),
-        patch_size=4,
-        depths=(12,),
-        num_heads=(8,),
-        in_chans=in_chans,
-        in_frames=in_frames,
-        out_chans=out_chans,
+        patch_size=patch_size,
+        depths=(depths,),
+        num_heads=(num_heads,),
+        channels=channels,
+        surface_channels=surface_channels,
+        input_only_channels=input_only_channels,
+        output_only_channels=output_only_channels,
+        levels=levels,
+        frames=frames,
         embed_dim=768,
         img_window_ratio=80,
         drop_path_rate=0.1,
