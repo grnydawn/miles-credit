@@ -342,5 +342,288 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
     return conf
 
 
-
+def input_data_checks(conf, print_summary=False):
+    '''
+    Note: this function is designed for model training, NOT for rollout
+    
+    This function checks the input data has provided by conf
+    The following items are covered:
+        - All yearly files (upper-air, surface, dynamic forcing, diagnostic) 
+          can support conf['data']['train_years'], conf['data']['valid_years']
+        - All variables (upper-air, surface, dynamic forcing, diagnostic)
+          do exist in their corresponding files
+          Note: only one file of each group will be checked.
+        - All files (upper-air, surface, dynamic forcing, diagnostic, forcing, static, mean, std, lat_weights)
+          have the same coordinate names and coordinate values
+          Note: this part checks lat, lon, level coordinates, and it ignores 'time' coordinates.
+    ----------------------------------------------------------------------------------
+    Where is it applied?
+        - applications/train.py
+        - applications/train_multistep.py
+          
+    '''
+    # -------------------------------------------------- #
+    # import training / validation years from conf
+    
+    train_years_range = conf['data']['train_years']
+    valid_years_range = conf['data']['valid_years']
+    
+    # convert year info to str for file name search
+    train_years = [str(year) for year in range(train_years_range[0], train_years_range[1])]
+    valid_years = [str(year) for year in range(valid_years_range[0], valid_years_range[1])]
+    
+    # -------------------------------------------------- #
+    # check file consistencies
+    ## upper-air files
+    all_ERA_files = sorted(glob(conf["data"]["save_loc"]))
+    
+    train_ERA_files = [file for file in all_ERA_files if any(year in file for year in train_years)]
+    valid_ERA_files = [file for file in all_ERA_files if any(year in file for year in valid_years)]
+    
+    for i_year, year in enumerate(train_years):
+        assert year in train_ERA_files[i_year], (
+            "[Year {}] is missing from [upper-air files {}]".format(year, conf["data"]["save_loc"]))
+        
+    for i_year, year in enumerate(valid_years):
+        assert year in valid_ERA_files[i_year], (
+            "[Year {}] is missing from [upper-air files {}]".format(year, conf["data"]["save_loc"]))
+    
+    ## surface files
+    if conf['data']['flag_surface']:
+        surface_files = sorted(glob(conf["data"]["save_loc_surface"]))
+        
+        train_surface_files = [file for file in surface_files if any(year in file for year in train_years)]
+        valid_surface_files = [file for file in surface_files if any(year in file for year in valid_years)]
+        
+        for i_year, year in enumerate(train_years):
+            assert year in train_surface_files[i_year], (
+                "[Year {}] is missing from [surface files {}]".format(year, conf['data']['save_loc_surface']))
+            
+        for i_year, year in enumerate(valid_years):
+            assert year in valid_surface_files[i_year], (
+                "[Year {}] is missing from [surface files {}]".format(year, conf['data']['save_loc_surface']))
+    
+    ## dynamic forcing files
+    if conf['data']['flag_dyn_forcing']:
+        dyn_forcing_files = sorted(glob(conf["data"]["save_loc_dynamic_forcing"]))
+        
+        train_dyn_forcing_files = [file for file in dyn_forcing_files if any(year in file for year in train_years)]
+        valid_dyn_forcing_files = [file for file in dyn_forcing_files if any(year in file for year in valid_years)]
+        
+        for i_year, year in enumerate(train_years):
+            assert year in train_dyn_forcing_files[i_year], (
+                "[Year {}] is missing from [dynamic forcing files {}]".format(year, conf["data"]["save_loc_dynamic_forcing"]))
+            
+        for i_year, year in enumerate(valid_years):
+            assert year in valid_dyn_forcing_files[i_year], (
+                "[Year {}] is missing from [dynamic forcing files {}]".format(year, conf["data"]["save_loc_dynamic_forcing"]))
+    
+    ## diagnostic files
+    if conf['data']['flag_diagnostic']:
+        diagnostic_files = sorted(glob(conf["data"]["save_loc_diagnostic"]))
+        
+        train_diagnostic_files = [file for file in diagnostic_files if any(year in file for year in train_years)]
+        valid_diagnostic_files = [file for file in diagnostic_files if any(year in file for year in valid_years)]
+        
+        for i_year, year in enumerate(train_years):
+            assert year in train_diagnostic_files[i_year], (
+                "[Year {}] is missing from [diagnostic files {}]".format(year, conf["data"]["save_loc_diagnostic"]))
+            
+        for i_year, year in enumerate(valid_years):
+            assert year in valid_diagnostic_files[i_year], (
+                "[Year {}] is missing from [diagnostic files {}]".format(year, conf["data"]["save_loc_diagnostic"]))
+    
+    if print_summary:
+        print('Filename checking passed')
+        print("All input files can cover conf['data']['train_years'] and conf['data']['valid_years']")
+        
+    # --------------------------------------------------------------------------- #
+    # variable checks
+    # !!! the first train file (e.g., train_ERA_files[0]) is opened and examined
+    
+    # upper-air variables
+    ds_upper_air = get_forward_data(train_ERA_files[0])
+    varnames_upper_air = list(ds_upper_air.keys())
+    
+    assert all(varname in varnames_upper_air for varname in conf['data']['variables']), (
+        "upper-air variables [{}] are not fully covered by conf['data']['save_loc']".format(
+            conf['data']['variables']))
+        
+    # collecting all variables that require zscores
+    all_vars = conf['data']['variables']
+    
+    # surface variables
+    if conf['data']['flag_surface']:
+        ds_surface = get_forward_data(train_surface_files[0])
+        varnames_surface = list(ds_surface.keys())
+        
+        assert all(varname in varnames_surface for varname in conf['data']['surface_variables']), (
+            "Surface variables [{}] are not fully covered by conf['data']['save_loc_surface']".format(
+                conf['data']['surface_variables']))
+            
+        all_vars += conf['data']['surface_variables']
+    
+    # dynamic forcing variables
+    if conf['data']['flag_dyn_forcing']:
+        ds_dyn_forcing = get_forward_data(train_dyn_forcing_files[0])
+        varnames_dyn_forcing = list(ds_dyn_forcing.keys())
+        
+        assert all(varname in varnames_dyn_forcing for varname in conf['data']['dynamic_forcing_variables']), (
+            "Dynamic forcing variables [{}] are not fully covered by conf['data']['save_loc_dynamic_forcing']".format(
+                conf['data']['dynamic_forcing_variables']))
+            
+        all_vars += conf['data']['dynamic_forcing_variables']
+    
+    # diagnostic variables
+    if conf['data']['flag_diagnostic']:
+        ds_diagnostic = get_forward_data(train_diagnostic_files[0])
+        varnames_diagnostic = list(ds_diagnostic.keys())
+        
+        assert all(varname in varnames_diagnostic for varname in conf['data']['diagnostic_variables']), (
+            "Diagnostic variables [{}] are not fully covered by conf['data']['save_loc_diagnostic']".format(
+                conf['data']['diagnostic_variables']))
+    
+        all_vars += conf['data']['diagnostic_variables']
+    
+    # forcing variables
+    if conf['data']['flag_forcing']:
+        ds_forcing = get_forward_data(conf['data']['save_loc_forcing'])
+        varnames_forcing = list(ds_forcing.keys())
+        
+        assert all(varname in varnames_forcing for varname in conf['data']['forcing_variables']), (
+            "Forcing variables [{}] are not fully covered by conf['data']['save_loc_forcing']".format(
+                conf['data']['forcing_variables']))
+    
+    # static variables
+    if conf['data']['flag_static']:
+        ds_static = get_forward_data(conf['data']['save_loc_static'])
+        varnames_static = list(ds_static.keys())
+        
+        assert all(varname in varnames_static for varname in conf['data']['static_variables']), (
+            "Static variables [{}] are not fully covered by conf['data']['save_loc_static']".format(
+                conf['data']['static_variables']))
+    
+    # comparing all_vars against mean, std files
+    ds_mean = get_forward_data(conf['data']['mean_path'])
+    varname_ds_mean = list(ds_mean.keys())
+    assert all(varname in varname_ds_mean for varname in all_vars), (
+        "Variables are not fully covered by conf['data']['mean_path']")
+    
+    ds_std = get_forward_data(conf['data']['std_path'])
+    varname_ds_std = list(ds_std.keys())
+    assert all(varname in varname_ds_std for varname in all_vars), (
+        "Variables are not fully covered by conf['data']['std_path']")
+    
+    if print_summary:
+        print('Variable name checking passed')
+        print("All input files and zscore files have the required variables")
+        
+    # -------------------------------------------------- #
+    # xr.Dataset coordinate checks
+    # !!!! assuming time-coordinate is 'time' !!!!
+    # !!!! Can be improved !!!!
+    
+    coord_upper_air = list(ds_upper_air.coords.keys())
+    coord_upper_air.remove('time')
+    
+    # surface files
+    if conf['data']['flag_surface']:
+        coord_surface = list(ds_surface.coords.keys())
+        coord_surface.remove('time')
+        assert all(coord_name in coord_upper_air for coord_name in coord_surface), (
+            "Surface file coordinate names mismatched with upper-air files")
+        
+        for coord_name in coord_surface:
+            assert ds_upper_air.coords[coord_name].equals(ds_surface.coords[coord_name]), (
+                "coordinate {} mismatched between upper-air and surface files".format(coord_name))
+    
+    # dyn forcing files
+    if conf['data']['flag_dyn_forcing']:
+        coord_dyn_forcing = list(ds_dyn_forcing.coords.keys())
+        coord_dyn_forcing.remove('time')
+        assert all(coord_name in coord_upper_air for coord_name in coord_dyn_forcing), (
+            "Dynamic forcing file coordinate names mismatched with upper-air files")
+        
+        for coord_name in coord_dyn_forcing:
+            assert ds_upper_air.coords[coord_name].equals(ds_dyn_forcing.coords[coord_name]), (
+                "coordinate {} mismatched between upper-air and dynamic forcing files".format(coord_name))
+    
+    # diagnostic files
+    if conf['data']['flag_diagnostic']:
+        coord_diagnostic = list(ds_diagnostic.coords.keys())
+        coord_diagnostic.remove('time')
+        assert all(coord_name in coord_upper_air for coord_name in coord_diagnostic), (
+            "Diagnostic file coordinate names mismatched with upper-air files")
+        
+        for coord_name in coord_diagnostic:
+            assert ds_upper_air.coords[coord_name].equals(ds_diagnostic.coords[coord_name]), (
+                "coordinate {} mismatched between upper-air and diagnostic files".format(coord_name))
+    
+    # forcing files
+    if conf['data']['flag_forcing']:
+        coord_forcing = list(ds_forcing.coords.keys())
+        coord_forcing.remove('time')
+        assert all(coord_name in coord_upper_air for coord_name in coord_forcing), (
+            "Forcing file coordinate names mismatched with upper-air files")
+        
+        for coord_name in coord_forcing:
+            assert ds_upper_air.coords[coord_name].equals(ds_forcing.coords[coord_name]), (
+                "coordinate {} mismatched between upper-air and forcing files".format(coord_name))
+            
+        # ============================================== #
+        # !! assumed subdaily inputs, may need to fix !! #
+        assert len(ds_forcing['time']) % 366 == 0, (
+            "forcing file does not have 366 days")
+        # ============================================== #
+    
+    # static files (no time coordinate)
+    if conf['data']['flag_static']:
+        coord_static = list(ds_static.coords.keys())
+        assert all(coord_name in coord_upper_air for coord_name in coord_static), (
+            "Static file coordinate names mismatched with upper-air files")
+        
+        for coord_name in coord_static:
+            assert ds_upper_air.coords[coord_name].equals(ds_static.coords[coord_name]), (
+                "coordinate {} mismatched between upper-air and static files".format(coord_name))
+    
+    # zscore mean file (no time coordinate)
+    coord_mean = list(ds_mean.coords.keys())
+    assert all(coord_name in coord_upper_air for coord_name in coord_mean), (
+        "zscore mean file coordinate names mismatched with upper-air files")
+    
+    for coord_name in coord_mean:
+        assert ds_upper_air.coords[coord_name].equals(ds_mean.coords[coord_name]), (
+            "coordinate {} mismatched between upper-air and mean files".format(coord_name))
+        
+    # zscore std file (no time coordinate)
+    coord_std = list(ds_std.coords.keys())
+    assert all(coord_name in coord_upper_air for coord_name in coord_std), (
+        "zscore std file coordinate names mismatched with upper-air files")
+    
+    for coord_name in coord_std:
+        assert ds_upper_air.coords[coord_name].equals(ds_std.coords[coord_name]), (
+            "coordinate {} mismatched between upper-air and std files".format(coord_name))
+    
+    # lat / lon file
+    ds_weights = get_forward_data(conf['loss']['latitude_weights'])
+    coord_latlon = list(ds_weights.coords.keys())
+    
+    # ======================================================================================== #
+    # drop anything related to 'time'
+    # may need to be improved
+    time_coords = []
+    for coord_name in coord_latlon:
+        if 'time' in coord_name:
+            time_coords.append(coord_name)
+    coord_latlon = [coord_name for coord_name in coord_latlon if coord_name not in time_coords]
+    # ======================================================================================== #
+    
+    assert all(coord_name in coord_upper_air for coord_name in coord_latlon), (
+        "conf['loss']['latitude_weights'] file coordinate names mismatched with upper-air files")
+    
+    if print_summary:
+        print('Coordinate checking passed')
+        print("All input files, zscore files, and the lat/lon file share the same lat, lon, level coordinate name and values")
+        
+    return True
 
