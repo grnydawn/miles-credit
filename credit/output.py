@@ -91,7 +91,8 @@ def make_xarray(pred, forecast_datetime, lat, lon, conf):
         ),
     )
 
-    # save diagnostics and surface variables
+    # save surface variables
+    # !!! need to add diagnostic vars !!!
     darray_single_level = xr.DataArray(
         tensor_single_level.squeeze(2),
         dims=["time", "vars", "lat", "lon"],
