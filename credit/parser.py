@@ -3,6 +3,8 @@ parser.py
 -------------------------------------------------------
 Content:
     - CREDIT_main_parser
+    - training_data_check
+    - remove_string_by_pattern
 
 Yingkai Sha
 ksha@ucar.edu
@@ -342,7 +344,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
     return conf
 
 
-def input_data_checks(conf, print_summary=False):
+def training_data_check(conf, print_summary=False):
     '''
     Note: this function is designed for model training, NOT for rollout
     
@@ -482,7 +484,7 @@ def input_data_checks(conf, print_summary=False):
         assert all(varname in varnames_diagnostic for varname in conf['data']['diagnostic_variables']), (
             "Diagnostic variables [{}] are not fully covered by conf['data']['save_loc_diagnostic']".format(
                 conf['data']['diagnostic_variables']))
-    
+        
         all_vars += conf['data']['diagnostic_variables']
     
     # forcing variables
@@ -506,11 +508,13 @@ def input_data_checks(conf, print_summary=False):
     # comparing all_vars against mean, std files
     ds_mean = get_forward_data(conf['data']['mean_path'])
     varname_ds_mean = list(ds_mean.keys())
+    
     assert all(varname in varname_ds_mean for varname in all_vars), (
         "Variables are not fully covered by conf['data']['mean_path']")
     
     ds_std = get_forward_data(conf['data']['std_path'])
     varname_ds_std = list(ds_std.keys())
+    
     assert all(varname in varname_ds_std for varname in all_vars), (
         "Variables are not fully covered by conf['data']['std_path']")
     
@@ -524,12 +528,13 @@ def input_data_checks(conf, print_summary=False):
     # !!!! Can be improved !!!!
     
     coord_upper_air = list(ds_upper_air.coords.keys())
-    coord_upper_air.remove('time')
+    coord_upper_air = remove_string_by_pattern(coord_upper_air, 'time')
     
     # surface files
     if conf['data']['flag_surface']:
         coord_surface = list(ds_surface.coords.keys())
-        coord_surface.remove('time')
+        coord_surface = remove_string_by_pattern(coord_surface, 'time')
+        
         assert all(coord_name in coord_upper_air for coord_name in coord_surface), (
             "Surface file coordinate names mismatched with upper-air files")
         
@@ -540,7 +545,8 @@ def input_data_checks(conf, print_summary=False):
     # dyn forcing files
     if conf['data']['flag_dyn_forcing']:
         coord_dyn_forcing = list(ds_dyn_forcing.coords.keys())
-        coord_dyn_forcing.remove('time')
+        coord_dyn_forcing = remove_string_by_pattern(coord_dyn_forcing, 'time')
+        
         assert all(coord_name in coord_upper_air for coord_name in coord_dyn_forcing), (
             "Dynamic forcing file coordinate names mismatched with upper-air files")
         
@@ -551,7 +557,8 @@ def input_data_checks(conf, print_summary=False):
     # diagnostic files
     if conf['data']['flag_diagnostic']:
         coord_diagnostic = list(ds_diagnostic.coords.keys())
-        coord_diagnostic.remove('time')
+        coord_diagnostic = remove_string_by_pattern(coord_diagnostic, 'time')
+        
         assert all(coord_name in coord_upper_air for coord_name in coord_diagnostic), (
             "Diagnostic file coordinate names mismatched with upper-air files")
         
@@ -562,7 +569,8 @@ def input_data_checks(conf, print_summary=False):
     # forcing files
     if conf['data']['flag_forcing']:
         coord_forcing = list(ds_forcing.coords.keys())
-        coord_forcing.remove('time')
+        coord_forcing = remove_string_by_pattern(coord_forcing, 'time')
+        
         assert all(coord_name in coord_upper_air for coord_name in coord_forcing), (
             "Forcing file coordinate names mismatched with upper-air files")
         
@@ -579,6 +587,8 @@ def input_data_checks(conf, print_summary=False):
     # static files (no time coordinate)
     if conf['data']['flag_static']:
         coord_static = list(ds_static.coords.keys())
+        coord_static = remove_string_by_pattern(coord_static, 'time')
+        
         assert all(coord_name in coord_upper_air for coord_name in coord_static), (
             "Static file coordinate names mismatched with upper-air files")
         
@@ -588,6 +598,8 @@ def input_data_checks(conf, print_summary=False):
     
     # zscore mean file (no time coordinate)
     coord_mean = list(ds_mean.coords.keys())
+    coord_mean = remove_string_by_pattern(coord_mean, 'time')
+    
     assert all(coord_name in coord_upper_air for coord_name in coord_mean), (
         "zscore mean file coordinate names mismatched with upper-air files")
     
@@ -597,6 +609,8 @@ def input_data_checks(conf, print_summary=False):
         
     # zscore std file (no time coordinate)
     coord_std = list(ds_std.coords.keys())
+    coord_std = remove_string_by_pattern(coord_std, 'time')
+    
     assert all(coord_name in coord_upper_air for coord_name in coord_std), (
         "zscore std file coordinate names mismatched with upper-air files")
     
@@ -607,16 +621,7 @@ def input_data_checks(conf, print_summary=False):
     # lat / lon file
     ds_weights = get_forward_data(conf['loss']['latitude_weights'])
     coord_latlon = list(ds_weights.coords.keys())
-    
-    # ======================================================================================== #
-    # drop anything related to 'time'
-    # may need to be improved
-    time_coords = []
-    for coord_name in coord_latlon:
-        if 'time' in coord_name:
-            time_coords.append(coord_name)
-    coord_latlon = [coord_name for coord_name in coord_latlon if coord_name not in time_coords]
-    # ======================================================================================== #
+    coord_latlon = remove_string_by_pattern(coord_latlon, 'time')
     
     assert all(coord_name in coord_upper_air for coord_name in coord_latlon), (
         "conf['loss']['latitude_weights'] file coordinate names mismatched with upper-air files")
@@ -626,4 +631,16 @@ def input_data_checks(conf, print_summary=False):
         print("All input files, zscore files, and the lat/lon file share the same lat, lon, level coordinate name and values")
         
     return True
+
+def remove_string_by_pattern(list_string, pattern):
+    '''
+    Given a list of strings, remove some of them based on a given pattern
+    '''
+    # may need to be improved
+    pattern_collection = []
+    for single_string in list_string:
+        if pattern in single_string:
+            pattern_collection.append(single_string)
+            
+    return [single_string for single_string in list_string if single_string not in pattern_collection]
 
