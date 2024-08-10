@@ -10,8 +10,9 @@ Yingkai Sha
 ksha@ucar.edu
 '''
 
-import os
+#import os
 import warnings
+from glob import glob
 
 import numpy as np
 import xarray as xr
