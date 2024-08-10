@@ -4,6 +4,7 @@ parser.py
 Content:
     - CREDIT_main_parser
     - training_data_check
+    - predict_data_check
     - remove_string_by_pattern
 
 Yingkai Sha
@@ -18,6 +19,18 @@ import numpy as np
 import xarray as xr
 
 from credit.data import get_forward_data
+
+def remove_string_by_pattern(list_string, pattern):
+    '''
+    Given a list of strings, remove some of them based on a given pattern
+    '''
+    # may need to be improved
+    pattern_collection = []
+    for single_string in list_string:
+        if pattern in single_string:
+            pattern_collection.append(single_string)
+            
+    return [single_string for single_string in list_string if single_string not in pattern_collection]
 
 def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summary=False):
     '''
@@ -318,15 +331,17 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         assert 'save_forecast' in conf['predict'], (
             "Rollout save location ('save_forecast') is missing from conf['predict']")
         
+        conf['predict']['save_forecast'] = os.path.expandvars(conf['predict']['save_forecast'])
+        
         if 'use_laplace_filter' not in conf['predict']:
             conf['predict']['use_laplace_filter'] = False
-            
+        
         if 'metadata' not in conf['predict']:
             conf['predict']['metadata'] = False
-    
+        
         if 'save_vars' not in conf['predict']:
             conf['predict']['save_vars'] = []
-    
+        
         if 'mode' not in conf['predict']:
             if 'mode' in conf['trainer']:
                 conf['predict']['mode'] = conf['trainer']['mode']
@@ -351,7 +366,6 @@ def training_data_check(conf, print_summary=False):
     '''
     Note: this function is designed for model training, NOT for rollout
     
-    This function checks the input data has provided by conf
     The following items are covered:
         - All yearly files (upper-air, surface, dynamic forcing, diagnostic) 
           can support conf['data']['train_years'], conf['data']['valid_years']
@@ -635,15 +649,244 @@ def training_data_check(conf, print_summary=False):
         
     return True
 
-def remove_string_by_pattern(list_string, pattern):
+def predict_data_check(conf, print_summary=False):
     '''
-    Given a list of strings, remove some of them based on a given pattern
+    Note: this function is designed for model rollout. 
+          Diagnostic variables are checked in mean and std files only
+          
+    The following items are covered:
+        - All variables (upper-air, surface, dynamic forcing)
+          do exist in their corresponding files
+          Note: only one file of each group will be checked.
+        - All files (upper-air, surface, dynamic forcing, forcing, static, mean, std, lat_weights)
+          have the same coordinate names and coordinate values
+          Note: this part checks lat, lon, level coordinates, and it ignores 'time' coordinates.
+    ----------------------------------------------------------------------------------
+    Where is it applied?
+        - applications/rollout_to_netcdf_new.py
+          
     '''
-    # may need to be improved
-    pattern_collection = []
-    for single_string in list_string:
-        if pattern in single_string:
-            pattern_collection.append(single_string)
+    # ----------------------------------------------------------------- #
+    # a rough estimate of how manys years of initializations are needed
+    # !!! Can be improved !!!
+    if 'duration' in conf['predict']['forecasts']:
+        N_years = conf['predict']['forecasts']['duration'] // 365
+    else:
+        N_years = 1
+    
+    years_range = [conf['predict']['start_year'], conf['predict']['start_year']+N_years]
+    
+    pred_years = [str(year) for year in range(years_range[0], years_range[1])]
+    
+    # -------------------------------------------------- #
+    # check file consistencies
+    ## upper-air files
+    all_ERA_files = sorted(glob(conf["data"]["save_loc"]))
+    
+    pred_ERA_files = [file for file in all_ERA_files if any(year in file for year in pred_years)]
+    
+    for i_year, year in enumerate(pred_years):
+        assert year in pred_ERA_files[i_year], (
+            "[Year {}] is missing from [upper-air files {}]".format(year, conf["data"]["save_loc"]))
+    
+    ## surface files
+    if conf['data']['flag_surface']:
+        surface_files = sorted(glob(conf["data"]["save_loc_surface"]))
+        
+        pred_surface_files = [file for file in surface_files if any(year in file for year in pred_years)]
+        
+        for i_year, year in enumerate(pred_years):
+            assert year in pred_surface_files[i_year], (
+                "[Year {}] is missing from [surface files {}]".format(year, conf['data']['save_loc_surface']))
+    
+    ## dynamic forcing files
+    if conf['data']['flag_dyn_forcing']:
+        dyn_forcing_files = sorted(glob(conf["data"]["save_loc_dynamic_forcing"]))
+        
+        pred_dyn_forcing_files = [file for file in dyn_forcing_files if any(year in file for year in pred_years)]
+        
+        for i_year, year in enumerate(pred_years):
+            assert year in pred_dyn_forcing_files[i_year], (
+                "[Year {}] is missing from [dynamic forcing files {}]".format(year, conf["data"]["save_loc_dynamic_forcing"]))
+    
+    if print_summary:
+        print('Filename checking passed')
+        print("All input files can cover conf['predict']['forecasts']['duration']")
+        
+    # --------------------------------------------------------------------------- #
+    # variable checks
+    # !!! the first pred file (e.g., pred_ERA_files[0]) is opened and examined
+    
+    # upper-air variables
+    ds_upper_air = get_forward_data(pred_ERA_files[0])
+    varnames_upper_air = list(ds_upper_air.keys())
+    
+    assert all(varname in varnames_upper_air for varname in conf['data']['variables']), (
+        "upper-air variables [{}] are not fully covered by conf['data']['save_loc']".format(
+            conf['data']['variables']))
+        
+    # collecting all variables that require zscores
+    all_vars = conf['data']['variables']
+    
+    # surface variables
+    if conf['data']['flag_surface']:
+        ds_surface = get_forward_data(pred_surface_files[0])
+        varnames_surface = list(ds_surface.keys())
+        
+        assert all(varname in varnames_surface for varname in conf['data']['surface_variables']), (
+            "Surface variables [{}] are not fully covered by conf['data']['save_loc_surface']".format(
+                conf['data']['surface_variables']))
             
-    return [single_string for single_string in list_string if single_string not in pattern_collection]
+        all_vars += conf['data']['surface_variables']
+    
+    # dynamic forcing variables
+    if conf['data']['flag_dyn_forcing']:
+        ds_dyn_forcing = get_forward_data(pred_dyn_forcing_files[0])
+        varnames_dyn_forcing = list(ds_dyn_forcing.keys())
+        
+        assert all(varname in varnames_dyn_forcing for varname in conf['data']['dynamic_forcing_variables']), (
+            "Dynamic forcing variables [{}] are not fully covered by conf['data']['save_loc_dynamic_forcing']".format(
+                conf['data']['dynamic_forcing_variables']))
+            
+        all_vars += conf['data']['dynamic_forcing_variables']
+    
+    # diagnostic variables
+    if conf['data']['flag_diagnostic']:
+        all_vars += conf['data']['diagnostic_variables']
+        
+    # forcing variables
+    if conf['data']['flag_forcing']:
+        ds_forcing = get_forward_data(conf['data']['save_loc_forcing'])
+        varnames_forcing = list(ds_forcing.keys())
+        
+        assert all(varname in varnames_forcing for varname in conf['data']['forcing_variables']), (
+            "Forcing variables [{}] are not fully covered by conf['data']['save_loc_forcing']".format(
+                conf['data']['forcing_variables']))
+    
+    # static variables
+    if conf['data']['flag_static']:
+        ds_static = get_forward_data(conf['data']['save_loc_static'])
+        varnames_static = list(ds_static.keys())
+        
+        assert all(varname in varnames_static for varname in conf['data']['static_variables']), (
+            "Static variables [{}] are not fully covered by conf['data']['save_loc_static']".format(
+                conf['data']['static_variables']))
+    
+    # comparing all_vars against mean, std files
+    ds_mean = get_forward_data(conf['data']['mean_path'])
+    varname_ds_mean = list(ds_mean.keys())
+    
+    assert all(varname in varname_ds_mean for varname in all_vars), (
+        "Variables are not fully covered by conf['data']['mean_path']")
+    
+    ds_std = get_forward_data(conf['data']['std_path'])
+    varname_ds_std = list(ds_std.keys())
+    
+    assert all(varname in varname_ds_std for varname in all_vars), (
+        "Variables are not fully covered by conf['data']['std_path']")
+    
+    if print_summary:
+        print('Variable name checking passed')
+        print("All input files and zscore files have the required variables")
+        
+    # -------------------------------------------------- #
+    # xr.Dataset coordinate checks
+    # !!!! assuming time-coordinate is 'time' !!!!
+    # !!!! Can be improved !!!!
+    
+    coord_upper_air = list(ds_upper_air.coords.keys())
+    coord_upper_air = remove_string_by_pattern(coord_upper_air, 'time')
+    
+    # surface files
+    if conf['data']['flag_surface']:
+        coord_surface = list(ds_surface.coords.keys())
+        coord_surface = remove_string_by_pattern(coord_surface, 'time')
+        
+        assert all(coord_name in coord_upper_air for coord_name in coord_surface), (
+            "Surface file coordinate names mismatched with upper-air files")
+        
+        for coord_name in coord_surface:
+            assert ds_upper_air.coords[coord_name].equals(ds_surface.coords[coord_name]), (
+                "coordinate {} mismatched between upper-air and surface files".format(coord_name))
+    
+    # dyn forcing files
+    if conf['data']['flag_dyn_forcing']:
+        coord_dyn_forcing = list(ds_dyn_forcing.coords.keys())
+        coord_dyn_forcing = remove_string_by_pattern(coord_dyn_forcing, 'time')
+        
+        assert all(coord_name in coord_upper_air for coord_name in coord_dyn_forcing), (
+            "Dynamic forcing file coordinate names mismatched with upper-air files")
+        
+        for coord_name in coord_dyn_forcing:
+            assert ds_upper_air.coords[coord_name].equals(ds_dyn_forcing.coords[coord_name]), (
+                "coordinate {} mismatched between upper-air and dynamic forcing files".format(coord_name))
+    
+    # forcing files
+    if conf['data']['flag_forcing']:
+        coord_forcing = list(ds_forcing.coords.keys())
+        coord_forcing = remove_string_by_pattern(coord_forcing, 'time')
+        
+        assert all(coord_name in coord_upper_air for coord_name in coord_forcing), (
+            "Forcing file coordinate names mismatched with upper-air files")
+        
+        for coord_name in coord_forcing:
+            assert ds_upper_air.coords[coord_name].equals(ds_forcing.coords[coord_name]), (
+                "coordinate {} mismatched between upper-air and forcing files".format(coord_name))
+            
+        # ============================================== #
+        # !! assumed subdaily inputs, may need to fix !! #
+        assert len(ds_forcing['time']) % 366 == 0, (
+            "forcing file does not have 366 days")
+        # ============================================== #
+    
+    # static files (no time coordinate)
+    if conf['data']['flag_static']:
+        coord_static = list(ds_static.coords.keys())
+        coord_static = remove_string_by_pattern(coord_static, 'time')
+        
+        assert all(coord_name in coord_upper_air for coord_name in coord_static), (
+            "Static file coordinate names mismatched with upper-air files")
+        
+        for coord_name in coord_static:
+            assert ds_upper_air.coords[coord_name].equals(ds_static.coords[coord_name]), (
+                "coordinate {} mismatched between upper-air and static files".format(coord_name))
+    
+    # zscore mean file (no time coordinate)
+    coord_mean = list(ds_mean.coords.keys())
+    coord_mean = remove_string_by_pattern(coord_mean, 'time')
+    
+    assert all(coord_name in coord_upper_air for coord_name in coord_mean), (
+        "zscore mean file coordinate names mismatched with upper-air files")
+    
+    for coord_name in coord_mean:
+        assert ds_upper_air.coords[coord_name].equals(ds_mean.coords[coord_name]), (
+            "coordinate {} mismatched between upper-air and mean files".format(coord_name))
+        
+    # zscore std file (no time coordinate)
+    coord_std = list(ds_std.coords.keys())
+    coord_std = remove_string_by_pattern(coord_std, 'time')
+    
+    assert all(coord_name in coord_upper_air for coord_name in coord_std), (
+        "zscore std file coordinate names mismatched with upper-air files")
+    
+    for coord_name in coord_std:
+        assert ds_upper_air.coords[coord_name].equals(ds_std.coords[coord_name]), (
+            "coordinate {} mismatched between upper-air and std files".format(coord_name))
+    
+    # lat / lon file
+    ds_weights = get_forward_data(conf['loss']['latitude_weights'])
+    coord_latlon = list(ds_weights.coords.keys())
+    coord_latlon = remove_string_by_pattern(coord_latlon, 'time')
+    
+    assert all(coord_name in coord_upper_air for coord_name in coord_latlon), (
+        "conf['loss']['latitude_weights'] file coordinate names mismatched with upper-air files")
+    
+    if print_summary:
+        print('Coordinate checking passed')
+        print("All input files, zscore files, and the lat/lon file share the same lat, lon, level coordinate name and values")
+        
+    return True
+
+
+
 
