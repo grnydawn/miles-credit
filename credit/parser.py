@@ -17,6 +17,8 @@ from glob import glob
 import numpy as np
 import xarray as xr
 
+from credit.data import get_forward_data
+
 def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summary=False):
     '''
     This function examines the config.yml input, and produce its standardized version.
