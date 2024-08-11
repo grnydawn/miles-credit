@@ -12,6 +12,7 @@ ksha@ucar.edu
 '''
 
 import os
+import copy
 import warnings
 from glob import glob
 
@@ -22,7 +23,8 @@ from credit.data import get_forward_data
 
 def remove_string_by_pattern(list_string, pattern):
     '''
-    Given a list of strings, remove some of them based on a given pattern
+    Given a list of strings, remove some of them based on a given pattern.
+    Usage: remove 'time'/'datetime'/'lead_time' coordinates from a list of all coordinate names.
     '''
     # may need to be improved
     pattern_collection = []
@@ -150,23 +152,23 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
 
     if conf['data']['flag_surface'] is False:
         conf['data']['save_loc_surface'] = None
-        conf['data']['surface_variables'] = None
+        conf['data']['surface_variables'] = []
 
     if conf['data']['flag_dyn_forcing'] is False:
         conf['data']['save_loc_dynamic_forcing'] = None
-        conf['data']['dynamic_forcing_variables'] = None
+        conf['data']['dynamic_forcing_variables'] = []
 
     if conf['data']['flag_diagnostic'] is False:
         conf['data']['save_loc_diagnostic'] = None
-        conf['data']['diagnostic_variables'] = None
+        conf['data']['diagnostic_variables'] = []
 
     if conf['data']['flag_forcing'] is False:
         conf['data']['save_loc_forcing'] = None
-        conf['data']['forcing_variables'] = None
+        conf['data']['forcing_variables'] = []
     
     if conf['data']['flag_static'] is False:
         conf['data']['save_loc_static'] = None
-        conf['data']['static_variables'] = None
+        conf['data']['static_variables'] = []
     
     ## I/O data sizes
     if parse_training:
@@ -195,6 +197,9 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         # one_shot
         if 'one_shot' not in conf['data']:
             conf['data']['one_shot'] = None
+
+        if "total_time_steps" not in conf["data"]:
+            conf["data"]["total_time_steps"] =  conf["data"]['forecast_len']
     
     assert 'history_len' in conf['data'], "Number of input time frames ('history_len') is missing from conf['data']"
     assert 'lead_time_periods' in conf['data'], "Number of forecast hours ('lead_time_periods') is missing from conf['data']"
@@ -230,14 +235,16 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
     
         if 'thread_workers' not in conf['trainer']:
             conf['trainer']['thread_workers'] = 4
+
+        if 'valid_thread_workers' not in conf['trainer']:
+            conf['trainer']['valid_thread_workers'] = 0
         
         if 'skip_validation' not in conf['trainer']:
             conf['trainer']['skip_validation'] = False
     
         if conf['trainer']['skip_validation'] is False:
     
-            if 'valid_thread_workers' not in conf['trainer']:
-                conf['trainer']['valid_thread_workers'] = 0
+
             
             assert 'valid_batch_size'  in conf['trainer'], (
                 "Validation set batch size ('valid_batch_size') is missing from onf['trainer']")
@@ -469,7 +476,8 @@ def training_data_check(conf, print_summary=False):
             conf['data']['variables']))
         
     # collecting all variables that require zscores
-    all_vars = conf['data']['variables']
+    # deep copy to avoid changing conf['data'] by accident
+    all_vars = copy.deepcopy(conf['data']['variables'])
     
     # surface variables
     if conf['data']['flag_surface']:
@@ -541,7 +549,7 @@ def training_data_check(conf, print_summary=False):
         
     # -------------------------------------------------- #
     # xr.Dataset coordinate checks
-    # !!!! assuming time-coordinate is 'time' !!!!
+    # !!!! assuming time-coordinate has string pattern 'time' !!!!
     # !!!! Can be improved !!!!
     
     coord_upper_air = list(ds_upper_air.coords.keys())
@@ -726,7 +734,8 @@ def predict_data_check(conf, print_summary=False):
             conf['data']['variables']))
         
     # collecting all variables that require zscores
-    all_vars = conf['data']['variables']
+    # deep copy to avoid changing conf['data'] by accident
+    all_vars = copy.deepcopy(conf['data']['variables'])
     
     # surface variables
     if conf['data']['flag_surface']:
@@ -791,7 +800,7 @@ def predict_data_check(conf, print_summary=False):
         
     # -------------------------------------------------- #
     # xr.Dataset coordinate checks
-    # !!!! assuming time-coordinate is 'time' !!!!
+    # !!!! assuming time-coordinate has string pattern 'time' !!!!
     # !!!! Can be improved !!!!
     
     coord_upper_air = list(ds_upper_air.coords.keys())
