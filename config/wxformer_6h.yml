@@ -73,6 +73,7 @@ trainer:
     load_weights: False # <----- change if load weights
     load_optimizer: False # <--- change if load optimizer
     skip_validation: False
+    update_learning_rate: False
     
     learning_rate: 1.0e-03 # <-- change to your lr
     weight_decay: 0

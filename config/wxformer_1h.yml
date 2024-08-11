@@ -25,8 +25,8 @@ data:
     save_loc_static: '/glade/campaign/cisl/aiml/ksha/CREDIT/static_norm_old.nc'
     
     # mean / std path
-    mean_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/ERA5_mean_1h.nc'
-    std_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/ERA5_std_1h.nc'
+    mean_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/mean_1h_0.25deg.nc'
+    std_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/std_1h_0.25deg.nc'
     
     # train / validation split
     train_years: [1979, 2014]
@@ -73,6 +73,7 @@ trainer:
     load_weights: False # <----- change if load weights
     load_optimizer: False # <--- change if load optimizer
     skip_validation: False
+    update_learning_rate: False
     
     learning_rate: 1.0e-03 # <-- change to your lr
     weight_decay: 0
