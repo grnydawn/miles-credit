@@ -38,7 +38,7 @@ from credit.models.checkpoint import load_model_state
 from credit.output import load_metadata, make_xarray, save_netcdf_increment
 from torch.utils.data import get_worker_info
 from torch.utils.data.distributed import DistributedSampler
-
+from credit.parser import CREDIT_main_parser, predict_data_check
 
 logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")
@@ -407,7 +407,7 @@ if __name__ == "__main__":
     # ======================================================== #
     if conf['data']['scaler_type'] == 'std_new':
         conf = CREDIT_main_parser(conf, parse_training=False, parse_predict=True, print_summary=False)
-        training_data_check(conf, print_summary=False)
+        predict_data_check(conf, print_summary=False)
     # ======================================================== #
     
     # create a save location for rollout

@@ -29,6 +29,7 @@ from credit.datasets.sequential_multistep import DistributedSequentialDataset
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
 from credit.trainers import load_trainer
+from credit.parser import CREDIT_main_parser, training_data_check
 
 from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
