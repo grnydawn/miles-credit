@@ -679,13 +679,12 @@ def predict_data_check(conf, print_summary=False):
     # !!! Can be improved !!!
     if 'duration' in conf['predict']['forecasts']:
         N_years = conf['predict']['forecasts']['duration'] // 365
+        N_years = N_years + 1
     else:
-        N_years = 1
+        N_years = 0 + 1
     
-    years_range = [conf['predict']['start_year'], conf['predict']['start_year']+N_years]
-    
+    years_range = [conf['predict']['forecasts']['start_year'], conf['predict']['forecasts']['start_year']+N_years]
     pred_years = [str(year) for year in range(years_range[0], years_range[1])]
-    
     # -------------------------------------------------- #
     # check file consistencies
     ## upper-air files
