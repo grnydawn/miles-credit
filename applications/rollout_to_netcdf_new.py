@@ -403,7 +403,13 @@ if __name__ == "__main__":
     # Load the configuration and get the relevant variables
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
-        
+
+    # ======================================================== #
+    if conf['data']['scaler_type'] == 'std_new':
+        conf = CREDIT_main_parser(conf, parse_training=False, parse_predict=True, print_summary=False)
+        training_data_check(conf, print_summary=False)
+    # ======================================================== #
+    
     # create a save location for rollout
     # ---------------------------------------------------- #
     assert 'save_forecast' in conf['predict'], "Please specify the output dir through conf['predict']['save_forecast']"
