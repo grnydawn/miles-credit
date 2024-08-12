@@ -210,7 +210,7 @@ class BaseTrainer(ABC):
         count = 0
         for epoch in range(start_epoch, epochs):
 
-            if count > conf['trainer']['num_epoch']:
+            if count >= conf['trainer']['num_epoch']:
                 print('{} epochs completed, exit'.format(conf['trainer']['num_epoch']))
                 break;
             
