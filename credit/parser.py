@@ -218,10 +218,10 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
     if conf['data']['scaler_type'] == 'std_new':
         assert 'mean_path' in conf['data'], "The z-score mean file ('mean_path') is missing from conf['data']"
         assert 'std_path' in conf['data'], "The z-score std file ('std_path') is missing from conf['data']"
-        
+    
     # skip_periods
-    if 'skip_periods' not in conf['data']:
-        conf['data']['skip_periods'] = None
+    if ('skip_periods' not in conf['data']) or (conf['data']['skip_periods'] is None):
+        conf['data']['skip_periods'] = 1
         
     if 'static_first' not in conf['data']:
         conf['data']['static_first'] = True
@@ -253,8 +253,6 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             conf['trainer']['skip_validation'] = False
     
         if conf['trainer']['skip_validation'] is False:
-    
-
             
             assert 'valid_batch_size'  in conf['trainer'], (
                 "Validation set batch size ('valid_batch_size') is missing from onf['trainer']")

@@ -665,22 +665,15 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         self.which_forecast = which_forecast # <-- got from the old roll-out script. Dont know 
         
         # -------------------------------------- #
-        self.filenames = sorted(filenames) # <---------------------------- a list of files
-
-        if conf['data']['flag_surface']:
-            self.filename_surface = sorted(filename_surface) # <---------- a list of files
-        else:
-            self.filename_surface = None
-
-        if conf['data']['flag_dyn_forcing']:
-            self.filename_dyn_forcing = sorted(filename_dyn_forcing) # <-- a list of files
-        else:
-            self.filename_dyn_forcing = None
-            
+        # file names
+        self.filenames = filenames # <------------------------ a list of files
+        self.filename_surface = filename_surface # <---------- a list of files
+        self.filename_dyn_forcing = filename_dyn_forcing # <-- a list of files
         self.filename_forcing = filename_forcing # <-- single file
         self.filename_static = filename_static # <---- single file
         
         # -------------------------------------- #
+        # var names
         self.varname_upper_air = varname_upper_air
         self.varname_surface = varname_surface
         self.varname_dyn_forcing = varname_dyn_forcing
@@ -704,18 +697,8 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         self.current_epoch = 0
         self.rollout_p = rollout_p
         
-        if 'lead_time_periods' in conf['data']:
-            self.lead_time_periods = conf['data']['lead_time_periods']
-        else:
-            self.lead_time_periods = 1
-        
-        if 'skip_periods' in conf['data']:
-            self.skip_periods = conf['data']['skip_periods']
-        else:
-            self.skip_periods = 1
-            
-        if self.skip_periods is None:
-            self.skip_periods = 1
+        self.lead_time_periods = conf['data']['lead_time_periods']
+        self.skip_periods = conf['data']['skip_periods']
             
     def ds_read_and_subset(self, filename, time_start, time_end, varnames):
         sliced_x = xr.open_zarr(filename, consolidated=True)
