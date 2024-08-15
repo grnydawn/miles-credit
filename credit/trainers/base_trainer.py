@@ -210,7 +210,7 @@ class BaseTrainer(ABC):
         count = 0
         for epoch in range(start_epoch, epochs):
 
-            if count > conf['trainer']['num_epoch']:
+            if count >= conf['trainer']['num_epoch']:
                 print('{} epochs completed, exit'.format(conf['trainer']['num_epoch']))
                 break;
             
@@ -372,14 +372,11 @@ class BaseTrainer(ABC):
             training_metric = "train_loss" if skip_validation else "valid_loss"
 
             # Stop training if we have not improved after X epochs (stopping patience)
-            best_epoch = [
-                i
-                for i, j in enumerate(results_dict[training_metric])
-                if j == min(results_dict[training_metric])
-            ][0]
+            best_epoch = [i for i, j in enumerate(results_dict[training_metric]) if j == min(results_dict[training_metric])][0]
             offset = epoch - best_epoch
             if offset >= conf['trainer']['stopping_patience']:
-                logging.info(f"Trial {trial.number} is stopping early")
+                logging.info("Best validation set scores were found in epoch {}; current epoch is {}; early stopping triigered".format(
+                    best_epoch, epoch))
                 break
 
             count += 1

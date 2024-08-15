@@ -32,7 +32,7 @@ from credit.loss import VariableTotalLoss2D
 from credit.data import ERA5Dataset, ERA5_and_Forcing_Dataset, Dataset_BridgeScaler
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
-
+from credit.parser import CREDIT_main_parser, training_data_check
 # from credit.trainers.trainer import Trainer
 # # <-------------- the new pipeline
 # from credit.trainers.trainer_new import Trainer as Trainer_New
@@ -621,6 +621,12 @@ if __name__ == "__main__":
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
+    # ======================================================== #
+    if conf['data']['scaler_type'] == 'std_new':
+        conf = CREDIT_main_parser(conf, parse_training=True, parse_predict=False, print_summary=False)
+        training_data_check(conf, print_summary=False)
+    # ======================================================== #
+    
     # Create directories if they do not exist and copy yml file
     save_loc = os.path.expandvars(conf["save_loc"])
     os.makedirs(save_loc, exist_ok=True)

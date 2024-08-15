@@ -29,6 +29,7 @@ from credit.datasets.sequential_multistep import DistributedSequentialDataset
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
 from credit.trainers import load_trainer
+from credit.parser import CREDIT_main_parser, training_data_check
 
 from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
@@ -535,6 +536,12 @@ if __name__ == "__main__":
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
+    # ======================================================== #
+    if conf['data']['scaler_type'] == 'std_new':
+        conf = CREDIT_main_parser(conf, parse_training=True, parse_predict=False, print_summary=False)
+        training_data_check(conf, print_summary=False)
+    # ======================================================== #
+    
     # Create directories if they do not exist and copy yml file
     save_loc = os.path.expandvars(conf["save_loc"])
     os.makedirs(save_loc, exist_ok=True)
