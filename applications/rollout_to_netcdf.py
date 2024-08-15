@@ -71,6 +71,9 @@ def predict(rank, world_size, conf, p):
     # number of input time frames 
     history_len = conf["data"]["history_len"]
 
+    # length of forecast steps
+    lead_time_periods = conf['data']['lead_time_periods']
+    
     # transform and ToTensor class
     transform = load_transforms(conf)
     if conf["data"]["scaler_type"] == 'std_new':
@@ -108,6 +111,8 @@ def predict(rank, world_size, conf, p):
     ## static variables
     static_files = conf['data']['save_loc_static']
     varname_static = conf['data']['static_variables']
+    
+
     
     # ----------------------------------------------------------------- #\
     # get dataset

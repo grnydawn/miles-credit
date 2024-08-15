@@ -25,9 +25,8 @@ def load_metadata(conf):
     Load metadata attributes from yaml file in credit/metadata directory
     """
     # set priorities for user-specified metadata
-    if 'metadata' in conf['predict']:
+    if conf['predict']['metadata']:
         meta_file = conf['predict']['metadata']
-        #meta_file = join(__file__, "metadata", dataset + ".yaml")
         with open(meta_file) as f:
             meta_data = yaml.load(f, Loader=yaml.SafeLoader)
     else:
