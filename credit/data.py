@@ -652,7 +652,7 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         # ------------------------------------------------------------------------------ #
         
         ## no diagnostics because they are output only
-        varname_diagnostic = None
+        # varname_diagnostic = None
         
         self.rank = rank
         self.world_size = world_size
@@ -662,12 +662,21 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
 
         print(self.init_datetime)
         
-        self.which_forecast = which_forecast # <-- got from the old roll-out. Dont know 
+        self.which_forecast = which_forecast # <-- got from the old roll-out script. Dont know 
         
         # -------------------------------------- #
-        self.filenames = sorted(filenames) # <------------------------ a list of files
-        self.filename_surface = sorted(filename_surface) # <---------- a list of files
-        self.filename_dyn_forcing = sorted(filename_dyn_forcing) # <-- a list of files
+        self.filenames = sorted(filenames) # <---------------------------- a list of files
+
+        if conf['data']['flag_surface']:
+            self.filename_surface = sorted(filename_surface) # <---------- a list of files
+        else:
+            self.filename_surface = None
+
+        if conf['data']['flag_dyn_forcing']:
+            self.filename_dyn_forcing = sorted(filename_dyn_forcing) # <-- a list of files
+        else:
+            self.filename_dyn_forcing = None
+            
         self.filename_forcing = filename_forcing # <-- single file
         self.filename_static = filename_static # <---- single file
         
@@ -724,7 +733,7 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
                                            i_init_end+1,
                                            self.varname_upper_air)
         # surface variables
-        if self.varname_surface is not None:
+        if self.filename_surface is not None:
             sliced_surface = self.ds_read_and_subset(self.filename_surface[i_file], 
                                                      i_init_start,
                                                      i_init_end+1,
@@ -735,7 +744,7 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
 
 
         # dynamic forcing variables
-        if self.varname_dyn_forcing is not None:
+        if self.filename_dyn_forcing is not None:
             sliced_dyn_forcing = self.ds_read_and_subset(self.filename_dyn_forcing[i_file], 
                                                          i_init_start,
                                                          i_init_end+1,
