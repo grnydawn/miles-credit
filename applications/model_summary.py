@@ -39,7 +39,7 @@ def main(rank, world_size, conf, frames=1, height=640, width=1280):
         setup(rank, world_size, conf["trainer"]["mode"])
 
     # Config settings
-    single_level_vars = ["surface_variables", "static_variables", "forcing_variables"]
+    single_level_vars = ["surface_variables", "static_variables", "diagnostic_variables", "dynamic_forcing_variables"]
     channels = conf["model"]["levels"] * len(conf["data"]["variables"])
     channels += sum(len(conf["data"].get(key, [])) for key in single_level_vars)
 
