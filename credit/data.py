@@ -701,7 +701,7 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         self.skip_periods = conf['data']['skip_periods']
             
     def ds_read_and_subset(self, filename, time_start, time_end, varnames):
-        sliced_x = xr.open_zarr(filename, consolidated=True)
+        sliced_x = get_forward_data(filename)
         sliced_x = sliced_x.isel(time=slice(time_start, time_end))
         sliced_x = drop_var_from_dataset(sliced_x, varnames)
         return sliced_x
