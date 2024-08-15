@@ -111,18 +111,17 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         conf['data']['flag_dyn_forcing'] = False
     
     # diagnostic outputs
-    if parse_training:
-        if 'diagnostic_variables' in conf['data']:
-            if conf['data']['diagnostic_variables'] is None:
-                conf['data']['flag_diagnostic'] = False
-            elif len(conf['data']['diagnostic_variables']) > 0:
-                conf['data']['flag_diagnostic'] = True
-                assert 'save_loc_diagnostic' in conf['data'], (
-                    "diagnostic var save locations ('save_loc_diagnostic') is missing from conf['data']")
-            else:
-                conf['data']['flag_diagnostic'] = False
+    if 'diagnostic_variables' in conf['data']:
+        if conf['data']['diagnostic_variables'] is None:
+            conf['data']['flag_diagnostic'] = False
+        elif len(conf['data']['diagnostic_variables']) > 0:
+            conf['data']['flag_diagnostic'] = True
+            assert 'save_loc_diagnostic' in conf['data'], (
+                "diagnostic var save locations ('save_loc_diagnostic') is missing from conf['data']")
         else:
             conf['data']['flag_diagnostic'] = False
+    else:
+        conf['data']['flag_diagnostic'] = False
     
     # forcing inputs
     if 'forcing_variables' in conf['data']:
@@ -157,7 +156,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
     if conf['data']['flag_dyn_forcing'] is False:
         conf['data']['save_loc_dynamic_forcing'] = None
         conf['data']['dynamic_forcing_variables'] = []
-
+        
     if conf['data']['flag_diagnostic'] is False:
         conf['data']['save_loc_diagnostic'] = None
         conf['data']['diagnostic_variables'] = []
