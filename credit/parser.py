@@ -38,7 +38,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
     '''
     This function examines the config.yml input, and produce its standardized version.
     Missing keywords will either trigger assertion errors or receive a defualt value.
-    All other components of this repo relies on CREDIT_main_parser.
+    All other components of this repo rely on CREDIT_main_parser.
     ----------------------------------------------------------------------------------
     Where is it applied?
         - applications/train.py
@@ -83,6 +83,12 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         else:
             print("number of upper-air levels ('levels') is missing from both conf['data'] and conf['model']")
             raise
+
+    # ========================================================================================= #
+    # Check other input / output variable types
+    # if varname is provided, its corresponding save_loc should exist
+    # if varname is None, missing, or [], assign flag = False
+    # the default missing varname will be converted to []
     
     # surface inputs
     if 'surface_variables' in conf['data']:
@@ -149,6 +155,10 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
     else:
         conf['data']['flag_static'] = False
 
+    # ===================================================== #
+    # assign default values for the missing data
+    # varname = [] if not needed
+    # save_loc = None if not needed
     if conf['data']['flag_surface'] is False:
         conf['data']['save_loc_surface'] = None
         conf['data']['surface_variables'] = []
@@ -168,6 +178,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
     if conf['data']['flag_static'] is False:
         conf['data']['save_loc_static'] = None
         conf['data']['static_variables'] = []
+    # ===================================================== #
     
     ## I/O data sizes
     if parse_training:
