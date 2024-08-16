@@ -106,10 +106,9 @@ class BaseTrainer(ABC):
                         epoch: int,
                         optimizer: torch.optim.Optimizer,
                         scaler: torch.cuda.amp.GradScaler,
-                        scheduler, #: torch.optim.lr_scheduler._LRScheduler or None
+                        scheduler: Optional[torch.optim.lr_scheduler._LRScheduler],
                         save_loc: str,
-                        state_dict: Dict[str, Any],
-                        prefix: str = None) -> None:
+                        prefix: Optional[str] = None) -> None:
         """
         Save a checkpoint of the model.
 
@@ -119,7 +118,6 @@ class BaseTrainer(ABC):
             scaler (torch.cuda.amp.GradScaler): The gradient scaler for mixed precision training.
             scheduler (torch.optim.lr_scheduler._LRScheduler): The learning rate scheduler or None if no scheduler applied.
             save_loc (str): The location to save the checkpoint.
-            state_dict (Dict[str, Any]): The state dictionary to save.
             prefix (str): prefix of the file names, None will save checkpoint.pt
         """
         if scheduler is None:
@@ -146,10 +144,9 @@ class BaseTrainer(ABC):
                              epoch: int,
                              optimizer: torch.optim.Optimizer,
                              scaler: torch.cuda.amp.GradScaler,
-                             scheduler, #: torch.optim.lr_scheduler._LRScheduler or None
+                             scheduler: Optional[torch.optim.lr_scheduler._LRScheduler],
                              save_loc: str, 
-                             state_dict: Dict[str, Any],
-                             prefix: str = None) -> None:
+                             prefix: Optional[str] = None) -> None:
         """
         Save a checkpoint for FSDP training.
 
@@ -159,7 +156,6 @@ class BaseTrainer(ABC):
             scaler (torch.cuda.amp.GradScaler): The gradient scaler for mixed precision training.
             scheduler (torch.optim.lr_scheduler._LRScheduler): The learning rate scheduler or None if no scheduler applied.
             save_loc (str): The location to save the checkpoint.
-            state_dict (Dict[str, Any]): The state dictionary to save.
             prefix (str): prefix of the file names, None will save checkpoint.pt, model_checkpoint.pt, optimizer_checkpoint.pt
         """
         if prefix is None:
@@ -381,16 +377,16 @@ class BaseTrainer(ABC):
                     if self.rank == 0:
                         # logging.info(f"Saving model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
                         if flag_use_scheduler:
-                            self.save_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, state_dict, prefix=None)
+                            self.save_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, prefix=None)
                         else:
-                            self.save_checkpoint(epoch, optimizer, scaler, None, save_loc, state_dict, prefix=None)
+                            self.save_checkpoint(epoch, optimizer, scaler, None, save_loc, prefix=None)
                 else:
                     # fsdp check-pointing
                     # logging.info(f"Saving FSDP model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
                     if flag_use_scheduler:
-                        self.save_fsdp_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, state_dict, prefix=None)
+                        self.save_fsdp_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, prefix=None)
                     else:
-                        self.save_fsdp_checkpoint(epoch, optimizer, scaler, None, save_loc, state_dict, prefix=None)
+                        self.save_fsdp_checkpoint(epoch, optimizer, scaler, None, save_loc, prefix=None)
                     
             # ================================================================================================================= #
 
@@ -437,15 +433,15 @@ class BaseTrainer(ABC):
                         if conf["trainer"]["mode"] != "fsdp":
                             if self.rank == 0:
                                 if flag_use_scheduler:
-                                    self.save_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, state_dict, prefix='best')
+                                    self.save_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, prefix='best')
                                 else:
-                                    self.save_checkpoint(epoch, optimizer, scaler, None, save_loc, state_dict, prefix='best')
+                                    self.save_checkpoint(epoch, optimizer, scaler, None, save_loc, prefix='best')
                         else:
                             # fsdp check-pointing
                             if flag_use_scheduler:
-                                self.save_fsdp_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, state_dict, prefix='best')
+                                self.save_fsdp_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, prefix='best')
                             else:
-                                self.save_fsdp_checkpoint(epoch, optimizer, scaler, None, save_loc, state_dict, prefix='best')
+                                self.save_fsdp_checkpoint(epoch, optimizer, scaler, None, save_loc, prefix='best')
                     # ================================================================================================================= #
                 
                 # early stopping
