@@ -102,40 +102,111 @@ class BaseTrainer(ABC):
         """
         raise NotImplementedError
 
-    def save_checkpoint(self, save_loc: str, state_dict: Dict[str, Any]) -> None:
+    def save_checkpoint(self, 
+                        epoch: int,
+                        optimizer: torch.optim.Optimizer,
+                        scaler: torch.cuda.amp.GradScaler,
+                        scheduler, #: torch.optim.lr_scheduler._LRScheduler or None
+                        save_loc: str,
+                        state_dict: Dict[str, Any],
+                        prefix: str = None) -> None:
         """
         Save a checkpoint of the model.
 
         Args:
+            epoch (int): The current epoch number.
+            optimizer (torch.optim.Optimizer): The optimizer.
+            scaler (torch.cuda.amp.GradScaler): The gradient scaler for mixed precision training.
+            scheduler (torch.optim.lr_scheduler._LRScheduler): The learning rate scheduler or None if no scheduler applied.
             save_loc (str): The location to save the checkpoint.
             state_dict (Dict[str, Any]): The state dictionary to save.
+            prefix (str): prefix of the file names, None will save checkpoint.pt
         """
-        torch.save(state_dict, f"{save_loc}/checkpoint.pt")
-        logger.info(f"Saved checkpoint to {save_loc}/checkpoint.pt")
-
-    def save_fsdp_checkpoint(self, save_loc: str, state_dict: Dict[str, Any]) -> None:
+        if scheduler is None:
+            scheduler_state_dict = None
+        else:
+            scheduler_state_dict = scheduler.state_dict()
+        
+        state_dict = {
+            "epoch": epoch,
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+            'scheduler_state_dict': scheduler_state_dict,
+            'scaler_state_dict': scaler.state_dict()
+        }
+        
+        if prefix is None:
+            torch.save(state_dict, f"{save_loc}/checkpoint.pt")
+            logger.info(f"Saved checkpoint to {save_loc}/checkpoint.pt")
+        else:
+            torch.save(state_dict, f"{save_loc}/{prefix}_checkpoint.pt")
+            logger.info(f"Saved checkpoint to {save_loc}/{prefix}_checkpoint.pt")
+            
+    def save_fsdp_checkpoint(self,
+                             epoch: int,
+                             optimizer: torch.optim.Optimizer,
+                             scaler: torch.cuda.amp.GradScaler,
+                             scheduler, #: torch.optim.lr_scheduler._LRScheduler or None
+                             save_loc: str, 
+                             state_dict: Dict[str, Any],
+                             prefix: str = None) -> None:
         """
         Save a checkpoint for FSDP training.
 
         Args:
+            epoch (int): The current epoch number.
+            optimizer (torch.optim.Optimizer): The optimizer.
+            scaler (torch.cuda.amp.GradScaler): The gradient scaler for mixed precision training.
+            scheduler (torch.optim.lr_scheduler._LRScheduler): The learning rate scheduler or None if no scheduler applied.
             save_loc (str): The location to save the checkpoint.
             state_dict (Dict[str, Any]): The state dictionary to save.
+            prefix (str): prefix of the file names, None will save checkpoint.pt, model_checkpoint.pt, optimizer_checkpoint.pt
         """
-        from credit.models.checkpoint import TorchFSDPCheckpointIO
-
+        if prefix is None:
+            save_loc_model = os.path.join(save_loc, "model_checkpoint.pt")
+            save_loc_optm = os.path.join(save_loc, "optimizer_checkpoint.pt")
+            save_loc_checkpoint = os.path.join(save_loc, "checkpoint.pt")
+        else:
+            save_loc_model = os.path.join(save_loc, f"{prefix}_model_checkpoint.pt")
+            save_loc_optm = os.path.join(save_loc, f"{prefix}_optimizer_checkpoint.pt")
+            save_loc_checkpoint = os.path.join(save_loc, f"{prefix}_checkpoint.pt")
+        
+        if scheduler is None:
+            scheduler_state_dict = None
+        else:
+            scheduler_state_dict = scheduler.state_dict()
+            
+        # Initialize the checkpoint I/O handler
         checkpoint_io = TorchFSDPCheckpointIO()
-
+        
+        # Save model and optimizer checkpoints
         checkpoint_io.save_unsharded_model(
             self.model,
-            os.path.join(save_loc, "model_checkpoint.pt"),
+            save_loc_model,
             gather_dtensor=True,
             use_safetensors=False,
             rank=self.rank
         )
-        logger.info(f"Saved FSDP model checkpoint to {save_loc}/model_checkpoint.pt")
-
-        torch.save(state_dict, os.path.join(save_loc, "checkpoint.pt"))
-        logger.info(f"Saved FSDP scheduler and scaler states to {save_loc}/checkpoint.pt")
+        logger.info(f"Saved model checkpoint to {save_loc_model}")
+        
+        checkpoint_io.save_unsharded_optimizer(
+            optimizer,
+            save_loc_optm,
+            gather_dtensor=True,
+            rank=self.rank
+        )
+        logger.info(f"Saved optm checkpoint to {save_loc_optm}")
+        
+        # Still need to save the scheduler and scaler states, just in another file for FSDP
+        state_dict = {
+            "epoch": epoch,
+            'scheduler_state_dict': scheduler_state_dict,
+            'scaler_state_dict': scaler.state_dict()
+        }
+        torch.save(state_dict, save_loc_checkpoint)
+        
+        logger.info(f"Saved state_dict to {save_loc_checkpoint}")
+        
 
     def fit(
         self,
@@ -267,10 +338,13 @@ class BaseTrainer(ABC):
             # update the learning rate if epoch-by-epoch updates
 
             if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] in update_on_epoch:
+                flag_use_scheduler = True
                 if conf['trainer']['scheduler']['scheduler_type'] == 'plateau':
                     scheduler.step(results_dict["valid_acc"][-1])
                 else:
                     scheduler.step()
+            else:
+                flag_use_scheduler = False
 
             # Put things into a results dictionary -> dataframe
 
@@ -305,49 +379,19 @@ class BaseTrainer(ABC):
                 # non-fsdp check-pointing
                 if conf["trainer"]["mode"] != "fsdp":
                     if self.rank == 0:
-                        
-                        # Save the current model
-                        logging.info(f"Saving model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
-                        
-                        state_dict = {
-                            "epoch": epoch,
-                            "model_state_dict": self.model.state_dict(),
-                            "optimizer_state_dict": optimizer.state_dict(),
-                            'scheduler_state_dict': scheduler.state_dict() if conf["trainer"]["use_scheduler"] else None,
-                            'scaler_state_dict': scaler.state_dict()
-                        }
-                        torch.save(state_dict, f"{save_loc}/checkpoint.pt")
-                        
+                        # logging.info(f"Saving model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
+                        if flag_use_scheduler:
+                            save_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, state_dict, prefix=None)
+                        else:
+                            save_checkpoint(epoch, optimizer, scaler, None, save_loc, state_dict, prefix=None)
                 else:
                     # fsdp check-pointing
-                    logging.info(f"Saving FSDP model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
-
-                    # Initialize the checkpoint I/O handler
-                    checkpoint_io = TorchFSDPCheckpointIO()
-
-                    # Save model and optimizer checkpoints
-                    checkpoint_io.save_unsharded_model(
-                        self.model,
-                        os.path.join(save_loc, "model_checkpoint.pt"),
-                        gather_dtensor=True,
-                        use_safetensors=False,
-                        rank=self.rank
-                    )
-                    checkpoint_io.save_unsharded_optimizer(
-                        optimizer,
-                        os.path.join(save_loc, "optimizer_checkpoint.pt"),
-                        gather_dtensor=True,
-                        rank=self.rank
-                    )
-
-                    # Still need to save the scheduler and scaler states, just in another file for FSDP
-                    state_dict = {
-                        "epoch": epoch,
-                        'scheduler_state_dict': scheduler.state_dict() if conf["trainer"]["use_scheduler"] else None,
-                        'scaler_state_dict': scaler.state_dict()
-                    }
+                    # logging.info(f"Saving FSDP model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
+                    if flag_use_scheduler:
+                        save_fsdp_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, state_dict, prefix=None)
+                    else:
+                        save_fsdp_checkpoint(epoch, optimizer, scaler, None, save_loc, state_dict, prefix=None)
                     
-                    torch.save(state_dict, os.path.join(save_loc, "checkpoint.pt"))
             # ================================================================================================================= #
 
                 # This needs updated!
@@ -381,47 +425,16 @@ class BaseTrainer(ABC):
                     # non-fsdp check-pointing
                     if conf["trainer"]["mode"] != "fsdp":
                         if self.rank == 0:
-                            # Save the current model
-                            logging.info(f"Saving model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
-                            
-                            state_dict = {
-                                "epoch": epoch,
-                                "model_state_dict": self.model.state_dict(),
-                                "optimizer_state_dict": optimizer.state_dict(),
-                                'scheduler_state_dict': scheduler.state_dict() if conf["trainer"]["use_scheduler"] else None,
-                                'scaler_state_dict': scaler.state_dict()
-                            }
-                            torch.save(state_dict, f"{save_loc}/best_checkpoint.pt")
+                            if flag_use_scheduler:
+                                save_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, state_dict, prefix='best')
+                            else:
+                                save_checkpoint(epoch, optimizer, scaler, None, save_loc, state_dict, prefix='best')
                     else:
                         # fsdp check-pointing
-                        logging.info(f"Saving FSDP model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
-                        
-                        # Initialize the checkpoint I/O handler
-                        checkpoint_io = TorchFSDPCheckpointIO()
-    
-                        # Save model and optimizer checkpoints
-                        checkpoint_io.save_unsharded_model(
-                            self.model,
-                            os.path.join(save_loc, "best_model_checkpoint.pt"),
-                            gather_dtensor=True,
-                            use_safetensors=False,
-                            rank=self.rank
-                        )
-                        checkpoint_io.save_unsharded_optimizer(
-                            optimizer,
-                            os.path.join(save_loc, "best_optimizer_checkpoint.pt"),
-                            gather_dtensor=True,
-                            rank=self.rank
-                        )
-    
-                        # Still need to save the scheduler and scaler states, just in another file for FSDP
-                        state_dict = {
-                            "epoch": epoch,
-                            'scheduler_state_dict': scheduler.state_dict() if conf["trainer"]["use_scheduler"] else None,
-                            'scaler_state_dict': scaler.state_dict()
-                        }
-                        
-                        torch.save(state_dict, os.path.join(save_loc, "best_checkpoint.pt"))
+                        if flag_use_scheduler:
+                            save_fsdp_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, state_dict, prefix='best')
+                        else:
+                            save_fsdp_checkpoint(epoch, optimizer, scaler, None, save_loc, state_dict, prefix='best')
                 # ================================================================================================================= #
             
             # early stopping
