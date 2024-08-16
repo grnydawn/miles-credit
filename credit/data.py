@@ -44,6 +44,9 @@ Array = Union[np.ndarray, xr.DataArray]
 IMAGE_ATTR_NAMES = ('historical_ERA5_images', 'target_ERA5_images')
 
 def generate_datetime(start_time, end_time, interval_hr):
+    '''
+    Generate a list of datetime.datetime based on stat, end times, and hour interval. 
+    '''
     # Define the time interval (e.g., every hour)
     interval = datetime.timedelta(hours=interval_hr)
     
@@ -56,10 +59,16 @@ def generate_datetime(start_time, end_time, interval_hr):
     return datetime_list
 
 def hour_to_nanoseconds(input_hr):
+    '''
+    Convert hour to nanoseconds
+    '''
     # hr * min_per_hr * sec_per_min * nanosec_per_sec
     return input_hr*60 * 60 * 1000000000
 
 def nanoseconds_to_year(nanoseconds_value):
+    '''
+    Given datetime info as nanoseconds, compute which year it belongs to.
+    '''
     return np.datetime64(nanoseconds_value, 'ns').astype('datetime64[Y]').astype(int) + 1970
 
 def extract_month_day_hour(dates):
@@ -84,15 +93,18 @@ def find_common_indices(list1, list2):
     
     return indices_list1, indices_list2
     
-#
 def concat_and_reshape(x1, x2):
+    '''
+    Flattening the "level" coordinate of upper-air variables and concatenate it will surface variables. 
+    '''
     x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
     x_concat = torch.cat((x1, x2), dim=2)
     return x_concat.permute(0, 2, 1, 3, 4)
 
 def reshape_only(x1):
     '''
-    As in "concat_and_reshape", but for upper-air variables only.
+    Flattening the "level" coordinate of upper-air variables.
+    As in "concat_and_reshape", but no concat
     '''
     x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
     return x1.permute(0, 2, 1, 3, 4)
@@ -236,7 +248,7 @@ def find_key_for_number(input_number, data_dict):
 def drop_var_from_dataset(xarray_dataset, varname_keep):
     '''
     Preserve a given set of variables from an xarray.Dataset, and drop the rest.
-    It will raise if xarray.Dataset.keys() != varname_keep
+    It will raise error if `varname_key` is missing from `xarray_dataset`
     '''
     varname_all = list(xarray_dataset.keys())
 
