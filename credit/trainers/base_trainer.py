@@ -381,16 +381,16 @@ class BaseTrainer(ABC):
                     if self.rank == 0:
                         # logging.info(f"Saving model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
                         if flag_use_scheduler:
-                            save_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, state_dict, prefix=None)
+                            self.save_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, state_dict, prefix=None)
                         else:
-                            save_checkpoint(epoch, optimizer, scaler, None, save_loc, state_dict, prefix=None)
+                            self.save_checkpoint(epoch, optimizer, scaler, None, save_loc, state_dict, prefix=None)
                 else:
                     # fsdp check-pointing
                     # logging.info(f"Saving FSDP model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
                     if flag_use_scheduler:
-                        save_fsdp_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, state_dict, prefix=None)
+                        self.save_fsdp_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, state_dict, prefix=None)
                     else:
-                        save_fsdp_checkpoint(epoch, optimizer, scaler, None, save_loc, state_dict, prefix=None)
+                        self.save_fsdp_checkpoint(epoch, optimizer, scaler, None, save_loc, state_dict, prefix=None)
                     
             # ================================================================================================================= #
 
@@ -411,40 +411,49 @@ class BaseTrainer(ABC):
             torch.cuda.empty_cache()
             gc.collect()
 
-            training_metric = "train_loss" if skip_validation else "valid_loss"
-
-            # Stop training if we have not improved after X epochs (stopping patience)
-            best_epoch = [i for i, j in enumerate(results_dict[training_metric]) if j == min(results_dict[training_metric])][0]
-            offset = epoch - best_epoch
-
-            # if the current epoch is the best epoch, save the "best" checkpoint 
-            if offset == 0:
-                # ================================================================================================================= #
-                # Save the best checkpoint
-                if not trial:
-                    # non-fsdp check-pointing
-                    if conf["trainer"]["mode"] != "fsdp":
-                        if self.rank == 0:
-                            if flag_use_scheduler:
-                                save_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, state_dict, prefix='best')
-                            else:
-                                save_checkpoint(epoch, optimizer, scaler, None, save_loc, state_dict, prefix='best')
-                    else:
-                        # fsdp check-pointing
-                        if flag_use_scheduler:
-                            save_fsdp_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, state_dict, prefix='best')
-                        else:
-                            save_fsdp_checkpoint(epoch, optimizer, scaler, None, save_loc, state_dict, prefix='best')
-                # ================================================================================================================= #
-            
-            # early stopping
-            if offset >= conf['trainer']['stopping_patience']:
-                logging.info("Best validation set scores were found in epoch {}; current epoch is {}; early stopping triigered".format(
-                    best_epoch, epoch))
-                break
-
+            # the count of num_epoch
             count += 1
-            
+
+            # ==================== #
+            # early stopping block
+            # ==================== #
+            if skip_validation:
+                pass;
+            else:
+
+                training_metric = "train_loss" if skip_validation else "valid_loss"
+    
+                # stopping patience block
+                best_epoch = [i for i, j in enumerate(results_dict[training_metric]) if j == min(results_dict[training_metric])][0]
+                
+                offset = epoch - best_epoch
+    
+                # if the current epoch is the best epoch, save the "best" checkpoint 
+                if offset == 0:
+                    # ================================================================================================================= #
+                    # Save the best checkpoint
+                    if not trial:
+                        # non-fsdp check-pointing
+                        if conf["trainer"]["mode"] != "fsdp":
+                            if self.rank == 0:
+                                if flag_use_scheduler:
+                                    self.save_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, state_dict, prefix='best')
+                                else:
+                                    self.save_checkpoint(epoch, optimizer, scaler, None, save_loc, state_dict, prefix='best')
+                        else:
+                            # fsdp check-pointing
+                            if flag_use_scheduler:
+                                self.save_fsdp_checkpoint(epoch, optimizer, scaler, scheduler, save_loc, state_dict, prefix='best')
+                            else:
+                                self.save_fsdp_checkpoint(epoch, optimizer, scaler, None, save_loc, state_dict, prefix='best')
+                    # ================================================================================================================= #
+                
+                # early stopping
+                if offset >= conf['trainer']['stopping_patience']:
+                    logging.info("Best validation set scores were found in epoch {}; current epoch is {}; early stopping triigered".format(
+                        best_epoch, epoch))
+                    break
+                    
             # Stop training if we get too close to the wall time
             if 'stop_after_epoch' in conf['trainer']:
                 if conf['trainer']['stop_after_epoch']:
