@@ -229,7 +229,7 @@ class VariableTotalLoss2D(torch.nn.Module):
         if conf["loss"]["use_variable_weights"]:
             var_weights = [value if isinstance(value, list) else [value] for value in conf["loss"]["variable_weights"].values()]
             var_weights = np.array([item for sublist in var_weights for item in sublist])
-            self.var_weights = torch.from_numpy(var_weights).unsqueeze(-1).unsqueeze(-1)
+            self.var_weights = torch.from_numpy(var_weights)
 
         self.use_spectral_loss = conf["loss"]["use_spectral_loss"]
         if self.use_spectral_loss:
@@ -254,16 +254,17 @@ class VariableTotalLoss2D(torch.nn.Module):
         # User defined loss
         loss = self.loss_fn(target, pred)
 
-        # Variable weights
-        if self.var_weights is not None:
-            loss = torch.mul(loss, self.var_weights.to(target.device))
-
-        # Latitutde weights 
-        if self.lat_weights is not None:
+        # Latitutde and variable weights
+        if self.lat_weights is not None or self.var_weights is not None:
             loss_dict = {}
             for i, var in enumerate(self.vars):
-                loss_dict[f"loss_{var}"] = torch.mul(loss[:, i], self.lat_weights.to(target.device)).mean()
+                if self.lat_weights is not None:
+                    loss_dict[f"loss_{var}"] = torch.mul(loss[:, i], self.lat_weights.to(target.device)).mean()
+                if self.var_weights is not None:
+                    loss_dict[f"loss_{var}"] = loss[:, i] * self.var_weights[i].to(target.device)
             loss = torch.mean(torch.stack([loss for loss in loss_dict.values()]))
+        else:
+            loss = loss.mean()
 
         # Add the spectral loss
         if not self.validation and self.use_power_loss:
