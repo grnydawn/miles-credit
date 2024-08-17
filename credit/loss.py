@@ -228,8 +228,8 @@ class VariableTotalLoss2D(torch.nn.Module):
         self.var_weights = None
         if conf["loss"]["use_variable_weights"]:
             var_weights = [value if isinstance(value, list) else [value] for value in conf["loss"]["variable_weights"].values()]
-            var_weights = [item for sublist in var_weights for item in sublist]
-            self.var_weights = torch.from_numpy(var_weights).unsqueeze(0).unsqueeze(-1)
+            var_weights = np.array([item for sublist in var_weights for item in sublist])
+            self.var_weights = torch.from_numpy(var_weights).unsqueeze(-1).unsqueeze(-1)
 
         self.use_spectral_loss = conf["loss"]["use_spectral_loss"]
         if self.use_spectral_loss:
@@ -254,20 +254,17 @@ class VariableTotalLoss2D(torch.nn.Module):
         # User defined loss
         loss = self.loss_fn(target, pred)
 
-        loss_dict = {}
-        for i, var in enumerate(self.vars):
+        # Variable weights
+        if self.var_weights is not None:
+            loss = torch.mul(loss, self.var_weights.to(target.device))
 
-            loss_dict[f"loss_{var}"] = loss[:, i]
+        # Latitutde weights 
+        if self.lat_weights is not None:
+            loss_dict = {}
+            for i, var in enumerate(self.vars):
+                loss_dict[f"loss_{var}"] = torch.mul(loss[:, i], self.lat_weights.to(target.device)).mean()
+            loss = torch.mean(torch.stack([loss for loss in loss_dict.values()]))
 
-            if self.lat_weights is not None:
-                loss_dict[f"loss_{var}"] = torch.mul(loss_dict[f"loss_{var}"], self.lat_weights.to(target.device))
-            if self.var_weights is not None:
-                loss_dict[f"loss_{var}"] = torch.mul(loss_dict[f"loss_{var}"], self.var_weights.to(target.device))
-
-            loss_dict[f"loss_{var}"] = loss_dict[f"loss_{var}"].mean()
-
-        loss = torch.mean(torch.stack([loss for loss in loss_dict.values()]))
-        
         # Add the spectral loss
         if not self.validation and self.use_power_loss:
             loss += self.power_lambda_reg * self.power_loss(target, pred, weights=self.lat_weights)

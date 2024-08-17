@@ -25,12 +25,13 @@ class LatWeightedMetrics:
         if conf["loss"]["use_latitude_weights"]:
             self.w_lat = latititude_weights(conf)[:,10].unsqueeze(0).unsqueeze(-1)
 
+        # DO NOT apply these weights during metrics computations, only on the loss during
         self.w_var = None
-        if conf["loss"]["use_variable_weights"]:
-            var_weights = [value if isinstance(value, list) else [value] for value in
-                           conf["loss"]["variable_weights"].values()]
-            var_weights = [item for sublist in var_weights for item in sublist]
-            self.w_var = torch.from_numpy(var_weights).unsqueeze(0).unsqueeze(-1)
+        # if conf["loss"]["use_variable_weights"]:
+        #     var_weights = [value if isinstance(value, list) else [value] for value in
+        #                    conf["loss"]["variable_weights"].values()]
+        #     var_weights = np.array([item for sublist in var_weights for item in sublist])
+        #     self.w_var = torch.from_numpy(var_weights).unsqueeze(0).unsqueeze(-1)
 
         # if self.predict_mode:
         #    self.zonal_metrics = ZonalSpectrumMetric(self.conf)
