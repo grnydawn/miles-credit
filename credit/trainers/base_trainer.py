@@ -9,25 +9,26 @@ Content:
 '''
 import os
 import gc
+import shutil
 import logging
 from collections import defaultdict
+
+from abc import ABC, abstractmethod
+from typing import Dict, Any, Optional
 
 import numpy as np
 import pandas as pd
 
 import torch
 from torch.utils.data import IterableDataset
-from credit.models.checkpoint import TorchFSDPCheckpointIO
-from credit.scheduler import update_on_epoch
-from credit.trainers.utils import cleanup
-
-from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
 from torch.utils.data import DataLoader
 from torch.optim import Optimizer
 from torch.cuda.amp import GradScaler
 from torch.optim.lr_scheduler import _LRScheduler
 
+from credit.models.checkpoint import TorchFSDPCheckpointIO
+from credit.scheduler import update_on_epoch
+from credit.trainers.utils import cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -351,110 +352,61 @@ class BaseTrainer(ABC):
                     }
 
                     torch.save(state_dict, os.path.join(save_loc, "checkpoint.pt"))
-
-
-            # ==================== #
-            # early stopping block
-            # ==================== #
-            if skip_validation:
-                pass;
-            else:
-                training_metric = "valid_loss"
-                
-                # stopping patience block
-                best_epoch = [i for i, j in enumerate(results_dict[training_metric]) if j == min(results_dict[training_metric])][0]
-                
-                offset = epoch - best_epoch
-                
-                # if the current epoch is the best epoch, save the "best" checkpoint 
-                if offset == 0:
-                    # clear the cached memory from the gpu
-                    torch.cuda.empty_cache()
-                    gc.collect()
                     
-                    if not trial:
-                        if conf["trainer"]["mode"] != "fsdp":
-                            
-                            if self.rank == 0:
-        
-                                # Save the current model
-        
-                                logging.info(f"Saving model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
-        
-                                state_dict = {
-                                    "epoch": epoch,
-                                    "model_state_dict": self.model.state_dict(),
-                                    "optimizer_state_dict": optimizer.state_dict(),
-                                    'scheduler_state_dict': scheduler.state_dict() if conf["trainer"]["use_scheduler"] else None,
-                                    'scaler_state_dict': scaler.state_dict()
-                                }
-                                torch.save(state_dict, f"{save_loc}/best_checkpoint.pt")
-        
-                        else:
-        
-                            logging.info(f"Saving FSDP model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
-        
-                            # Initialize the checkpoint I/O handler
-        
-                            checkpoint_io = TorchFSDPCheckpointIO()
-        
-                            # Save model and optimizer checkpoints
-        
-                            checkpoint_io.save_unsharded_model(
-                                self.model,
-                                os.path.join(save_loc, "best_model_checkpoint.pt"),
-                                gather_dtensor=True,
-                                use_safetensors=False,
-                                rank=self.rank
-                            )
-                            
-                            checkpoint_io.save_unsharded_optimizer(
-                                optimizer,
-                                os.path.join(save_loc, "best_optimizer_checkpoint.pt"),
-                                gather_dtensor=True,
-                                rank=self.rank
-                            )
-        
-                            # Still need to save the scheduler and scaler states, just in another file for FSDP
-        
-                            state_dict = {
-                                "epoch": epoch,
-                                'scheduler_state_dict': scheduler.state_dict() if conf["trainer"]["use_scheduler"] else None,
-                                'scaler_state_dict': scaler.state_dict()
-                            }
-        
-                            torch.save(state_dict, os.path.join(save_loc, "best_checkpoint.pt"))
-            
             # clear the cached memory from the gpu
             torch.cuda.empty_cache()
             gc.collect()
             count += 1
             
-            training_metric = "train_loss" if skip_validation else "valid_loss"
+            if skip_validation:
+                pass;
+            else:
+                training_metric = "valid_loss"
 
-            # Stop training if we have not improved after X epochs (stopping patience)
-            best_epoch = [i for i, j in enumerate(results_dict[training_metric]) if j == min(results_dict[training_metric])][0]
-            offset = epoch - best_epoch
-            if offset >= conf['trainer']['stopping_patience']:
-                logging.info("Best validation set scores were found in epoch {}; current epoch is {}; early stopping triigered".format(
-                    best_epoch, epoch))
-                break
+                # Stop training if we have not improved after X epochs (stopping patience)
+                best_epoch = [i for i, j in enumerate(results_dict[training_metric]) if j == min(results_dict[training_metric])][0]
+                offset = epoch - best_epoch
+    
+                # ==================== #
+                # backup the best epoch
+                # ==================== #
 
+                # checkpoint.pt
+                shutil.copyfile(os.path.join(save_loc, "checkpoint.pt"), 
+                             os.path.join(save_loc, "best_checkpoint.pt"))
 
-            
-            # Stop training if we get too close to the wall time
+                # model_checkpoint.pt and optimizer_checkpoint.pt
+                if conf["trainer"]["mode"] == "fsdp":
+                    shutil.copyfile(os.path.join(save_loc, "model_checkpoint.pt"), 
+                                 os.path.join(save_loc, "best_model_checkpoint.pt"))
+                    
+                    shutil.copyfile(os.path.join(save_loc, "optimizer_checkpoint.pt"), 
+                                 os.path.join(save_loc, "best_optimizer_checkpoint.pt"))
+                    
+                # ==================== #
+                # early stopping block
+                # ==================== #
+                if offset >= conf['trainer']['stopping_patience']:
+                    logging.info("Best validation set scores were found in epoch {}; current epoch is {}; early stopping triigered".format(
+                        best_epoch, epoch))
+                    break
+                    
+            # ==================== #
+            # stop after one epoch
+            # ==================== #
             if 'stop_after_epoch' in conf['trainer']:
                 if conf['trainer']['stop_after_epoch']:
                     break
 
         training_metric = "train_loss" if skip_validation else "valid_loss"
-
+        
         best_epoch = [
             i for i, j in enumerate(results_dict[training_metric]) if j == min(results_dict[training_metric])
         ][0]
 
         result = {k: v[best_epoch] for k, v in results_dict.items()}
-        
+
         if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
             cleanup()
+
         return result
