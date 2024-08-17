@@ -10,6 +10,32 @@ logger = logging.getLogger(__name__)
 
 
 def load_loss(loss_type, reduction='mean'):
+    """Load a specified loss function by its type.
+
+    This function returns a loss function based on the specified 
+    `loss_type`. It supports several common loss functions, including 
+    MSE, MAE, MSLE, Huber, Log-Cosh, X-Tanh, and X-Sigmoid. The loss 
+    function can also be customized to use different reduction methods 
+    (e.g., 'mean', 'sum'). Use reduction=none if using latitude or variable 
+    weights
+
+    Args:
+        loss_type (str): The type of loss function to load. Supported 
+            values are "mse", "mae", "msle", "huber", "logcosh", 
+            "xtanh", and "xsigmoid".
+        reduction (str, optional): Specifies the reduction to apply to 
+            the output: 'mean' (default) or 'sum'.
+
+    Returns:
+        torch.nn.Module: The corresponding loss function.
+
+    Raises:
+        ValueError: If the specified `loss_type` is not supported.
+
+    Example:
+        >>> loss_fn = load_loss("mse")
+        >>> loss = loss_fn(pred, target)
+    """
     losses = {
         "mse": nn.MSELoss,
         "mae": nn.L1Loss,
@@ -21,6 +47,7 @@ def load_loss(loss_type, reduction='mean'):
     }
 
     if loss_type in losses:
+        logger.info(f"Loaded the {loss_type} loss function")
         return losses[loss_type](reduction=reduction)
     else:
         raise ValueError(f"Loss type '{loss_type}' not supported")
@@ -420,10 +447,12 @@ class VariableTotalLoss2D(torch.nn.Module):
 
         self.lat_weights = None
         if conf["loss"]["use_latitude_weights"]:
+            logger.info("Using latititude weights in loss calculations")
             self.lat_weights = latititude_weights(conf)[:, 10].unsqueeze(0).unsqueeze(-1)
 
         self.var_weights = None
         if conf["loss"]["use_variable_weights"]:
+            logger.info("Using variable weights in loss calculations")
             var_weights = [value if isinstance(value, list) else [value] for value in conf["loss"]["variable_weights"].values()]
             var_weights = np.array([item for sublist in var_weights for item in sublist])
             self.var_weights = torch.from_numpy(var_weights)
