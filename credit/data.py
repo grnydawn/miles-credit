@@ -20,7 +20,6 @@ ksha@ucar.edu
 
 # system tools
 import os
-import subprocess
 from glob import glob
 from timeit import timeit
 from functools import reduce
