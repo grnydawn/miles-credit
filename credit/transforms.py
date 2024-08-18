@@ -620,8 +620,10 @@ class ToTensor:
             if key == 'historical_ERA5_images' or key == 'x':
                 x_surf = torch.as_tensor(surface_vars).squeeze()
                 return_dict['x_surf'] = x_surf.permute(1, 0, 2, 3) if len(x_surf.shape) == 4 else x_surf.unsqueeze(0) 
-                # !! <--- x_surf.unsqueeze(1) # see line: 600 @ ToTensor_ERA5_and_Forcing
-                return_dict['x'] = torch.as_tensor(np.hstack([np.expand_dims(x, axis=1) for x in concatenated_vars])) # [hist_len, num_vars, level, lat, lon]
+                # !!! there are two cases: time_frame=1 and num_variable=1, unsqueeze(0) is not always right 
+                # see ToTensor_ERA5_and_Forcing
+                return_dict['x'] = torch.as_tensor(np.hstack([np.expand_dims(x, axis=1) for x in concatenated_vars])) 
+                # [hist_len, num_vars, level, lat, lon]
 
             elif key == 'target_ERA5_images' or key == 'y':
                 y_surf = torch.as_tensor(surface_vars)
@@ -785,7 +787,8 @@ class ToTensor_ERA5_and_Forcing:
 
             # ---------------------------------------------------------------------- #
             # ToTensor: upper-air varialbes
-            ## [upper_var, time, level, lat, lon] --> [time, upper_var, level, lat, lon]
+            ## produces [time, upper_var, level, lat, lon]
+            ## np.hstack concatenates the second dim (axis=1)
             x_upper_air = np.hstack([
                 np.expand_dims(var_upper_air, axis=1) for var_upper_air in numpy_vars_upper_air])
             x_upper_air = torch.as_tensor(x_upper_air)
@@ -793,10 +796,11 @@ class ToTensor_ERA5_and_Forcing:
             # ---------------------------------------------------------------------- #
             # ToTensor: surface variables
             if self.flag_surface:
+                # this line produces [surface_var, time, lat, lon]
                 x_surf = torch.as_tensor(numpy_vars_surface).squeeze()
                 
                 if len(x_surf.shape) == 4:
-                    # [surface_var, time, lat, lon] --> [time, surface_var, lat, lon]
+                    # permute: [surface_var, time, lat, lon] --> [time, surface_var, lat, lon]
                     x_surf = x_surf.permute(1, 0, 2, 3)
 
                 # =============================================== #
@@ -811,7 +815,7 @@ class ToTensor_ERA5_and_Forcing:
                 # =============================================== #
                 
                 else:
-                    # single var and single time, unsqueeze both
+                    # num_var=1, time=1, only has lat, lon
                     x_surf = x_surf.unsqueeze(0).unsqueeze(0)
                 
             if key == 'historical_ERA5_images' or key == 'x':
@@ -844,11 +848,11 @@ class ToTensor_ERA5_and_Forcing:
                 # ---------------------------------------------------------------------- #    
                 # ToTensor: forcing and static
                 if self.has_forcing_static:
-                    
+                    # this line produces [forcing_var, time, lat, lon]
                     x_static = torch.as_tensor(numpy_vars_forcing_static).squeeze()
                     
                     if len(x_static.shape) == 4:
-                        # [forcing_var, time, lat, lon] --> [time, forcing_var, lat, lon]
+                        # permute: [forcing_var, time, lat, lon] --> [time, forcing_var, lat, lon]
                         x_static = x_static.permute(1, 0, 2, 3)
                         
                     elif len(x_static.shape) == 3:
@@ -859,11 +863,9 @@ class ToTensor_ERA5_and_Forcing:
                             # multi-time, single vars
                             x_static = x_static.unsqueeze(1)
                     else:
-                        x_static = x_static.unsqueeze(0).unsqueeze(0)
-                        
-                        # assuming 
-                        # [time, lat, lon] --> [time, 1, lat, lon]
-                        x_static = x_static.unsqueeze(1)
+                        # num_var=1, time=1, only has lat, lon
+                        x_static = x_static.unsqueeze(0).unsqueeze(0)                   
+                        # x_static = x_static.unsqueeze(1)
                         
                     return_dict['x_forcing_static'] = x_static.float() # <--- convert float64 to float
                         
@@ -878,11 +880,11 @@ class ToTensor_ERA5_and_Forcing:
                 # ---------------------------------------------------------------------- #    
                 # ToTensor: diagnostic
                 if self.flag_diagnostic: 
-                    
+                    # this line produces [forcing_var, time, lat, lon]
                     y_diag = torch.as_tensor(numpy_vars_diagnostic).squeeze()
                     
                     if len(y_diag.shape) == 4:
-                        # [surface_var, time, lat, lon] --> [time, surface_var, lat, lon]
+                        # permute: [diag_var, time, lat, lon] --> [time, diag_var, lat, lon]
                         y_diag = y_diag.permute(1, 0, 2, 3)
 
                     # =============================================== #
@@ -897,6 +899,7 @@ class ToTensor_ERA5_and_Forcing:
                     # =============================================== #
                             
                     else:
+                        # num_var=1, time=1, only has lat, lon
                         y_diag = y_diag.unsqueeze(0).unsqueeze(0)
                 
                     return_dict['y_diag'] = y_diag
