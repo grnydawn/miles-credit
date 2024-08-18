@@ -89,11 +89,14 @@ def main():
                 os.makedirs(args.dataout, exist_ok=True)
         print(f"Rank {rank:d}: ", era5_subset_times[0], era5_subset_times[-1])
         transform_era5_times(era5_subset_times, rank, scaler_file=args.scalerfile, era5_file_dir=e5_file_dir,
+                             scaler_type=scaler_type,
                              vars_3d=vars_3d, vars_surf=vars_surf, out_dir=args.dataout)
     if args.fitdt:
-        scalers = fit_scaled_era5_time_residuals(era5_subset_times, rank, era5_file_dir=args.dataout,
-                                       scaler_type=scaler_type,
-                                       scaler_config=scaler_config)
+        scalers = fit_scaled_era5_time_residuals(era5_subset_times, rank,
+                                                 dt=args.time,
+                                                 era5_file_dir=args.dataout,
+                                                 scaler_type=scaler_type,
+                                                 scaler_config=scaler_config)
         all_scalers = np.array(comm.gather(scalers, root=0))
         if rank == 0:
             all_scalers_dict = {"start_date": scaler_start_dates, "end_date": scaler_end_dates,
@@ -154,7 +157,7 @@ def fit_era5_scaler_times(times, rank, era5_file_dir=None, vars_3d=None, vars_su
 def transform_era5_times(times, rank, scaler_file=None, era5_file_dir=None, vars_3d=None, vars_surf=None,
                          scaler_type=None, out_dir="/glade/derecho/scratch/dgagne/era5_quantile/", var_encoding=None):
     if var_encoding is None:
-        var_encoding = {"zlib": True, "complevel": 1, "shuffle": True}
+        var_encoding = {"zlib": True, "complevel": 3, "shuffle": True, "significant_digits": 4}
     dqs_df = pd.read_parquet(scaler_file)
     dqs_end_dates = pd.DatetimeIndex(dqs_df["end_date"])
     dqs_3d = dqs_df["scaler_3d"][dqs_end_dates < "2014-01-01"].apply(read_scaler).sum()
@@ -171,8 +174,6 @@ def transform_era5_times(times, rank, scaler_file=None, era5_file_dir=None, vars
             var_levels.append(f"{var}_{level:d}")
     n_times = times.size
     times_index = pd.DatetimeIndex(times)
-    n_3d_vars = len(var_levels)
-    n_vars = n_3d_vars + len(vars_surf)
     for t, ctime in enumerate(times_index):
         print(f"Rank {rank:d}: {ctime} {t + 1:d}/{n_times:d}")
         

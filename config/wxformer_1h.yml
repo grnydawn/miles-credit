@@ -183,3 +183,8 @@ pbs: #derecho
     ngpus: 4
     mem: '480GB'
     queue: 'main'
+
+scaler:
+    type: standard
+    options:
+        channels_last: False
