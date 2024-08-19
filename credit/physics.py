@@ -8,6 +8,7 @@ Content:
     - surface_pressure_for_dry_air
     - geopotential_height
         - pressure_level_thickness
+    - surface_pressure_to_slp
 
 Usage:
     - Conservation of dry air mass (strong constraint)
@@ -45,6 +46,29 @@ GRAVITY = 9.80665  # m/s^2
 LATENT_HEAT_OF_VAPORIZATION = 2.5e6  # J/kg
 
 SPECIFIC_HEAT_OF_DRY_AIR_CONST_PRESSURE = 1004.6  # J/kg/K
+
+def virtual_temperature(air_temperature: torch.Tensor,
+                       specific_humidity: torch.Tensor) -> torch.Tensor:
+    '''
+    Compute virtual_temperature
+
+    Tv = T * (1 + gamma*Q)
+    gamma = (Rv / Rd) - 1
+
+    where
+    - T: air temperature
+    - Q: specific humidity
+    - Rv, Rd: ideal gas constant for water vapor and dry air
+    
+    Args:
+    
+    Return:
+    
+    '''
+    
+    gamma = (RVGAS / RDGAS - 1.0)
+    Tv = air_temperature * (1 + gamma*specific_humidity)
+    return Tv
 
 def evaporation_rate(latent_heat_flux) -> torch.Tensor:
     '''
@@ -194,16 +218,49 @@ def pressure_level_thickness(upper_air_pressure: torch.Tensor,
     - p1, p2: two pressure levels
 
     Args:
+    
     Returns:
+    
     '''
     # Compute Tv
-    ratio_vapor = (RVGAS / RDGAS - 1.0)
-    Tv = air_temperature * (1 + ratio_vapor*specific_humidity)
+    Tv = virtual_temperature(air_temperature, specific_humidity)
+    
     # Compute logP diff
     dlogp = torch.log(upper_air_pressure).diff()
+    
     # thickness
     thickness = (RDGAS * Tv / GRAVITY) * dlogp
+    
     return thickness
+
+def surface_pressure_to_slp(surface_pressure: torch.Tensor,
+                           specific_humidity: torch.Tensor,
+                           surface_height: torch.tensor,):
+    '''
+    Compute surface pressure using barometric equation
+
+    slp = p_surf * exp((g * h) / (Rd * Tv))
+
+    where
+    - slp: sea level pressure
+    - p_surf: surface pressure
+    - g: gravity
+    - h: surface_height
+    - Rd: ideal gas constant for dry air
+    - Tv: virtual temperature
+    
+    Args:
+    
+    Returns:
+    
+    '''
+    # Compute Tv
+    Tv = virtual_temperature(air_temperature, specific_humidity)
+    
+    slp = surface_pressure * np.exp((GRAVITY * surface_height) / (RDGAS * T_v))
+
+    return slp
+
 
 
 
