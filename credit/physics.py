@@ -234,8 +234,9 @@ def pressure_level_thickness(upper_air_pressure: torch.Tensor,
     return thickness
 
 def surface_pressure_to_slp(surface_pressure: torch.Tensor,
-                           specific_humidity: torch.Tensor,
-                           surface_height: torch.tensor,):
+                            air_temperature: torch.Tensor,
+                            specific_humidity: torch.Tensor,
+                            surface_height: torch.tensor,):
     '''
     Compute surface pressure using barometric equation
 
@@ -257,7 +258,7 @@ def surface_pressure_to_slp(surface_pressure: torch.Tensor,
     # Compute Tv
     Tv = virtual_temperature(air_temperature, specific_humidity)
     
-    slp = surface_pressure * np.exp((GRAVITY * surface_height) / (RDGAS * T_v))
+    slp = surface_pressure * np.exp((GRAVITY * surface_height) / (RDGAS * Tv))
 
     return slp
 
