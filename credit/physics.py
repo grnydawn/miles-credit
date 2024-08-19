@@ -2,7 +2,9 @@
 Physics-based constraints and derivations for pressure-level CREDIT models
 --------------------------------------------------------------------------
 Content:
-    - evaporation_rate
+    - virtual_temperature
+    - evaporation_from_latent_heat
+    - latent_heat_from_evaporation
     - horizontal_advection
     - pressure_level_integral
     - surface_pressure_for_dry_air
@@ -11,15 +13,15 @@ Content:
     - surface_pressure_to_slp
 
 Usage:
-    - Conservation of dry air mass (strong constraint)
+    - Conservation of dry air mass (constraint)
         - Before and after a single-step, surface_pressure_for_dry_air (Pa) must equal
         
-    - Conservation of water (strong constraint)
+    - Conservation of water (constraint)
         - Before and after a single-step, evaporation_rate - precipitation + horizontal_advection(TWC) [mm] must equal
         - TWC = pressure_level_integral(specific_humidity)
         
     - hydrostatic equilibrium (weak constraint)
-        - GPH derived from geopotential_height ~ ERA5 GPH on a set of levels [300 hPa, 500 hPa, 800 hPa, 1000 hPa]
+        - GPH derived from geopotential_height ~ predicted ERA5 GPH
 
 Yingkai Sha
 ksha@ucar.edu
@@ -29,6 +31,7 @@ import numpy as np
 
 import torch
 
+# =============================================== #
 # Earth's radius
 RAD_EARTH = 6371000  # in meters
 
@@ -44,8 +47,8 @@ GRAVITY = 9.80665  # m/s^2
 # latent heat caused by the phase change of water
 # from liquid to gas
 LATENT_HEAT_OF_VAPORIZATION = 2.5e6  # J/kg
+# =============================================== #
 
-SPECIFIC_HEAT_OF_DRY_AIR_CONST_PRESSURE = 1004.6  # J/kg/K
 
 def virtual_temperature(air_temperature: torch.Tensor,
                         specific_humidity: torch.Tensor) -> torch.Tensor:
@@ -70,16 +73,26 @@ def virtual_temperature(air_temperature: torch.Tensor,
     Tv = air_temperature * (1 + gamma*specific_humidity)
     return Tv
 
-def evaporation_rate(latent_heat_flux) -> torch.Tensor:
+def evaporation_from_latent_heat(latent_heat_flux) -> torch.Tensor:
     '''
     Compute evaporation rate based on the latent heat flux [kg m-2 s-1.]
 
     Args:
+    
     Return:
+    
     '''
     # latent_heat_flux [W/m^2]
     # convert to evaporation rate: (W/m^2) / (J/kg) = (J s^-1 m^-2) / (J/kg) = kg/m^2/s
     return latent_heat_flux / LATENT_HEAT_OF_VAPORIZATION
+
+
+def latent_heat_from_evaporation(evaporation) -> torch.Tensor:
+    '''
+    See: evaporation_from_latent_heat
+    
+    '''
+    return evaporation * LATENT_HEAT_OF_VAPORIZATION
     
 def horizontal_advection(u: torch.Tensor, 
                          v: torch.Tensor, 
