@@ -81,9 +81,9 @@ class Trainer(BaseTrainer):
 
                     batch = next(dl)
 
-                    for i, forecast_hour in enumerate(batch["forecast_hour"]):
+                    for i, forecast_step in enumerate(batch["forecast_step"]):
 
-                        if forecast_hour == 1:
+                        if forecast_step == 1:
                             # Initialize x and x_surf with the first time step
                             if "x_surf" in batch:
                                 # combine x and x_surf
@@ -166,6 +166,7 @@ class Trainer(BaseTrainer):
             results_dict["train_forecast_len"].append(forecast_length+1)
 
             if not np.isfinite(np.mean(results_dict["train_loss"])):
+                print(results_dict["train_loss"], batch["x"].shape, batch["y"].shape, batch["index"])
                 try:
                     raise optuna.TrialPruned()
                 except Exception as E:
@@ -231,9 +232,9 @@ class Trainer(BaseTrainer):
             for k, batch in enumerate(valid_loader):
 
                 y_pred = None  # Place holder that gets updated after first roll-out
-                for _, forecast_hour in enumerate(batch["forecast_hour"]):
+                for _, forecast_step in enumerate(batch["forecast_step"]):
 
-                    if forecast_hour == 1:
+                    if forecast_step == 1:
                         # Initialize x and x_surf with the first time step
                         if "x_surf" in batch:
                             # combine x and x_surf
@@ -256,7 +257,7 @@ class Trainer(BaseTrainer):
                     y_pred = self.model(x)
 
                     # stop after user-defined number of steps
-                    if forecast_hour == forecast_len:
+                    if forecast_step == (forecast_len + 1):
                         y_atmo = batch["y"]
                         y_surf = batch["y_surf"]
                         y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
@@ -272,7 +273,7 @@ class Trainer(BaseTrainer):
                             results_dict[f"valid_{name}"].append(value[0].item())
                         stop_forecast = True
                         break
-                    elif self.history_len == 1:
+                    elif history_len == 1:
                         x = y_pred.detach()
                     else:
                         # use multiple past forecast steps as inputs
@@ -341,9 +342,19 @@ class Trainer(BaseTrainer):
         # Reload the results saved in the training csv if continuing to train
         if start_epoch == 0:
             results_dict = defaultdict(list)
+            # Set start_epoch to the length of the training log and train for one epoch
+            # This is a manual override, you must use train_one_epoch = True
+            if "train_one_epoch" in conf["trainer"] and conf["trainer"]["train_one_epoch"]:
+                epochs = 1
         else:
             results_dict = defaultdict(list)
-            saved_results = pd.read_csv(f"{save_loc}/training_log.csv")
+            saved_results = pd.read_csv(os.path.join(f"{save_loc}", "training_log.csv"))
+            # Set start_epoch to the length of the training log and train for one epoch
+            # This is a manual override, you must use train_one_epoch = True
+            if "train_one_epoch" in conf["trainer"] and conf["trainer"]["train_one_epoch"]:
+                start_epoch = len(saved_results)
+                epochs = start_epoch + 1
+
             for key in saved_results.columns:
                 if key == "index":
                     continue
@@ -351,15 +362,14 @@ class Trainer(BaseTrainer):
 
         for epoch in range(start_epoch, epochs):
 
-            logging.info(f"Beginning epoch {epoch}")
+            logging.info(f"Starting epoch {epoch}")
 
-            if not isinstance(train_loader.dataset, IterableDataset):
-                train_loader.sampler.set_epoch(epoch)
-            else:
-                train_loader.dataset.set_epoch(epoch)
-                # if rollout_scheduler is not None:
-                #     conf['trainer']['stop_rollout'] = rollout_scheduler(epoch, epochs)
-                #     train_loader.dataset.set_rollout_prob(conf['trainer']['stop_rollout'])
+            # set the epoch in the dataset and sampler to ensure distribured randomness is handled correctly
+            if hasattr(train_loader, 'sampler') and hasattr(train_loader.sampler, 'set_epoch'):
+                train_loader.sampler.set_epoch(epoch)  # Start a new forecast
+
+            if hasattr(train_loader.dataset, 'set_epoch'):
+                train_loader.dataset.set_epoch(epoch)  # Ensure we don't start in the middle of a forecast epoch-over-epoch
 
             ############
             #
