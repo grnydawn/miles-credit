@@ -9,25 +9,26 @@ Content:
 '''
 import os
 import gc
+import shutil
 import logging
 from collections import defaultdict
+
+from abc import ABC, abstractmethod
+from typing import Dict, Any, Optional
 
 import numpy as np
 import pandas as pd
 
 import torch
 from torch.utils.data import IterableDataset
-from credit.models.checkpoint import TorchFSDPCheckpointIO
-from credit.scheduler import update_on_epoch
-from credit.trainers.utils import cleanup
-
-from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional
 from torch.utils.data import DataLoader
 from torch.optim import Optimizer
 from torch.cuda.amp import GradScaler
 from torch.optim.lr_scheduler import _LRScheduler
 
+from credit.models.checkpoint import TorchFSDPCheckpointIO
+from credit.scheduler import update_on_epoch
+from credit.trainers.utils import cleanup
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +214,23 @@ class BaseTrainer(ABC):
             if count >= conf['trainer']['num_epoch']:
                 print('{} epochs completed, exit'.format(conf['trainer']['num_epoch']))
                 break;
+
+            
+            # ========================= #
+            # backup the previous epoch
+            # ========================= #
+            if count > 0 and conf['trainer']['save_backup_weights']:
+                # checkpoint.pt
+                shutil.copyfile(os.path.join(save_loc, "checkpoint.pt"), 
+                                os.path.join(save_loc, "backup_checkpoint.pt"))
+
+                # model_checkpoint.pt and optimizer_checkpoint.pt
+                if conf["trainer"]["mode"] == "fsdp":
+                    shutil.copyfile(os.path.join(save_loc, "model_checkpoint.pt"), 
+                                    os.path.join(save_loc, "backup_model_checkpoint.pt"))
+                    
+                    shutil.copyfile(os.path.join(save_loc, "optimizer_checkpoint.pt"), 
+                                    os.path.join(save_loc, "backup_optimizer_checkpoint.pt"))
             
             logging.info(f"Beginning epoch {epoch}")
 
@@ -323,11 +341,9 @@ class BaseTrainer(ABC):
                     logging.info(f"Saving FSDP model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
 
                     # Initialize the checkpoint I/O handler
-
                     checkpoint_io = TorchFSDPCheckpointIO()
 
                     # Save model and optimizer checkpoints
-
                     checkpoint_io.save_unsharded_model(
                         self.model,
                         os.path.join(save_loc, "model_checkpoint.pt"),
@@ -343,51 +359,61 @@ class BaseTrainer(ABC):
                     )
 
                     # Still need to save the scheduler and scaler states, just in another file for FSDP
-
                     state_dict = {
                         "epoch": epoch,
                         'scheduler_state_dict': scheduler.state_dict() if conf["trainer"]["use_scheduler"] else None,
                         'scaler_state_dict': scaler.state_dict()
                     }
-
+                    
                     torch.save(state_dict, os.path.join(save_loc, "checkpoint.pt"))
-
-                # This needs updated!
-                # valid_loss = np.mean(valid_results["valid_loss"])
-                # # save if this is the best model seen so far
-                # if (self.rank == 0) and (np.mean(valid_loss) == min(results_dict["valid_loss"])):
-                #     if conf["trainer"]["mode"] == "ddp":
-                #         shutil.copy(f"{save_loc}/checkpoint_{self.device}.pt", f"{save_loc}/best_{self.device}.pt")
-                #     elif conf["trainer"]["mode"] == "fsdp":
-                #         if os.path.exists(f"{save_loc}/best"):
-                #             shutil.rmtree(f"{save_loc}/best")
-                #         shutil.copytree(f"{save_loc}/checkpoint", f"{save_loc}/best")
-                #     else:
-                #         shutil.copy(f"{save_loc}/checkpoint.pt", f"{save_loc}/best.pt")
-
+                    
             # clear the cached memory from the gpu
             torch.cuda.empty_cache()
             gc.collect()
-
-            training_metric = "train_loss" if skip_validation else "valid_loss"
-
-            # Stop training if we have not improved after X epochs (stopping patience)
-            best_epoch = [i for i, j in enumerate(results_dict[training_metric]) if j == min(results_dict[training_metric])][0]
-            offset = epoch - best_epoch
-            if offset >= conf['trainer']['stopping_patience']:
-                logging.info("Best validation set scores were found in epoch {}; current epoch is {}; early stopping triigered".format(
-                    best_epoch, epoch))
-                break
-
             count += 1
             
-            # Stop training if we get too close to the wall time
+            if skip_validation:
+                pass;
+            else:
+                training_metric = "valid_loss"
+
+                # Stop training if we have not improved after X epochs (stopping patience)
+                best_epoch = [i for i, j in enumerate(results_dict[training_metric]) if j == min(results_dict[training_metric])][0]
+                offset = epoch - best_epoch
+    
+                # ==================== #
+                # backup the best epoch
+                # ==================== #
+                if offset == 0 and conf['trainer']['save_best_weights']:
+                    # checkpoint.pt
+                    shutil.copyfile(os.path.join(save_loc, "checkpoint.pt"), 
+                                 os.path.join(save_loc, "best_checkpoint.pt"))
+    
+                    # model_checkpoint.pt and optimizer_checkpoint.pt
+                    if conf["trainer"]["mode"] == "fsdp":
+                        shutil.copyfile(os.path.join(save_loc, "model_checkpoint.pt"), 
+                                     os.path.join(save_loc, "best_model_checkpoint.pt"))
+                        
+                        shutil.copyfile(os.path.join(save_loc, "optimizer_checkpoint.pt"), 
+                                     os.path.join(save_loc, "best_optimizer_checkpoint.pt"))
+                    
+                # ==================== #
+                # early stopping block
+                # ==================== #
+                if offset >= conf['trainer']['stopping_patience']:
+                    logging.info("Best valid loss were in epoch {}; current epoch is {}; early stopping.".format(
+                        best_epoch, epoch))
+                    break
+                    
+            # ==================== #
+            # stop after one epoch
+            # ==================== #
             if 'stop_after_epoch' in conf['trainer']:
                 if conf['trainer']['stop_after_epoch']:
                     break
 
         training_metric = "train_loss" if skip_validation else "valid_loss"
-
+        
         best_epoch = [
             i for i, j in enumerate(results_dict[training_metric]) if j == min(results_dict[training_metric])
         ][0]
