@@ -16,7 +16,7 @@ Usage:
         
     - Conservation of water (strong constraint)
         - Before and after a single-step, evaporation_rate - precipitation + horizontal_advection(TWC) [mm] must equal
-        - TWC = pressure_level_integral(Q + cloud + rain + snow)
+        - TWC = pressure_level_integral(specific_humidity)
         
     - hydrostatic equilibrium (weak constraint)
         - GPH derived from geopotential_height ~ ERA5 GPH on a set of levels [300 hPa, 500 hPa, 800 hPa, 1000 hPa]
@@ -48,7 +48,7 @@ LATENT_HEAT_OF_VAPORIZATION = 2.5e6  # J/kg
 SPECIFIC_HEAT_OF_DRY_AIR_CONST_PRESSURE = 1004.6  # J/kg/K
 
 def virtual_temperature(air_temperature: torch.Tensor,
-                       specific_humidity: torch.Tensor) -> torch.Tensor:
+                        specific_humidity: torch.Tensor) -> torch.Tensor:
     '''
     Compute virtual_temperature
 
@@ -137,7 +137,7 @@ def pressure_level_integral(T: torch.Tensor,
     return 1 / GRAVITY * integral
 
 
-def surface_pressure_for_dry_air(specific_total_water: torch.Tensor,
+def surface_pressure_for_dry_air(specific_humidity: torch.Tensor,
                                  surface_pressure: torch.Tensor,
                                  upper_air_pressure: torch.Tensor,) -> torch.Tensor:
     '''
@@ -148,12 +148,11 @@ def surface_pressure_for_dry_air(specific_total_water: torch.Tensor,
     where
     - P_dry: surface pressure due to dry air
     - P_surf: surface pressure of all gases, including water vapor
-    - TWC: total water content, derived from specific total water
-           specific total water = specific humidity + cloud ice + cloud liquid + rain + snow
+    - TWC: total water content, derived from specific_humidity
     - g: gravity
     
     Args:
-        specific_total_water (lat, lon, vertical_level), (kg/kg)
+        specific_humidity (lat, lon, vertical_level), (kg/kg)
         surface_pressure (lat, lon), (Pa)
         upper_air_pressure: (vertical_level + 1) (Pa)
     
@@ -161,7 +160,7 @@ def surface_pressure_for_dry_air(specific_total_water: torch.Tensor,
         P_dry (Pa)
     '''
     
-    TWC = pressure_level_integral(specific_total_water, 
+    TWC = pressure_level_integral(specific_humidity, 
                                   upper_air_pressure)
     
     p_dry = surface_pressure - GRAVITY * TWC
@@ -173,7 +172,7 @@ def geopotential_height(upper_air_pressure: torch.Tensor,
                         surface_height: torch.tensor) -> torch.Tensor:
     '''
     Compute geopotential height (GPH) for a given pressure level 
-    using air temperature and specific_humidity.
+    using air temperature and specific humidity.
 
     Args:
     Returns:
