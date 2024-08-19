@@ -248,12 +248,18 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
 
         if 'valid_thread_workers' not in conf['trainer']:
             conf['trainer']['valid_thread_workers'] = 0
+
+        if 'save_backup_weights' not in conf['trainer']:
+            conf['trainer']['save_backup_weights'] = False
+
+        if 'save_best_weights' not in conf['trainer']:
+            conf['trainer']['save_best_weights'] = True
         
         if 'skip_validation' not in conf['trainer']:
             conf['trainer']['skip_validation'] = False
     
         if conf['trainer']['skip_validation'] is False:
-            
+            # do not skip validaiton
             assert 'valid_batch_size'  in conf['trainer'], (
                 "Validation set batch size ('valid_batch_size') is missing from onf['trainer']")
             
