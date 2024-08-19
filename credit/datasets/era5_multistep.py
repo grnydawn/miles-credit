@@ -4,7 +4,8 @@ import logging
 import numpy as np
 from functools import partial
 from typing import Any, Callable, Dict, List, Optional, Tuple
-from credit.data import drop_var_from_dataset, get_forward_data, Sample, find_key_for_number, extract_month_day_hour, find_common_indices
+from credit.data import (drop_var_from_dataset, get_forward_data, Sample,
+                         find_key_for_number, extract_month_day_hour, find_common_indices)
 
 
 logger = logging.getLogger(__name__)
@@ -419,10 +420,11 @@ class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
             transform=self.transform
         )
 
-        self.start_index = None
-        self.forecast_step = 0
         self.total_length = len(self.ERA5_indices)
-        self.epoch = None
+        self.current_epoch = None
+        self.forecast_step_count = 0
+        self.current_index = None
+        self.initial_index = None
 
     def __post_init__(self):
         # Total sequence length of each sample.
