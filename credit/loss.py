@@ -343,9 +343,8 @@ class PSDLoss(nn.Module):
         return magnitudes
 
 
-def latititude_weights(conf):
+def latitude_weights(conf):
     """Calculate latitude-based weights for loss function.
-
     This function calculates weights based on latitude values 
     to be used in loss functions for geospatial data. The weights 
     are derived from the cosine of the latitude and normalized 
@@ -359,15 +358,19 @@ def latititude_weights(conf):
         torch.Tensor: A 2D tensor of weights with dimensions 
             corresponding to latitude and longitude.
     """
-    _lat = xr.open_dataset(conf["loss"]["latitude_weights"])["latitude"].values
-    dims_lon = xr.open_dataset(conf["loss"]["latitude_weights"])["longitude"].shape[0]
+    # Open the dataset and extract latitude and longitude information
+    ds = xr.open_dataset(conf["loss"]["latitude_weights"])
+    lat = torch.from_numpy(ds["latitude"].values).float()
+    lon_dim = ds["longitude"].shape[0]
 
-    weights = np.cos(np.deg2rad(_lat))
-    weights = weights / np.mean(weights)
-    repeated_weights = np.repeat(weights[np.newaxis, :], dims_lon, axis=0)
-    L = repeated_weights.T
+    # Calculate weights using PyTorch operations
+    weights = torch.cos(torch.deg2rad(lat))
+    weights = weights / weights.mean()
 
-    return torch.from_numpy(L).float()
+    # Create a 2D tensor of weights
+    L = weights.unsqueeze(1).expand(-1, lon_dim)
+
+    return L
 
 
 def variable_weights(conf, channels, surface_channels, frames):
@@ -448,7 +451,7 @@ class VariableTotalLoss2D(torch.nn.Module):
         self.lat_weights = None
         if conf["loss"]["use_latitude_weights"]:
             logger.info("Using latititude weights in loss calculations")
-            self.lat_weights = latititude_weights(conf)[:, 10].unsqueeze(0).unsqueeze(-1)
+            self.lat_weights = latitude_weights(conf)[:, 10].unsqueeze(0).unsqueeze(-1)
 
         self.var_weights = None
         if conf["loss"]["use_variable_weights"]:
