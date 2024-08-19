@@ -450,7 +450,7 @@ class VariableTotalLoss2D(torch.nn.Module):
 
         self.lat_weights = None
         if conf["loss"]["use_latitude_weights"]:
-            logger.info("Using latititude weights in loss calculations")
+            logger.info("Using latitude weights in loss calculations")
             self.lat_weights = latitude_weights(conf)[:, 10].unsqueeze(0).unsqueeze(-1)
 
         self.var_weights = None
