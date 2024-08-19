@@ -131,6 +131,13 @@ trainer:
     # load existing weights / optimier state
     load_weights: True
     load_optimizer: True
+
+    # CREDIT save checkpoints at the end of every epoch
+    # save_backup_weights will also save checkpoints in the beginning of every epoch
+    save_backup_weights: True
+    # save_best_weights will save the best checkpoint separatly based on validation loss
+    # does not work if skip_validation: True
+    save_best_weights: True
     
     # update learning rate to optimizer.param_groups
     # False if a scheduler is used
