@@ -208,6 +208,9 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         if 'one_shot' not in conf['data']:
             conf['data']['one_shot'] = None
 
+        if conf['data']['one_shot'] is not True:
+            conf['data']['one_shot'] = None
+        
         if "total_time_steps" not in conf["data"]:
             conf["data"]["total_time_steps"] =  conf["data"]['forecast_len']
     

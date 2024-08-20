@@ -23,7 +23,7 @@ data:
     # the time dimension MUST be the same as upper-air variables
     # files must have the listed variable names
     # surface variables will be normalized by the dataloader, users do not need to normalize them
-    surface_variables: ['Z500', 't2m']
+    surface_variables: ['sp', 't2m']
     save_loc_surface: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/SixHourly_TOTAL_*'
 
     # dynamic forcing variables, must be YEARLY zarr or nc with (time, latitude, longitude) dims
@@ -37,8 +37,8 @@ data:
     # the time dimension MUST be the same as upper-air variables
     # files must have the listed variable names 
     # diagnostic variables will be normalized by the dataloader, users do not need to normalize them
-    diagnostic_variables: ['tp'] 
-    save_loc_diagnostic: '/glade/campaign/cisl/aiml/ksha/CREDIT/EXTEND/ERA5_regrid_tp_*'
+    diagnostic_variables: ['Z500', 'T500'] 
+    save_loc_diagnostic: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/SixHourly_TOTAL_*'
     
     # periodic forcing variables, must be a single zarr or nc with (time, latitude, longitude) dims
     # the time dimension should cover an entire LEAP YEAR
@@ -85,7 +85,9 @@ data:
     # when forecast_len = 0, it does nothing
     # when forecast_len > 0, it computes training loss on the last forecast state only
     # this option speed-up multi-step training, it ONLY works with trainer type: standard
-    one_shot: True          
+    # use one_shot --> True
+    # do not use one_shot --> False or null
+    one_shot: True   
                             
     # number of hours for each forecast step
     # lead_time_periods = 6 for 6 hourly model and 6 hourly taining data
@@ -131,6 +133,13 @@ trainer:
     # load existing weights / optimier state
     load_weights: True
     load_optimizer: True
+
+    # CREDIT save checkpoints at the end of every epoch
+    # save_backup_weights will also save checkpoints in the beginning of every epoch
+    save_backup_weights: True
+    # save_best_weights will save the best checkpoint separatly based on validation loss
+    # does not work if skip_validation: True
+    save_best_weights: True
     
     # update learning rate to optimizer.param_groups
     # False if a scheduler is used
@@ -278,20 +287,20 @@ loss:
 
     # variable weighting
     # if True, specify your weights
-    use_variable_weights: False
+    use_variable_weights: True
     # an example
-    # variable_weights:
-    #     U: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
-    #     V: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
-    #     T: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
-    #     Q: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
-    #     SP: 0.1
-    #     t2m: 1.0
-    #     V500: 0.1
-    #     U500: 0.1
-    #     T500: 0.1
-    #     Z500: 0.1
-    #     Q500: 0.1
+    variable_weights:
+        U: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
+        V: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
+        T: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
+        Q: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
+        SP: 0.1
+        t2m: 1.0
+        V500: 0.1
+        U500: 0.1
+        T500: 0.1
+        Z500: 0.1
+        Q500: 0.1
     
 predict:
     forecasts:
