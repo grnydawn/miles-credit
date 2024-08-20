@@ -12,7 +12,7 @@ from torch.utils.data import IterableDataset
 from credit.scheduler import update_on_batch
 from credit.trainers.utils import cycle, accum_log
 from credit.trainers.base_trainer import BaseTrainer
-from credit.data import reshape_only
+from credit.data import concat_and_reshape, reshape_only
 import optuna
 
 import os
@@ -107,9 +107,18 @@ class Trainer(BaseTrainer):
                         y_pred = self.model(x)
 
                         # calculate rolling loss
-                        y_atmo = batch["y"]
-                        y_surf = batch["y_surf"]
-                        y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
+                        if "y_surf" in batch:
+                            y = concat_and_reshape(batch["y"], batch["y_surf"]).to(self.device)
+                        else:
+                            y = reshape_only(batch["y"]).to(self.device)
+
+                        if 'y_diag' in batch:
+
+                            # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
+                            y_diag_batch = batch['y_diag'].to(self.device).permute(0, 2, 1, 3, 4).float()
+
+                            # concat on var dimension
+                            y = torch.cat((y, y_diag_batch), dim=1)
 
                         loss = criterion(y.to(y_pred.dtype), y_pred).mean()
 
@@ -151,13 +160,13 @@ class Trainer(BaseTrainer):
                 scaler.update()
                 optimizer.zero_grad()
 
-                # Metrics
-                metrics_dict = metrics(y_pred.float(), y.float())
-                for name, value in metrics_dict.items():
-                    value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
-                    if distributed:
-                        dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
-                    results_dict[f"train_{name}"].append(value[0].item())
+            # Metrics
+            metrics_dict = metrics(y_pred.float(), y.float())
+            for name, value in metrics_dict.items():
+                value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
+                if distributed:
+                    dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
+                results_dict[f"train_{name}"].append(value[0].item())
 
             batch_loss = torch.Tensor([logs["loss"]]).cuda(self.device)
             if distributed:
@@ -258,9 +267,19 @@ class Trainer(BaseTrainer):
 
                     # stop after user-defined number of steps
                     if forecast_step == (forecast_len + 1):
-                        y_atmo = batch["y"]
-                        y_surf = batch["y_surf"]
-                        y = self.model.concat_and_reshape(y_atmo, y_surf).to(self.device)
+                        # calculate rolling loss
+                        if "y_surf" in batch:
+                            y = concat_and_reshape(batch["y"], batch["y_surf"]).to(self.device)
+                        else:
+                            y = reshape_only(batch["y"]).to(self.device)
+
+                        if 'y_diag' in batch:
+
+                            # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
+                            y_diag_batch = batch['y_diag'].to(self.device).permute(0, 2, 1, 3, 4).float()
+
+                            # concat on var dimension
+                            y = torch.cat((y, y_diag_batch), dim=1)
 
                         loss = criterion(y.to(y_pred.dtype), y_pred).mean()
 
