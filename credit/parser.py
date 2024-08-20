@@ -15,6 +15,7 @@ import os
 import copy
 import warnings
 from glob import glob
+from collections import Counter
 
 import numpy as np
 import xarray as xr
@@ -179,6 +180,20 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         conf['data']['save_loc_static'] = None
         conf['data']['static_variables'] = []
     # ===================================================== #
+    
+    # duplicated variable name check
+    all_varnames = conf['data']['variables'] + \
+                   conf['data']['surface_variables'] + \
+                   conf['data']['dynamic_forcing_variables'] + \
+                   conf['data']['diagnostic_variables'] + \
+                   conf['data']['forcing_variables'] + \
+                   conf['data']['static_variables']
+    
+    varname_counts = Counter(all_varnames)
+    duplicates = [varname for varname, count in varname_counts.items() if count > 1]
+
+    assert len(duplicates) == 0, (
+        "Duplicated variable names: [{}] found. No duplicates allowed, stop.".format(duplicates))
     
     ## I/O data sizes
     if parse_training:
