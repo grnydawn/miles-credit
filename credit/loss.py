@@ -394,24 +394,37 @@ def variable_weights(conf, channels, surface_channels, frames):
             all variables.
     """
     # Load weights for U, V, T, Q
+    varname_upper_air = conf['data']['variables']
+    varname_surface = conf['data']['surface_variables']
+    varname_diagnostics = conf['data']['diagnostic_variables']
+    #N_levels = conf['data']['levels']
+    
+    # weights_UVTQ = torch.tensor([
+    #     conf["loss"]["variable_weights"]["U"],
+    #     conf["loss"]["variable_weights"]["V"],
+    #     conf["loss"]["variable_weights"]["T"],
+    #     conf["loss"]["variable_weights"]["Q"]
+    # ]).view(1, channels * frames, 1, 1)
+
     weights_UVTQ = torch.tensor([
-        conf["loss"]["variable_weights"]["U"],
-        conf["loss"]["variable_weights"]["V"],
-        conf["loss"]["variable_weights"]["T"],
-        conf["loss"]["variable_weights"]["Q"]
+        conf["loss"]["variable_weights"][var] for var in varname_upper_air
     ]).view(1, channels * frames, 1, 1)
-
+    
     # Load weights for SP, t2m, V500, U500, T500, Z500, Q500
-    weights_sfc = torch.tensor([
-        conf["loss"]["variable_weights"]["SP"],
-        conf["loss"]["variable_weights"]["t2m"],
-        conf["loss"]["variable_weights"]["V500"],
-        conf["loss"]["variable_weights"]["U500"],
-        conf["loss"]["variable_weights"]["T500"],
-        conf["loss"]["variable_weights"]["Z500"],
-        conf["loss"]["variable_weights"]["Q500"]
-    ]).view(1, surface_channels, 1, 1)
+    # weights_sfc = torch.tensor([
+    #     conf["loss"]["variable_weights"]["SP"],
+    #     conf["loss"]["variable_weights"]["t2m"],
+    #     conf["loss"]["variable_weights"]["V500"],
+    #     conf["loss"]["variable_weights"]["U500"],
+    #     conf["loss"]["variable_weights"]["T500"],
+    #     conf["loss"]["variable_weights"]["Z500"],
+    #     conf["loss"]["variable_weights"]["Q500"]
+    # ]).view(1, surface_channels, 1, 1)
 
+    weights_sfc = torch.tensor([
+        conf["loss"]["variable_weights"][var] for var in (varname_surface + varname_diagnostics)
+    ]).view(1, surface_channels, 1, 1)
+    
     # Combine all weights along the color channel
     variable_weights = torch.cat([weights_UVTQ, weights_sfc], dim=1)
 
@@ -450,7 +463,7 @@ class VariableTotalLoss2D(torch.nn.Module):
 
         self.lat_weights = None
         if conf["loss"]["use_latitude_weights"]:
-            logger.info("Using latititude weights in loss calculations")
+            logger.info("Using latitude weights in loss calculations")
             self.lat_weights = latitude_weights(conf)[:, 10].unsqueeze(0).unsqueeze(-1)
 
         self.var_weights = None
