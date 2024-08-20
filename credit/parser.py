@@ -320,6 +320,31 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         if conf['loss']['use_variable_weights']:
             assert 'variable_weights' in conf['loss'], (
                 "must specify 'variable_weights' in conf['loss'] if 'use_variable_weights': True")
+
+            # ----------------------------------------------------------------------------------------- #
+            # check and reorganize variable weights
+            varname_upper_air = conf['data']['variables']
+            varname_surface = conf['data']['surface_variables']
+            varname_diagnostics = conf['data']['diagnostic_variables']
+            N_levels = conf['data']['levels']
+            
+            weights_dict_ordered = {}
+            
+            varname_covered = list(conf['loss']['variable_weights'].keys())
+            
+            for varname in varname_upper_air:
+                assert varname in varname_covered, "missing variable weights for '{}'".format(varname)
+                N_weights = len(conf['loss']['variable_weights'][varname])
+                assert N_weights == N_levels, (
+                    "{} levels were defined, but weights only have {} levels".format(N_levels, N_weights))
+                weights_dict_ordered[varname] = conf['loss']['variable_weights'][varname]
+                
+            for varname in varname_surface+varname_diagnostics:
+                assert varname in varname_covered, "missing variable weights for '{}'".format(varname)
+                weights_dict_ordered[varname] = conf['loss']['variable_weights'][varname]
+
+            conf['loss']['variable_weights'] = weights_dict_ordered
+            # ----------------------------------------------------------------------------------------- #
     
         if 'use_power_loss' not in conf['loss']:
             conf['loss']['use_power_loss'] = False
