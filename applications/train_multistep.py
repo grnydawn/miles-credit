@@ -28,7 +28,7 @@ from credit.loss import VariableTotalLoss2D
 # from credit.datasets.sequential_multistep import DistributedSequentialDataset
 from credit.datasets.era5_multistep import ERA5_and_Forcing_MultiStep
 from credit.transforms import load_transforms
-from credit.scheduler import load_scheduler, annealed_probability
+from credit.scheduler import load_scheduler
 from credit.trainers import load_trainer
 from credit.parser import CREDIT_main_parser, training_data_check
 
@@ -458,7 +458,6 @@ def main(rank, world_size, conf, trial=False):
         scaler=scaler,
         scheduler=scheduler,
         metrics=metrics,
-        rollout_scheduler=annealed_probability,  # Optional
         trial=trial  # Optional
     )
 

@@ -22,13 +22,40 @@ from credit.models.checkpoint import TorchFSDPCheckpointIO
 from credit.scheduler import update_on_epoch
 from credit.trainers.utils import cleanup
 
+logger = logging.getLogger(__name__)
+
 
 class Trainer(BaseTrainer):
+    """
+    Trainer class for handling the training, validation, and checkpointing of models.
+
+    This class is responsible for executing the training loop, validating the model 
+    on a separate dataset, and managing checkpoints during training. It supports 
+    both single-GPU and distributed (FSDP, DDP) training.
+
+    Attributes:
+        model (torch.nn.Module): The model to be trained.
+        rank (int): The rank of the process in distributed training.
+        module (bool): If True, use model with module parallelism (default: False).
+
+    Methods:
+        train_one_epoch(epoch, conf, trainloader, optimizer, criterion, scaler, 
+                        scheduler, metrics):
+            Perform training for one epoch and return training metrics.
+        
+        validate(epoch, conf, valid_loader, criterion, metrics):
+            Validate the model on the validation dataset and return validation metrics.
+
+        fit_deprecated(conf, train_loader, valid_loader, optimizer, train_criterion, 
+                       valid_criterion, scaler, scheduler, metrics, trial=False):
+            Perform the full training loop across multiple epochs, including validation 
+            and checkpointing.
+    """
 
     def __init__(self, model: torch.nn.Module, rank: int, module: bool = False):
         super().__init__(model, rank, module)
         # Add any additional initialization if needed
-        logging.info("Loading a multi-step trainer class")
+        logger.info("Loading a multi-step trainer class")
 
     # Training function.
     def train_one_epoch(
@@ -40,13 +67,30 @@ class Trainer(BaseTrainer):
         criterion,
         scaler,
         scheduler,
-        metrics,
-        forecast_length=0
+        metrics
     ):
+
+        """
+        Trains the model for one epoch.
+
+        Args:
+            epoch (int): Current epoch number.
+            conf (dict): Configuration dictionary containing training settings.
+            trainloader (DataLoader): DataLoader for the training dataset.
+            optimizer (torch.optim.Optimizer): Optimizer used for training.
+            criterion (callable): Loss function used for training.
+            scaler (torch.cuda.amp.GradScaler): Gradient scaler for mixed precision training.
+            scheduler (torch.optim.lr_scheduler._LRScheduler): Learning rate scheduler.
+            metrics (callable): Function to compute metrics for evaluation.
+
+        Returns:
+            dict: Dictionary containing training metrics and loss for the epoch.
+        """
 
         batches_per_epoch = conf['trainer']['batches_per_epoch']
         amp = conf['trainer']['amp']
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
+        forecast_length = conf["data"]["forecast_len"]
 
         # update the learning rate if epoch-by-epoch updates that dont depend on a metric
         if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "lambda":
@@ -214,6 +258,20 @@ class Trainer(BaseTrainer):
         criterion,
         metrics
     ):
+        
+        """
+        Validates the model on the validation dataset.
+
+        Args:
+            epoch (int): Current epoch number.
+            conf (dict): Configuration dictionary containing validation settings.
+            valid_loader (DataLoader): DataLoader for the validation dataset.
+            criterion (callable): Loss function used for validation.
+            metrics (callable): Function to compute metrics for evaluation.
+
+        Returns:
+            dict: Dictionary containing validation metrics and loss for the epoch.
+        """
 
         self.model.eval()
 
@@ -267,7 +325,6 @@ class Trainer(BaseTrainer):
 
                     # stop after user-defined number of steps
                     if forecast_step == (forecast_len + 1):
-                        # calculate rolling loss
                         if "y_surf" in batch:
                             y = concat_and_reshape(batch["y"], batch["y_surf"]).to(self.device)
                         else:
@@ -281,6 +338,7 @@ class Trainer(BaseTrainer):
                             # concat on var dimension
                             y = torch.cat((y, y_diag_batch), dim=1)
 
+                        # calculate rolling loss
                         loss = criterion(y.to(y_pred.dtype), y_pred).mean()
 
                         # Metrics
@@ -339,7 +397,7 @@ class Trainer(BaseTrainer):
 
         return results_dict
 
-    def fit(
+    def fit_deprecated(
         self,
         conf,
         train_loader,
@@ -350,7 +408,6 @@ class Trainer(BaseTrainer):
         scaler,
         scheduler,
         metrics,
-        rollout_scheduler=None,
         trial=False
     ):
         save_loc = conf['save_loc']
@@ -381,7 +438,7 @@ class Trainer(BaseTrainer):
 
         for epoch in range(start_epoch, epochs):
 
-            logging.info(f"Starting epoch {epoch}")
+            logger.info(f"Starting epoch {epoch}")
 
             # set the epoch in the dataset and sampler to ensure distribured randomness is handled correctly
             if hasattr(train_loader, 'sampler') and hasattr(train_loader.sampler, 'set_epoch'):
@@ -404,8 +461,7 @@ class Trainer(BaseTrainer):
                 train_criterion,
                 scaler,
                 scheduler,
-                metrics,
-                conf["data"]["forecast_len"]
+                metrics
             )
 
             ############
@@ -477,7 +533,7 @@ class Trainer(BaseTrainer):
 
                         # Save the current model
 
-                        logging.info(f"Saving model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
+                        logger.info(f"Saving model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
 
                         state_dict = {
                             "epoch": epoch,
@@ -490,7 +546,7 @@ class Trainer(BaseTrainer):
 
                 else:
 
-                    logging.info(f"Saving FSDP model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
+                    logger.info(f"Saving FSDP model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}")
 
                     # Initialize the checkpoint I/O handler
 
@@ -549,7 +605,7 @@ class Trainer(BaseTrainer):
             ][0]
             offset = epoch - best_epoch
             if offset >= conf['trainer']['stopping_patience']:
-                logging.info(f"Trial {trial.number} is stopping early")
+                logger.info(f"Trial {trial.number} is stopping early")
                 break
 
             # Stop training if we get too close to the wall time
