@@ -33,9 +33,6 @@ from credit.data import ERA5Dataset, ERA5_and_Forcing_Dataset, Dataset_BridgeSca
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
 from credit.parser import CREDIT_main_parser, training_data_check
-# from credit.trainers.trainer import Trainer
-# # <-------------- the new pipeline
-# from credit.trainers.trainer_new import Trainer as Trainer_New
 from credit.trainers import load_trainer
 
 from credit.metrics import LatWeightedMetrics
