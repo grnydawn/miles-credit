@@ -15,6 +15,7 @@ import os
 import copy
 import warnings
 from glob import glob
+from collections import Counter
 
 import numpy as np
 import xarray as xr
@@ -180,6 +181,20 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         conf['data']['static_variables'] = []
     # ===================================================== #
     
+    # duplicated variable name check
+    all_varnames = conf['data']['variables'] + \
+                   conf['data']['surface_variables'] + \
+                   conf['data']['dynamic_forcing_variables'] + \
+                   conf['data']['diagnostic_variables'] + \
+                   conf['data']['forcing_variables'] + \
+                   conf['data']['static_variables']
+    
+    varname_counts = Counter(all_varnames)
+    duplicates = [varname for varname, count in varname_counts.items() if count > 1]
+
+    assert len(duplicates) == 0, (
+        "Duplicated variable names: [{}] found. No duplicates allowed, stop.".format(duplicates))
+    
     ## I/O data sizes
     if parse_training:
         assert 'train_years' in conf['data'], (
@@ -208,6 +223,9 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         if 'one_shot' not in conf['data']:
             conf['data']['one_shot'] = None
 
+        if conf['data']['one_shot'] is not True:
+            conf['data']['one_shot'] = None
+        
         if "total_time_steps" not in conf["data"]:
             conf["data"]["total_time_steps"] =  conf["data"]['forecast_len']
     
