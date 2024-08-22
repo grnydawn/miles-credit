@@ -230,6 +230,7 @@ class Trainer(BaseTrainer):
 
             if not np.isfinite(np.mean(results_dict["train_loss"])):
                 try:
+                    print('Invalid loss value: {}'.format(np.mean(results_dict["train_loss"])))
                     raise optuna.TrialPruned()
                 except Exception as E:
                     raise E
