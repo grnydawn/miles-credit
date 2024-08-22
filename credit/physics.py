@@ -17,8 +17,10 @@ Usage:
         - Before and after a single-step, surface_pressure_for_dry_air (Pa) must equal
         
     - Conservation of water (constraint)
-        - Before and after a single-step, evaporation_rate - precipitation + horizontal_advection(TWC) [mm] must equal
-        - TWC = pressure_level_integral(specific_humidity)
+        - Before and after a single-step, 
+          evaporation_rate - precipitation + horizontal_advection(TWC) [mm] 
+          must equal to (dTWC / dt)
+        - TWC = (1/g) * pressure_level_integral(specific_humidity)
         
     - hydrostatic equilibrium (weak constraint)
         - GPH derived from geopotential_height ~ predicted ERA5 GPH
@@ -147,7 +149,7 @@ def pressure_level_integral(T: torch.Tensor,
     '''
     pressure_thickness = upper_air_pressure.diff()
     integral = torch.sum(pressure_thickness * T, axis=-1)  # type: ignore
-    return 1 / GRAVITY * integral
+    return integral
 
 
 def surface_pressure_for_dry_air(specific_humidity: torch.Tensor,
@@ -173,8 +175,8 @@ def surface_pressure_for_dry_air(specific_humidity: torch.Tensor,
         P_dry (Pa)
     '''
     
-    TWC = pressure_level_integral(specific_humidity, 
-                                  upper_air_pressure)
+    TWC = (1 / GRAVITY) * pressure_level_integral(specific_humidity, 
+                                                  upper_air_pressure)
     
     p_dry = surface_pressure - GRAVITY * TWC
     return p_dry
