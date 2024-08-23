@@ -99,7 +99,7 @@ model:
     frames: 1                         # number of input states (default: 1)
     image_height: 640                 # number of latitude grids (default: 640)
     image_width: 1280                 # number of longitude grids (default: 1280)
-    levels: 15                        # number of upper-air variable levels (default: 15)
+    levels: 16                        # number of upper-air variable levels (default: 15)
     channels: 4                       # upper-air variable channels
     surface_channels: 7               # surface variable channels
     input_only_channels: 3            # dynamic forcing, forcing, static channels
