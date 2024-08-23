@@ -53,12 +53,57 @@ os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 
-os.environ['NCCL_SHM_DISABLE'] = '1'
-os.environ['NCCL_IB_DISABLE'] = '1'
 
 
 # https://stackoverflow.com/questions/59129812/how-to-avoid-cuda-out-of-memory-in-pytorch
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
+def setup(rank, world_size, mode, backend="nccl"):
+    logging.info(f"Running {mode.upper()} on rank {rank} with world_size {world_size} using {backend}.")
+    dist.init_process_group(backend, rank=rank, world_size=world_size)
+
+def get_rank_info(trainer_mode):
+    if trainer_mode in ["fsdp", "ddp"]:
+        try:
+            from mpi4py import MPI
+            comm = MPI.COMM_WORLD
+            shmem_comm = comm.Split_type(MPI.COMM_TYPE_SHARED)
+            
+            LOCAL_RANK = shmem_comm.Get_rank()
+            WORLD_SIZE = comm.Get_size()
+            WORLD_RANK = comm.Get_rank()
+        
+        except:
+            if "LOCAL_RANK" in os.environ:
+                # Environment variables set by torch.distributed.launch or torchrun
+                LOCAL_RANK = int(os.environ["LOCAL_RANK"])
+                WORLD_SIZE = int(os.environ["WORLD_SIZE"])
+                WORLD_RANK = int(os.environ["RANK"])
+            elif "OMPI_COMM_WORLD_LOCAL_RANK" in os.environ:
+                # Environment variables set by mpirun
+                LOCAL_RANK = int(os.environ["OMPI_COMM_WORLD_LOCAL_RANK"])
+                WORLD_SIZE = int(os.environ["OMPI_COMM_WORLD_SIZE"])
+                WORLD_RANK = int(os.environ["OMPI_COMM_WORLD_RANK"])
+            elif "PMI_RANK" in os.environ:
+                # Environment variables set by cray-mpich
+                LOCAL_RANK = int(os.environ["PMI_LOCAL_RANK"])
+                WORLD_SIZE = int(os.environ["PMI_SIZE"])
+                WORLD_RANK = int(os.environ["PMI_RANK"])
+            else:
+                import sys
+                sys.exit("Can't find the environment variables for local rank")
+
+        # Set MASTER_ADDR and MASTER_PORT if not already set
+        if "MASTER_ADDR" not in os.environ:
+            os.environ['MASTER_ADDR'] = socket.gethostbyname(socket.gethostname())
+        if "MASTER_PORT" not in os.environ:
+            os.environ['MASTER_PORT'] = str(np.random.randint(1000, 8000))
+    else: 
+        LOCAL_RANK=0
+        WORLD_RANK=0
+        WORLD_SIZE=1
+
+    return LOCAL_RANK, WORLD_RANK, WORLD_SIZE
 
 
 def setup(rank, world_size, mode):
@@ -655,10 +700,5 @@ if __name__ == "__main__":
             config=conf
         )
 
-    seed = 1000 if "seed" not in conf else conf["seed"]
-    seed_everything(seed)
-
-    if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
-        main(int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf)
-    else:
-        main(0, 1, conf)
+    local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])
+    main(world_rank,world_size,conf)
