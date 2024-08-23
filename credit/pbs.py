@@ -97,11 +97,6 @@ def launch_script_mpi(config_file, script_path, launch=True):
     module load  cuda cray-mpich conda
     conda activate {pbs_options.get('conda', 'holodec')}
 
-    # Get a list of allocated nodes
-    nodes=( $( cat $PBS_NODEFILE ) )
-    head_node=${{nodes[0]}}
-    head_node_ip=$(ssh $head_node hostname -i | awk '{{print $1}}')
-
     # Export environment variables
     export LSCRATCH=/glade/derecho/scratch/{user}/
     export LOGLEVEL=INFO
@@ -118,7 +113,7 @@ def launch_script_mpi(config_file, script_path, launch=True):
     # wandb login 02d2b1af00b5df901cb2bee071872de774781520
 
     # Launch MPIs
-    MASTER_ADDR=$head_node_ip MASTER_PORT=1234 mpiexec -n {total_ranks} --ppn 4 --cpu-bind none python {script_path} -c {config_save_path}  
+    mpiexec -n {total_ranks} --ppn 4 --cpu-bind none python {script_path} -c {config_save_path}  
     #torchrun --nnodes={num_nodes} --nproc-per-node={num_gpus} --rdzv-backend=c10d --rdzv-endpoint=$head_node_ip {script_path} -c {config_save_path}
     '''
 
