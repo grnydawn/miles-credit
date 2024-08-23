@@ -67,9 +67,10 @@ def launch_script_mpi(config_file, script_path, launch=True):
     num_nodes = pbs_options.get('nodes', 1)
     num_gpus = pbs_options.get('ngpus', 1)
     total_gpus = num_nodes * num_gpus
+    total_ranks = total_gpus
 
     # Create the CUDA_VISIBLE_DEVICES string
-    cuda_devices = ",".join(str(i) for i in range(total_gpus))
+    cuda_devices = ",".join(str(i) for i in range(num_gpus))
     save_loc = os.path.expandvars(config["save_loc"])
 
     config_save_path = os.path.join(save_loc, "model.yml")
@@ -93,7 +94,7 @@ def launch_script_mpi(config_file, script_path, launch=True):
 
     # Load modules
     module purge
-    module load nvhpc cuda cray-mpich conda
+    module load  cuda cray-mpich conda
     conda activate {pbs_options.get('conda', 'holodec')}
 
     # Get a list of allocated nodes
@@ -106,6 +107,8 @@ def launch_script_mpi(config_file, script_path, launch=True):
     export LOGLEVEL=INFO
     export NCCL_DEBUG=INFO
 
+    export CUDA_VISIBLE_DEVICES=cuda_devices
+
     # Print the results
     echo "Number of nodes: {num_nodes}"
     echo "Number of GPUs per node: {num_gpus}"
@@ -115,7 +118,8 @@ def launch_script_mpi(config_file, script_path, launch=True):
     # wandb login 02d2b1af00b5df901cb2bee071872de774781520
 
     # Launch MPIs
-    CUDA_VISIBLE_DEVICES="{cuda_devices}" mpiexec -n {num_nodes} --ppn 1 --cpu-bind none torchrun --nnodes={num_nodes} --nproc-per-node={num_gpus} --rdzv-backend=c10d --rdzv-endpoint=$head_node_ip {script_path} -c {config_save_path}
+    MASTER_ADDR=$head_node_ip MASTER_PORT=1234 mpiexec -n {total_ranks} --ppn 4 --cpu-bind none python {script_path} -c {config_save_path}  
+    #torchrun --nnodes={num_nodes} --nproc-per-node={num_gpus} --rdzv-backend=c10d --rdzv-endpoint=$head_node_ip {script_path} -c {config_save_path}
     '''
 
     script = re.sub(r'^\s+', '', script, flags=re.MULTILINE)
