@@ -53,9 +53,9 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 
-def setup(rank, world_size, mode):
-    logging.info(f"Running {mode.upper()} on rank {rank} with world_size {world_size}.")
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+def setup(rank, world_size, mode, backend="nccl"):
+    logging.info(f"Running {mode.upper()} on rank {rank} with world_size {world_size} using {backend}.")
+    dist.init_process_group(backend, rank=rank, world_size=world_size)
 
 def get_rank_info(trainer_mode):
     if trainer_mode in ["fsdp", "ddp"]:
@@ -67,10 +67,7 @@ def get_rank_info(trainer_mode):
             LOCAL_RANK = shmem_comm.Get_rank()
             WORLD_SIZE = comm.Get_size()
             WORLD_RANK = comm.Get_rank()
-
-            os.environ['MASTER_ADDR'] = comm.bcast(socket.gethostbyname(socket.gethostname()), root=0)
-            os.environ['MASTER_PORT'] = '1234'
-
+        
         except:
             if "LOCAL_RANK" in os.environ:
                 # Environment variables set by torch.distributed.launch or torchrun
