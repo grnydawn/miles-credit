@@ -1,11 +1,11 @@
 # AI Weather Prediction Models in CREDIT
 
-This document provides a detailed guide on how to define, train, and use AI weather prediction models in CREDIT. The following sections cover workspace setup, data handling, training, model configuration, loss functions, prediction settings, and PBS script configurations.
+This document provides a detailed guide on how to define, train, and use AI weather prediction models in CREDIT. The following sections cover workspace setup, data handling, training, model configuration, loss functions, prediction settings, and PBS script configurations. Documentation is also provided in `example.yml`. 
 
 ## Workspace Configuration
 
 * **Workspace Location**: 
-  * The location to save your workspace. It will contain the PBS script, a copy of this configuration file, model weights, and the `training_log.csv`. If the specified location does not exist, it will be created automatically.
+  * `save_loc` defines the location to save your workspace. It will contain the PBS script, a copy of this configuration file, model weights, and the `training_log.csv`. If the specified location does not exist, it will be created automatically.
   * `save_loc`: `/glade/work/$USER/CREDIT_runs/fuxi_6h/`
 * **Random Seed**: Set a random seed for reproducibility.
   * `seed`: 1000
@@ -13,34 +13,34 @@ This document provides a detailed guide on how to define, train, and use AI weat
 ## Data Configuration
 
 * **Upper-Air Variables**: 
-  * Upper-air variables must be in YEARLY zarr or netCDF format with `(time, level, latitude, longitude)` dimensions. Files must have the listed variable names. These variables will be normalized by the dataloader, so users do not need to normalize them.
-  * `variables`: `['U', 'V', 'T', 'Q']`
-  * `save_loc`: `/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/SixHourly_TOTAL_*`
+  * Upper-air variables must be in YEARLY zarr or netCDF files with `(time, level, latitude, longitude)` dimensions. Files must have the listed variable names. These variables will be normalized by the dataloader, so users do not need to normalize them.
+    * `variables`: `['U', 'V', 'T', 'Q']`
+    * `save_loc`: `/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/SixHourly_TOTAL_*`
 
 * **Surface Variables**: 
-  * Surface variables must be in YEARLY zarr or netCDF format with `(time, latitude, longitude)` dimensions. The time dimension MUST be the same as upper-air variables. Files must have the listed variable names. Surface variables will be normalized by the dataloader, so users do not need to normalize them.
-  * `surface_variables`: `['sp', 't2m']`
-  * `save_loc_surface`: `/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/SixHourly_TOTAL_*`
+  * Surface variables must be in YEARLY zarr or netCDF files with `(time, latitude, longitude)` dimensions. The time dimension MUST be the same as upper-air variables. Files must have the listed variable names. Surface variables will be normalized by the dataloader, so users do not need to normalize them.
+    * `surface_variables`: `['sp', 't2m']`
+    * `save_loc_surface`: `/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/SixHourly_TOTAL_*`
 
 * **Dynamic Forcing Variables**: 
-  * Dynamic forcing variables must be in YEARLY zarr or netCDF format with `(time, latitude, longitude)` dimensions. The time dimension MUST be the same as upper-air variables. Files must have the listed variable names. These variables will be normalized by the dataloader, so users do not need to normalize them.
-  * `dynamic_forcing_variables`: `['tsi']`
-  * `save_loc_dynamic_forcing`: `/glade/derecho/scratch/dgagne/credit_solar_6h_0.25deg/*.nc`
+  * Dynamic forcing variables must be in YEARLY zarr or netCDF files with `(time, latitude, longitude)` dimensions. The time dimension MUST be the same as upper-air variables. Files must have the listed variable names. These variables will be normalized by the dataloader, so users do not need to normalize them.
+    * `dynamic_forcing_variables`: `['tsi']`
+    * `save_loc_dynamic_forcing`: `/glade/derecho/scratch/dgagne/credit_solar_6h_0.25deg/*.nc`
 
 * **Diagnostic Variables**: 
-  * Diagnostic variables must be in YEARLY zarr or netCDF format with `(time, latitude, longitude)` dimensions. The time dimension MUST be the same as upper-air variables. Files must have the listed variable names. These variables will be normalized by the dataloader, so users do not need to normalize them.
-  * `diagnostic_variables`: `['Z500', 'T500']`
-  * `save_loc_diagnostic`: `/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/SixHourly_TOTAL_*`
+  * Diagnostic variables must be in YEARLY zarr or netCDF files with `(time, latitude, longitude)` dimensions. The time dimension MUST be the same as upper-air variables. Files must have the listed variable names. These variables will be normalized by the dataloader, so users do not need to normalize them.
+    * `diagnostic_variables`: `['Z500', 'T500']`
+    * `save_loc_diagnostic`: `/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/SixHourly_TOTAL_*`
 
 * **Periodic Forcing Variables**: 
   * Periodic forcing variables must be a single zarr or netCDF file with `(time, latitude, longitude)` dimensions. The time dimension should cover an entire leap year. For example, periodic forcing variables can be provided on the year 2000, and its time coordinates should have 24\*366 hours for an hourly model. These variables MUST be normalized by the user.
-  * `forcing_variables`: `['TSI']`
-  * `save_loc_forcing`: `/glade/campaign/cisl/aiml/ksha/CREDIT/forcing_norm_6h.nc`
+    * `forcing_variables`: `['TSI']`
+    * `save_loc_forcing`: `/glade/campaign/cisl/aiml/ksha/CREDIT/forcing_norm_6h.nc`
 
 * **Static Variables**: 
   * Static variables must be a single zarr or netCDF file with `(latitude, longitude)` coordinates. These variables MUST be normalized by the user.
-  * `static_variables`: `['Z_GDS4_SFC', 'LSM']`
-  * `save_loc_static`: `/glade/campaign/cisl/aiml/ksha/CREDIT/static_norm_old.nc`
+    * `static_variables`: `['Z_GDS4_SFC', 'LSM']`
+    * `save_loc_static`: `/glade/campaign/cisl/aiml/ksha/CREDIT/static_norm_old.nc`
 
 * **Z-Score Files**: 
   * Z-score files must be zarr or netCDF with `(level,)` coordinates. They MUST include all the variables listed under `variables`, `surface_variables`, `dynamic_forcing_variables`, and `diagnostic_variables`.
@@ -49,14 +49,14 @@ This document provides a detailed guide on how to define, train, and use AI weat
 
 * **Training and Validation Years**:
   * Specify the years to form the training and validation sets. The format is `[first_year, last_year (not covered)]`.
-  * `train_years`: `[1979, 2014]` # 1979 - 2013
-  * `valid_years`: `[2014, 2018]` # 2014 - 2017
+    * `train_years`: `[1979, 2014]`
+    * `valid_years`: `[2014, 2018]`
 
 * **Scaler Type**: 
   * `std_new` is the new data workflow that works with z-score.
-  * `scaler_type`: `std_new`
+    * `scaler_type`: `std_new`
 
-* **History and Forecast Length**:
+* **Input and output temporal dimensions**:
   * Specify the number of input time frames.
     * `history_len`: 2 # 2 for Fuxi, 1 for a state-in-state-out model
     * `valid_history_len`: 2 # keep it the same as `history_len`
@@ -65,19 +65,19 @@ This document provides a detailed guide on how to define, train, and use AI weat
     * `valid_forecast_len`: 0 # Can be the same as or smaller than `forecast_len`
   * Specify the number of hours for each forecast step.
     * `lead_time_periods`: 6 # 6 for 6-hourly model and 6-hourly training data
-  * **Not a Stable Feature**: 
-    * The `skip_periods` keyword resolves the mismatch between 6-hourly models and hourly data. Setting `skip_periods = 6` will train a 6-hourly model on hourly data by skipping and picking every 6th hour.
-    * `skip_periods`: null
-  * **Static First**:
+* **Other options**:
+    * The `skip_periods` keyword resolves the mismatch between 6-hourly models and hourly data. Setting `skip_periods = 6` will train a 6-hourly model on hourly data by skipping and picking every 6th hour. This is **Not a Stable Feature**
+      * `skip_periods`: null
     * This keyword makes `std_new` compatible with the old `std` workflow.
-    * `static_first`: False # False means input tensors will be formed in the order of [dynamic_forcing -> forcing -> static]
+      * `static_first`: False # False means input tensors will be formed in the order of [dynamic_forcing -> forcing -> static]
 
 ## Trainer Configuration
 
 * **Mode**: 
   * The keyword that controls GPU usage.
-  * `mode`: `fsdp` # Fully Sharded Data Parallel (FSDP), `ddp` for Distributed Data Parallel, `none` for CPU-based training
-
+    * `mode`: `fsdp` # Fully Sharded Data Parallel (FSDP) 
+    * `mode`: `ddp`  # Distributed Data Parallel (FSDP)
+    * `mode`: `none` # CPU-based training
 * **FSDP-Specific Optimizations**:
   * Allow FSDP to offload gradients to the CPU and free GPU memory. Note: This can cause CPU out-of-memory errors for large models.
     * `cpu_offload`: False
@@ -94,9 +94,9 @@ This document provides a detailed guide on how to define, train, and use AI weat
     * `load_optimizer`: True
 
 * **Checkpoint Settings**:
-  * CREDIT saves checkpoints at the end of every epoch.
-  * `save_backup_weights`: True # Also saves checkpoints at the beginning of every epoch.
-  * `save_best_weights`: True # Saves the best checkpoint separately based on validation loss. This does not work if `skip_validation: True`.
+  * CREDIT saves checkpoints at the end of every epoch. `save_backup_weights` and `save_best_weights` provides more saving options.
+    * `save_backup_weights`: True # Also saves checkpoints at the beginning of every epoch.
+    * `save_best_weights`: True # Saves the best checkpoint separately based on validation loss. This does not work if `skip_validation: True`.
 
 * **Learning Rate and Regularization**:
   * Update the learning rate to `optimizer.param_groups`. Set to False if a scheduler is used.
@@ -116,21 +116,20 @@ This document provides a detailed guide on how to define, train, and use AI weat
     * `stopping_patience`: 50
   * Skip validation.
     * `skip_validation`: False
-  * Total number of epochs.
-    * `start_epoch`: 0
-    * `num_epoch`: 10
-  * The trainer will stop after iterating a given number of epochs. This works for any `start_epoch` and `reload_epoch: True`.
-    * `reload_epoch`: True # Can also use `train_one_epoch: True`
-    * `epochs`: 70 # If `use_scheduler: False`, `reload_epoch: False`, `epochs`: 20
+  * Training epoch management.
+    * `start_epoch`: 0     # The number of the first epoch
+    * `num_epoch`: 10      # The trainer will stop after iterating a given number of epochs.
+    * `reload_epoch`: True # set the first epoch based on the checkpoint.
+    * `epochs`: 70         # Total number of epochs
 
 * **Automatic Mixed Precision**:
   * Use PyTorch automatic mixed precision (AMP).
     * `amp`: False
 
 * **Scheduler**:
-  * If True, specify your scheduler.
-    * `use_scheduler`: True
-    * Example: `scheduler`: `{ 'scheduler_type': 'cosine-annealing', 'T_max': *epochs, 'last_epoch': -1 }`
+  * Define scheduler for training.
+    * `use_scheduler`: True # If True, specify your scheduler in `scheduler`
+    * `scheduler`: `{ 'scheduler_type': 'cosine-annealing', 'T_max': *epochs, 'last_epoch': -1 }`
 
 * **Gradient Accumulation and Clipping**:
   * Rescale loss as `loss = loss / grad_accum_every`.
@@ -146,8 +145,9 @@ This document provides a detailed guide on how to define, train, and use AI weat
 ## Model Configuration
 
 * **Model Type**: 
-  * Specify the model type, e.g., `fuxi` or `crossformer`.
+  * Specify the model type
     * `type`: `fuxi`
+    * `type`: `crossformer`
 
 * **Fuxi Model Specifics**:
   * Define model parameters.
