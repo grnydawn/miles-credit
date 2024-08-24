@@ -19,15 +19,16 @@ from echo.src.base_objective import BaseObjective
 import torch
 import torch.distributed as dist
 from torch.cuda.amp import GradScaler
-# from torch.utils.data.distributed import DistributedSampler
+from torch.utils.data.distributed import DistributedSampler
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from credit.distributed import distributed_model_wrapper
 
 from credit.seed import seed_everything
 from credit.loss import VariableTotalLoss2D
-from credit.datasets.sequential_multistep import DistributedSequentialDataset
+# from credit.datasets.sequential_multistep import DistributedSequentialDataset
+from credit.datasets.era5_multistep import ERA5_and_Forcing_MultiStep
 from credit.transforms import load_transforms
-from credit.scheduler import load_scheduler, annealed_probability
+from credit.scheduler import load_scheduler
 from credit.trainers import load_trainer
 from credit.parser import CREDIT_main_parser, training_data_check
 
@@ -45,9 +46,6 @@ warnings.filterwarnings("ignore")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
-
-os.environ['NCCL_SHM_DISABLE'] = '1'
-os.environ['NCCL_IB_DISABLE'] = '1'
 
 
 # https://stackoverflow.com/questions/59129812/how-to-avoid-cuda-out-of-memory-in-pytorch
@@ -74,36 +72,36 @@ def load_dataset_and_sampler(conf,
 
     # ======================================================== #
     # parse intputs
-    
+
     # upper air variables
     varname_upper_air = conf['data']['variables']
-    
+
     if ('forcing_variables' in conf['data']) and (len(conf['data']['forcing_variables']) > 0):
         forcing_files = conf['data']['save_loc_forcing']
         varname_forcing = conf['data']['forcing_variables']
     else:
         forcing_files = None
         varname_forcing = None
-        
+
     if ('static_variables' in conf['data']) and (len(conf['data']['static_variables']) > 0):
         static_files = conf['data']['save_loc_static']
         varname_static = conf['data']['static_variables']
     else:
         static_files = None
         varname_static = None
-    
+
     # get surface variable names
     if surface_files is not None:
         varname_surface = conf['data']['surface_variables']
     else:
         varname_surface = None
-    
+
     # get dynamic forcing variable names
     if dyn_forcing_files is not None:
         varname_dyn_forcing = conf['data']['dynamic_forcing_variables']
     else:
         varname_dyn_forcing = None
-    
+
     # get diagnostic variable names
     if diagnostic_files is not None:
         varname_diagnostic = conf['data']['diagnostic_variables']
@@ -139,17 +137,14 @@ def load_dataset_and_sampler(conf,
     else:
         skip_periods = conf["data"]["skip_periods"]
 
-    # shufle
-    shuffle = is_train
+    # # shufle
+    # shuffle = is_train
 
     # data preprocessing utils
     transforms = load_transforms(conf)
 
-    # how many workers to use
-    num_workers = conf['trainer']['thread_workers'] if is_train else conf['trainer']['valid_thread_workers']
-
     # Z-score
-    dataset = DistributedSequentialDataset(
+    dataset = ERA5_and_Forcing_MultiStep(
         varname_upper_air=varname_upper_air,
         varname_surface=varname_surface,
         varname_dyn_forcing=varname_dyn_forcing,
@@ -169,12 +164,18 @@ def load_dataset_and_sampler(conf,
         transform=transforms,
         rank=rank,
         world_size=world_size,
-        shuffle=shuffle,
-        num_workers=num_workers
+        seed=seed
     )
-    
+
     # Pytorch sampler
-    sampler = None
+    sampler = DistributedSampler(
+        dataset,
+        num_replicas=world_size,
+        rank=rank,
+        seed=seed,
+        shuffle=is_train,
+        drop_last=True
+    )
 
     logging.info(f" Loaded a {name} ERA dataset, and a distributed sampler (forecast length = {forecast_len + 1})")
 
@@ -195,7 +196,6 @@ def load_model_states_and_optimizer(conf, model, device):
     load_weights = False if 'load_weights' not in conf['trainer'] else conf['trainer']['load_weights']
 
     #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
-    #if start_epoch == 0 and not load_weights:
     if not load_weights:  # Loaded after loading model weights when reloading
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
         if conf["trainer"]["mode"] == "fsdp":
@@ -275,25 +275,25 @@ def main(rank, world_size, conf, trial=False):
 
     # <------------------------------------------ std_new
     if conf['data']['scaler_type'] == 'std_new':
-    
+
         # check and glob surface files
         if ('surface_variables' in conf['data']) and (len(conf['data']['surface_variables']) > 0):
             surface_files = sorted(glob.glob(conf["data"]["save_loc_surface"]))
-            
+
         else:
             surface_files = None
-    
+
         # check and glob dyn forcing files
         if ('dynamic_forcing_variables' in conf['data']) and (len(conf['data']['dynamic_forcing_variables']) > 0):
             dyn_forcing_files = sorted(glob.glob(conf["data"]["save_loc_dynamic_forcing"]))
-            
+
         else:
             dyn_forcing_files = None
-    
+
         # check and glob diagnostic files
         if ('diagnostic_variables' in conf['data']) and (len(conf['data']['diagnostic_variables']) > 0):
             diagnostic_files = sorted(glob.glob(conf["data"]["save_loc_diagnostic"]))
-            
+
         else:
             diagnostic_files = None
 
@@ -317,54 +317,59 @@ def main(rank, world_size, conf, trial=False):
     # Filter the files for training / validation
     train_files = [file for file in all_ERA_files if any(year in file for year in train_years)]
     valid_files = [file for file in all_ERA_files if any(year in file for year in valid_years)]
-    
+
     # <----------------------------------- std_new
     if conf['data']['scaler_type'] == 'std_new':
-        
+
         if surface_files is not None:
-            
+
             train_surface_files = [file for file in surface_files if any(year in file for year in train_years)]
             valid_surface_files = [file for file in surface_files if any(year in file for year in valid_years)]
-    
+
             # ---------------------------- #
             # check total number of files
-            assert len(train_surface_files) == len(train_files), \
-            'Mismatch between the total number of training set [surface files] and [upper-air files]'
-            assert len(valid_surface_files) == len(valid_files), \
-            'Mismatch between the total number of validation set [surface files] and [upper-air files]'
-        
+            assert len(train_surface_files) == len(train_files), (
+                'Mismatch between the total number of training set [surface files] and [upper-air files]'
+            )
+            assert len(valid_surface_files) == len(valid_files), (
+                'Mismatch between the total number of validation set [surface files] and [upper-air files]'
+            )
         else:
             train_surface_files = None
             valid_surface_files = None
-    
+
         if dyn_forcing_files is not None:
-            
+
             train_dyn_forcing_files = [file for file in dyn_forcing_files if any(year in file for year in train_years)]
             valid_dyn_forcing_files = [file for file in dyn_forcing_files if any(year in file for year in valid_years)]
-    
+
             # ---------------------------- #
             # check total number of files
-            assert len(train_dyn_forcing_files) == len(train_files), \
-            'Mismatch between the total number of training set [dynamic forcing files] and [upper-air files]'
-            assert len(valid_dyn_forcing_files) == len(valid_files), \
-            'Mismatch between the total number of validation set [dynamic forcing files] and [upper-air files]'
-        
+            assert len(train_dyn_forcing_files) == len(train_files), (
+                'Mismatch between the total number of training set [dynamic forcing files] and [upper-air files]'
+            )
+            assert len(valid_dyn_forcing_files) == len(valid_files), (
+                'Mismatch between the total number of validation set [dynamic forcing files] and [upper-air files]'
+            )
+
         else:
             train_dyn_forcing_files = None
             valid_dyn_forcing_files = None
-            
+
         if diagnostic_files is not None:
-            
+
             train_diagnostic_files = [file for file in diagnostic_files if any(year in file for year in train_years)]
             valid_diagnostic_files = [file for file in diagnostic_files if any(year in file for year in valid_years)]
-    
+
             # ---------------------------- #
             # check total number of files
-            assert len(train_diagnostic_files) == len(train_files), \
-            'Mismatch between the total number of training set [diagnostic files] and [upper-air files]'
-            assert len(valid_diagnostic_files) == len(valid_files), \
-            'Mismatch between the total number of validation set [diagnostic files] and [upper-air files]'
-        
+            assert len(train_diagnostic_files) == len(train_files), (
+                'Mismatch between the total number of training set [diagnostic files] and [upper-air files]'
+            )
+            assert len(valid_diagnostic_files) == len(valid_files), (
+                'Mismatch between the total number of validation set [diagnostic files] and [upper-air files]'
+            )
+
         else:
             train_diagnostic_files = None
             valid_diagnostic_files = None
@@ -393,8 +398,9 @@ def main(rank, world_size, conf, trial=False):
         sampler=train_sampler,
         pin_memory=True,
         persistent_workers=False,
-        num_workers=0,  # multiprocessing is handled in the dataset
-        drop_last=True
+        num_workers=1,  # multiprocessing is handled in the dataset
+        drop_last=True,
+        prefetch_factor=8
     )
 
     valid_loader = torch.utils.data.DataLoader(
@@ -404,7 +410,8 @@ def main(rank, world_size, conf, trial=False):
         sampler=valid_sampler,
         pin_memory=False,
         num_workers=0,  # multiprocessing is handled in the dataset
-        drop_last=True
+        drop_last=True,
+        # prefetch_factor=8
     )
 
     # model
@@ -423,7 +430,7 @@ def main(rank, world_size, conf, trial=False):
     # Load model weights (if any), an optimizer, scheduler, and gradient scaler
 
     conf, model, optimizer, scheduler, scaler = load_model_states_and_optimizer(conf, model, device)
-    
+
     # Train and validation losses
 
     train_criterion = VariableTotalLoss2D(conf)
@@ -451,7 +458,6 @@ def main(rank, world_size, conf, trial=False):
         scaler=scaler,
         scheduler=scheduler,
         metrics=metrics,
-        rollout_scheduler=annealed_probability,  # Optional
         trial=trial  # Optional
     )
 
@@ -541,7 +547,7 @@ if __name__ == "__main__":
         conf = CREDIT_main_parser(conf, parse_training=True, parse_predict=False, print_summary=False)
         training_data_check(conf, print_summary=False)
     # ======================================================== #
-    
+
     # Create directories if they do not exist and copy yml file
     save_loc = os.path.expandvars(conf["save_loc"])
     os.makedirs(save_loc, exist_ok=True)

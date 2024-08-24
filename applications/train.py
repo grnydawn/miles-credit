@@ -33,9 +33,6 @@ from credit.data import ERA5Dataset, ERA5_and_Forcing_Dataset, Dataset_BridgeSca
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
 from credit.parser import CREDIT_main_parser, training_data_check
-# from credit.trainers.trainer import Trainer
-# # <-------------- the new pipeline
-# from credit.trainers.trainer_new import Trainer as Trainer_New
 from credit.trainers import load_trainer
 
 from credit.metrics import LatWeightedMetrics
@@ -52,10 +49,6 @@ warnings.filterwarnings("ignore")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
-
-os.environ['NCCL_SHM_DISABLE'] = '1'
-os.environ['NCCL_IB_DISABLE'] = '1'
-
 
 # https://stackoverflow.com/questions/59129812/how-to-avoid-cuda-out-of-memory-in-pytorch
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -272,7 +265,6 @@ def load_model_states_and_optimizer(conf, model, device):
     load_weights = False if 'load_weights' not in conf['trainer'] else conf['trainer']['load_weights']
 
     #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
-    #if start_epoch == 0 and not load_weights:
     if not load_weights:  # Loaded after loading model weights when reloading
         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
         if conf["trainer"]["mode"] == "fsdp":
@@ -407,10 +399,12 @@ def main(rank, world_size, conf, trial=False):
     
             # ---------------------------- #
             # check total number of files
-            assert len(train_surface_files) == len(train_files), \
-            'Mismatch between the total number of training set [surface files] and [upper-air files]'
-            assert len(valid_surface_files) == len(valid_files), \
-            'Mismatch between the total number of validation set [surface files] and [upper-air files]'
+            assert len(train_surface_files) == len(train_files), (
+                'Mismatch between the total number of training set [surface files] and [upper-air files]'
+            )
+            assert len(valid_surface_files) == len(valid_files), (
+                'Mismatch between the total number of validation set [surface files] and [upper-air files]'
+            )
         
         else:
             train_surface_files = None
@@ -423,10 +417,12 @@ def main(rank, world_size, conf, trial=False):
     
             # ---------------------------- #
             # check total number of files
-            assert len(train_dyn_forcing_files) == len(train_files), \
-            'Mismatch between the total number of training set [dynamic forcing files] and [upper-air files]'
-            assert len(valid_dyn_forcing_files) == len(valid_files), \
-            'Mismatch between the total number of validation set [dynamic forcing files] and [upper-air files]'
+            assert len(train_dyn_forcing_files) == len(train_files), (
+                'Mismatch between the total number of training set [dynamic forcing files] and [upper-air files]'
+            )
+            assert len(valid_dyn_forcing_files) == len(valid_files), (
+                'Mismatch between the total number of validation set [dynamic forcing files] and [upper-air files]'
+            )
         
         else:
             train_dyn_forcing_files = None
@@ -439,10 +435,12 @@ def main(rank, world_size, conf, trial=False):
     
             # ---------------------------- #
             # check total number of files
-            assert len(train_diagnostic_files) == len(train_files), \
-            'Mismatch between the total number of training set [diagnostic files] and [upper-air files]'
-            assert len(valid_diagnostic_files) == len(valid_files), \
-            'Mismatch between the total number of validation set [diagnostic files] and [upper-air files]'
+            assert len(train_diagnostic_files) == len(train_files), (
+                'Mismatch between the total number of training set [diagnostic files] and [upper-air files]'
+            )
+            assert len(valid_diagnostic_files) == len(valid_files), (
+                'Mismatch between the total number of validation set [diagnostic files] and [upper-air files]'
+            )
         
         else:
             train_diagnostic_files = None
@@ -529,7 +527,7 @@ def main(rank, world_size, conf, trial=False):
     result = trainer.fit(
         conf,
         train_loader=train_loader,
-        valid_loader=train_loader,
+        valid_loader=valid_loader,
         optimizer=optimizer,
         train_criterion=train_criterion,
         valid_criterion=valid_criterion,
