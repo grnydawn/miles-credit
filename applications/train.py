@@ -11,6 +11,7 @@ import sys
 import glob
 import yaml
 import wandb
+import socket
 import optuna
 import shutil
 import logging
@@ -19,6 +20,7 @@ import warnings
 from pathlib import Path
 from argparse import ArgumentParser
 from echo.src.base_objective import BaseObjective
+import numpy as np
 
 import torch
 import torch.distributed as dist
@@ -52,8 +54,6 @@ warnings.filterwarnings("ignore")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
-
-
 
 # https://stackoverflow.com/questions/59129812/how-to-avoid-cuda-out-of-memory-in-pytorch
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
@@ -90,8 +90,8 @@ def get_rank_info(trainer_mode):
                 WORLD_SIZE = int(os.environ["PMI_SIZE"])
                 WORLD_RANK = int(os.environ["PMI_RANK"])
             else:
-                import sys
                 sys.exit("Can't find the environment variables for local rank")
+
 
         # Set MASTER_ADDR and MASTER_PORT if not already set
         if "MASTER_ADDR" not in os.environ:
@@ -106,9 +106,6 @@ def get_rank_info(trainer_mode):
     return LOCAL_RANK, WORLD_RANK, WORLD_SIZE
 
 
-def setup(rank, world_size, mode):
-    logging.info(f"Running {mode.upper()} on rank {rank} with world_size {world_size}.")
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
 
 def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
@@ -644,6 +641,13 @@ if __name__ == "__main__":
         type=int,
         default=0,
         help="Use wandb. Default = False"
+    )
+    parser.add_argument(
+        "--backend",
+        type=str,
+        help="Backend for distribted training.",
+        default="nccl",
+        choices=["nccl", "gloo", "mpi"],
     )
     args = parser.parse_args()
     args_dict = vars(args)
