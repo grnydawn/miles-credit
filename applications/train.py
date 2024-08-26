@@ -369,13 +369,13 @@ def load_model_states_and_optimizer(conf, model, device):
     return conf, model, optimizer, scheduler, scaler
 
 
-def main(rank, world_size, conf, trial=False):
+def main(rank, world_size, conf, backend, trial=False):
 
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
 
     if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
-        setup(rank, world_size, conf["trainer"]["mode"])
+        setup(rank, world_size, conf["trainer"]["mode"], backend)
 
     # infer device id from rank
 
@@ -705,4 +705,4 @@ if __name__ == "__main__":
         )
 
     local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])
-    main(world_rank,world_size,conf)
+    main(world_rank,world_size,conf,args.backend)
