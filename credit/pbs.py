@@ -104,6 +104,21 @@ def launch_script_mpi(config_file, script_path, launch=True):
 
     export CUDA_VISIBLE_DEVICES=cuda_devices
 
+    export NCCL_SOCKET_IFNAME=hsn
+    export MPICH_GPU_MANAGED_MEMORY_SUPPORT_ENABLED=1
+    export MPICH_OFI_NIC_POLICY=GPU
+    export MPICH_GPU_SUPPORT_ENABLED=1
+
+    export NCCL_IB_DISABLE=1
+    export NCCL_CROSS_NIC=1 
+    export NCCL_NCHANNELS_PER_NET_PEER=4
+
+    export NCCL_NCHANNELS_PER_NET_PEER=4
+    export MPICH_RDMA_ENABLED_CUDA=1
+    export NCCL_NET="AWS Libfabric"
+    export NCCL_NET_GDR_LEVEL=PBH
+    export FI_MR_CACHE_MONITOR=userfaultfd
+
     # Print the results
     echo "Number of nodes: {num_nodes}"
     echo "Number of GPUs per node: {num_gpus}"
@@ -114,7 +129,6 @@ def launch_script_mpi(config_file, script_path, launch=True):
 
     # Launch MPIs
     mpiexec -n {total_ranks} --ppn 4 --cpu-bind none python {script_path} -c {config_save_path}  
-    #torchrun --nnodes={num_nodes} --nproc-per-node={num_gpus} --rdzv-backend=c10d --rdzv-endpoint=$head_node_ip {script_path} -c {config_save_path}
     '''
 
     script = re.sub(r'^\s+', '', script, flags=re.MULTILINE)
