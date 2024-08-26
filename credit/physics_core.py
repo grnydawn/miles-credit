@@ -19,11 +19,15 @@ Usage:
         
     - Conservation of water (constraint)
         - Before and after a single-step, 
-          evaporation_rate - precipitation - horizontal_advection(TWC) = (dTWC / dt)
-        - TWC = (1/g) * pressure_level_integral(specific_humidity)
+          E - P - pressure_level_integral(divergence_flux(q)) = (dTWC/dt)
+        - TWC = pressure_level_integral(q)
         
     - hydrostatic equilibrium (weak constraint)
         - GPH derived from geopotential_height ~ predicted ERA5 GPH
+
+Reference:
+    - https://doi.org/10.1175/JCLI-D-13-00018.1
+    - https://github.com/ai2cm/ace/tree/main/fme/fme/core
 
 Yingkai Sha
 ksha@ucar.edu
@@ -183,7 +187,7 @@ class physics_pressure_level:
         return div_Fq
         
     def horizontal_advection(self, 
-                             T: torch.Tensor
+                             T: torch.Tensor,
                              u: torch.Tensor, 
                              v: torch.Tensor) -> torch.Tensor:
         '''
@@ -222,28 +226,20 @@ class physics_pressure_level:
         advection = -(u * dT_dx + v * dT_dy)
         
         return advection
-
+    
     def pressure_level_integral(self, 
                                 T: torch.Tensor) -> torch.Tensor:
         '''
-        Computes a vertical integral with given pressure levels:
-    
-        (1 / g) * \int T dp
-    
-        where
-        - g = gravity
-        - T = the integrad
-        - p = pressure level
-    
+        Computes a vertical integral with given pressure levels.
+        
         Args:
             T (torch.Tensor): Scalar field to integrate (lat, lon, vertical_level).
         
         Returns:
             torch.Tensor: Vertical integral of the integrand (lat, lon).
         '''
-        integral = torch.sum(self.pressure_thickness * T, dim=-1)  # type: ignore
-        return integral
-
+        return torch.sum(self.pressure_thickness * T, dim=-1)
+        
     def surface_pressure_for_dry_air(self, 
                                      specific_humidity: torch.Tensor, 
                                      surface_pressure: torch.Tensor) -> torch.Tensor:
