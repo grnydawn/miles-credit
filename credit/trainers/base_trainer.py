@@ -256,17 +256,18 @@ class BaseTrainer(ABC):
             # backup the previous epoch
             # ========================= #
             if count > 0 and conf['trainer']['save_backup_weights']:
-                # checkpoint.pt
-                shutil.copyfile(os.path.join(save_loc, "checkpoint.pt"),
-                                os.path.join(save_loc, "backup_checkpoint.pt"))
-
-                # model_checkpoint.pt and optimizer_checkpoint.pt
-                if conf["trainer"]["mode"] == "fsdp":
-                    shutil.copyfile(os.path.join(save_loc, "model_checkpoint.pt"),
-                                    os.path.join(save_loc, "backup_model_checkpoint.pt"))
-                    
-                    shutil.copyfile(os.path.join(save_loc, "optimizer_checkpoint.pt"),
-                                    os.path.join(save_loc, "backup_optimizer_checkpoint.pt"))
+                if self.rank == 0:
+                    # checkpoint.pt
+                    shutil.copyfile(os.path.join(save_loc, "checkpoint.pt"),
+                                    os.path.join(save_loc, "backup_checkpoint.pt"))
+    
+                    # model_checkpoint.pt and optimizer_checkpoint.pt
+                    if conf["trainer"]["mode"] == "fsdp":
+                        shutil.copyfile(os.path.join(save_loc, "model_checkpoint.pt"),
+                                        os.path.join(save_loc, "backup_model_checkpoint.pt"))
+                        
+                        shutil.copyfile(os.path.join(save_loc, "optimizer_checkpoint.pt"),
+                                        os.path.join(save_loc, "backup_optimizer_checkpoint.pt"))
             
             logger.info(f"Beginning epoch {epoch}")
 
@@ -422,23 +423,24 @@ class BaseTrainer(ABC):
                 # backup the best epoch
                 # ==================== #
                 if offset == 0 and conf['trainer']['save_best_weights']:
-                    # checkpoint.pt
-                    shutil.copyfile(
-                        os.path.join(save_loc, "checkpoint.pt"),
-                        os.path.join(save_loc, "best_checkpoint.pt")
-                    )
-    
-                    # model_checkpoint.pt and optimizer_checkpoint.pt
-                    if conf["trainer"]["mode"] == "fsdp":
+                    if self.rank == 0:
+                        # checkpoint.pt
                         shutil.copyfile(
-                            os.path.join(save_loc, "model_checkpoint.pt"),
-                            os.path.join(save_loc, "best_model_checkpoint.pt")
+                            os.path.join(save_loc, "checkpoint.pt"),
+                            os.path.join(save_loc, "best_checkpoint.pt")
                         )
-                        
-                        shutil.copyfile(
-                            os.path.join(save_loc, "optimizer_checkpoint.pt"),
-                            os.path.join(save_loc, "best_optimizer_checkpoint.pt")
-                        )
+        
+                        # model_checkpoint.pt and optimizer_checkpoint.pt
+                        if conf["trainer"]["mode"] == "fsdp":
+                            shutil.copyfile(
+                                os.path.join(save_loc, "model_checkpoint.pt"),
+                                os.path.join(save_loc, "best_model_checkpoint.pt")
+                            )
+                            
+                            shutil.copyfile(
+                                os.path.join(save_loc, "optimizer_checkpoint.pt"),
+                                os.path.join(save_loc, "best_optimizer_checkpoint.pt")
+                            )
                     
                 # ==================== #
                 # early stopping block
