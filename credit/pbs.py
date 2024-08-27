@@ -55,7 +55,7 @@ def launch_script(config_file, script_path, launch=True):
         os.remove("launch.sh")
 
 
-def launch_script_mpi(config_file, script_path, launch=True):
+def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
     
     with open(config_file) as cf:
         config = yaml.load(cf, Loader=yaml.FullLoader)
@@ -131,7 +131,7 @@ def launch_script_mpi(config_file, script_path, launch=True):
     # wandb login 02d2b1af00b5df901cb2bee071872de774781520
 
     # Launch MPIs
-    mpiexec -n {total_ranks} --ppn 4 --cpu-bind none python {script_path} -c {config_save_path}  
+    mpiexec -n {total_ranks} --ppn 4 --cpu-bind none python {script_path} -c {config_save_path} --backend {backend} 
     '''
 
     script = re.sub(r'^\s+', '', script, flags=re.MULTILINE)
