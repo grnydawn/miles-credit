@@ -332,8 +332,12 @@ class BaseTrainer(ABC):
             # Put things into a results dictionary -> dataframe
 
             results_dict["epoch"].append(epoch)
-            for name in ["loss", "acc", "mae"]:
+            # Replace later with config options of which variable metrics to save
+            names = [key.replace("train_", "") for key in train_results.keys()]
+            for name in names:  # ["loss", "acc", "mae"]:
                 results_dict[f"train_{name}"].append(np.mean(train_results[f"train_{name}"]))
+                if skip_validation:
+                    continue
                 results_dict[f"valid_{name}"].append(np.mean(valid_results[f"valid_{name}"]))
             results_dict['train_forecast_len'].append(np.mean(train_results['train_forecast_len']))
             results_dict["lr"].append(optimizer.param_groups[0]["lr"])
@@ -456,8 +460,6 @@ class BaseTrainer(ABC):
             if 'stop_after_epoch' in conf['trainer']:
                 if conf['trainer']['stop_after_epoch']:
                     break
-
-        training_metric = "train_loss" if skip_validation else "valid_loss"
         
         best_epoch = [
             i for i, j in enumerate(results_dict[training_metric]) if j == direction(results_dict[training_metric])
