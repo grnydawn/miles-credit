@@ -121,7 +121,6 @@ def launch_script_mpi(config_file, script_path, launch=True):
     export FI_CXI_OPTIMIZED_MRS=false
     export FI_MR_CACHE_MONITOR=userfaultfd
     export FI_CXI_DEFAULT_CQ_SIZE=131072
-    export FI_MR_CACHE_MONITOR=userfaultfd
 
     # Print the results
     echo "Number of nodes: {num_nodes}"
