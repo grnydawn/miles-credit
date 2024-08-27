@@ -140,6 +140,12 @@ trainer:
     # save_best_weights will save the best checkpoint separatly based on validation loss
     # does not work if skip_validation: True
     save_best_weights: True
+
+    # Optional for user to control which variable metrics get saved to training_log.csv
+    # Set to True to save metrics for all predicted variables
+    # Set to ["Z500", "Q500", "Q", "T"] for example to save these variables (with levels in the case of Q and T)
+    # Set to [] or None to save only bulk metrics averaged over all variables
+    save_metric_vars: True
     
     # update learning rate to optimizer.param_groups
     # False if a scheduler is used
