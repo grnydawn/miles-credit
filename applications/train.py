@@ -691,7 +691,7 @@ if __name__ == "__main__":
             launch_script(config, script_path)
         else:
             logging.info("Launching to PBS on Derecho")
-            launch_script_mpi(config, script_path)
+            launch_script_mpi(config, script_path, backend)
         sys.exit()
 
     if use_wandb:  # this needs updated
