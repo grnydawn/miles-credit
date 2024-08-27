@@ -94,7 +94,7 @@ def launch_script_mpi(config_file, script_path, launch=True):
 
     # Load modules
     module purge
-    module load  cuda cray-mpich conda
+    module load cuda cray-mpich conda
     conda activate {pbs_options.get('conda', 'holodec')}
 
     # Export environment variables
@@ -113,10 +113,14 @@ def launch_script_mpi(config_file, script_path, launch=True):
     export NCCL_CROSS_NIC=1 
     export NCCL_NCHANNELS_PER_NET_PEER=4
 
-    export NCCL_NCHANNELS_PER_NET_PEER=4
     export MPICH_RDMA_ENABLED_CUDA=1
     export NCCL_NET="AWS Libfabric"
     export NCCL_NET_GDR_LEVEL=PBH
+
+    export FI_CXI_DISABLE_HOST_REGISTER=1
+    export FI_CXI_OPTIMIZED_MRS=false
+    export FI_MR_CACHE_MONITOR=userfaultfd
+    export FI_CXI_DEFAULT_CQ_SIZE=131072
     export FI_MR_CACHE_MONITOR=userfaultfd
 
     # Print the results

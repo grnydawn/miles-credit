@@ -10,7 +10,6 @@ import os
 import sys
 import glob
 import yaml
-import wandb
 import socket
 import optuna
 import shutil
@@ -696,6 +695,7 @@ if __name__ == "__main__":
         sys.exit()
 
     if use_wandb:  # this needs updated
+        import wandb
         wandb.init(
             # set the wandb project where this run will be logged
             project="Derecho parallelism",
