@@ -15,6 +15,7 @@ import os
 import copy
 import warnings
 from glob import glob
+from collections import Counter
 
 import numpy as np
 import xarray as xr
@@ -180,6 +181,20 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         conf['data']['static_variables'] = []
     # ===================================================== #
     
+    # duplicated variable name check
+    all_varnames = conf['data']['variables'] + \
+                   conf['data']['surface_variables'] + \
+                   conf['data']['dynamic_forcing_variables'] + \
+                   conf['data']['diagnostic_variables'] + \
+                   conf['data']['forcing_variables'] + \
+                   conf['data']['static_variables']
+    
+    varname_counts = Counter(all_varnames)
+    duplicates = [varname for varname, count in varname_counts.items() if count > 1]
+
+    assert len(duplicates) == 0, (
+        "Duplicated variable names: [{}] found. No duplicates allowed, stop.".format(duplicates))
+    
     ## I/O data sizes
     if parse_training:
         assert 'train_years' in conf['data'], (
@@ -208,6 +223,9 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         if 'one_shot' not in conf['data']:
             conf['data']['one_shot'] = None
 
+        if conf['data']['one_shot'] is not True:
+            conf['data']['one_shot'] = None
+        
         if "total_time_steps" not in conf["data"]:
             conf["data"]["total_time_steps"] =  conf["data"]['forecast_len']
     
@@ -326,6 +344,31 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         if conf['loss']['use_variable_weights']:
             assert 'variable_weights' in conf['loss'], (
                 "must specify 'variable_weights' in conf['loss'] if 'use_variable_weights': True")
+
+            # ----------------------------------------------------------------------------------------- #
+            # check and reorganize variable weights
+            varname_upper_air = conf['data']['variables']
+            varname_surface = conf['data']['surface_variables']
+            varname_diagnostics = conf['data']['diagnostic_variables']
+            N_levels = conf['data']['levels']
+            
+            weights_dict_ordered = {}
+            
+            varname_covered = list(conf['loss']['variable_weights'].keys())
+            
+            for varname in varname_upper_air:
+                assert varname in varname_covered, "missing variable weights for '{}'".format(varname)
+                N_weights = len(conf['loss']['variable_weights'][varname])
+                assert N_weights == N_levels, (
+                    "{} levels were defined, but weights only have {} levels".format(N_levels, N_weights))
+                weights_dict_ordered[varname] = conf['loss']['variable_weights'][varname]
+                
+            for varname in varname_surface+varname_diagnostics:
+                assert varname in varname_covered, "missing variable weights for '{}'".format(varname)
+                weights_dict_ordered[varname] = conf['loss']['variable_weights'][varname]
+
+            conf['loss']['variable_weights'] = weights_dict_ordered
+            # ----------------------------------------------------------------------------------------- #
     
         if 'use_power_loss' not in conf['loss']:
             conf['loss']['use_power_loss'] = False
