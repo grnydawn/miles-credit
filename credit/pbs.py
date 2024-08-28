@@ -78,12 +78,15 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
 
     config_save_path = os.path.join(save_loc, "model.yml")
 
-    if os.path.exists(config_save_path):
-        os.remove(config_save_path)
-        logger.info('Remove the old model.yml at {}'.format(config_save_path))
+    # if os.path.exists(config_save_path):
+    #     os.remove(config_save_path)
+    #     logger.info('Remove the old model.yml at {}'.format(config_save_path))
 
-    shutil.copy(config_file, config_save_path)
-    logger.info('Copy the new {} to {}'.format(config_file, config_save_path))
+    try:
+        shutil.copy(config_file, config_save_path)
+        logger.info('Copy the new {} to {}'.format(config_file, config_save_path))
+    except shutil.SameFileError:
+        pass
 
     # Generate the PBS script
     script = f'''#!/bin/bash
@@ -98,7 +101,7 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
     # Load modules
     module purge
     module load gcc craype cray-mpich cuda cudnn/8.8.1.3-12 conda
-    conda activate {pbs_options.get('conda', 'holodec')}
+    conda activate {pbs_options.get('conda', 'credit')}
 
     # Export environment variables
     export LSCRATCH=/glade/derecho/scratch/{user}/
@@ -134,7 +137,14 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
     # wandb login 02d2b1af00b5df901cb2bee071872de774781520
 
     # Launch MPIs
-    mpiexec -n {total_ranks} --ppn 4 --cpu-bind none python {script_path} -c {config_save_path} --backend {backend}
+    nodes=( $( cat $PBS_NODEFILE ) )
+    echo nodes: $nodes
+
+    # Find headnode's IP:
+    head_node=${{nodes[0]}}
+    head_node_ip=$(ssh $head_node hostname -i | awk '{{print $1}}')
+
+    MASTER_ADDR=$head_node_ip MASTER_PORT=1234 mpiexec -n {total_ranks} --ppn 4 --cpu-bind none python {script_path} -c {config_save_path} --backend {backend}
     '''
 
     script = re.sub(r'^\s+', '', script, flags=re.MULTILINE)
@@ -156,15 +166,17 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
         # copy launch.sh to the design location
         launch_path = os.path.join(save_loc, "launch.sh")
 
-        if os.path.exists(launch_path):
-            os.remove(launch_path)
-            logger.info('Remove the old launch.sh at {}'.format(launch_path))
+        # if os.path.exists(launch_path):
+        #     os.remove(launch_path)
+        #     logger.info('Remove the old launch.sh at {}'.format(launch_path))
 
-        shutil.copy("launch.sh", os.path.join(save_loc, "launch.sh"))
-        logger.info('Generating the new script at {}'.format(launch_path))
-
-        # remove the one from local space
-        os.remove("launch.sh")
+        try:
+            shutil.copy("launch.sh", os.path.join(save_loc, "launch.sh"))
+            logger.info('Generating the new script at {}'.format(launch_path))
+            # remove the one from local space
+            # os.remove("launch.sh")
+        except shutil.SameFileError:
+            pass
 
 
 if __name__ == "__main__":
