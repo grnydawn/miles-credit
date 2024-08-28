@@ -9,6 +9,13 @@ logger = logging.getLogger(__name__)
 
 
 def launch_script(config_file, script_path, launch=True):
+    """Generates and optionally launches a PBS script for a single-node job.
+
+    Args:
+        config_file (str): Path to the YAML configuration file.
+        script_path (str): Path to the script that will be executed by the PBS job.
+        launch (bool, optional): If True, the PBS job will be submitted to the queue. Defaults to True.
+    """
 
     # Load the configuration file
     with open(config_file, 'r') as file:
@@ -59,6 +66,14 @@ def launch_script(config_file, script_path, launch=True):
 
 
 def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
+    """Generates and optionally launches a PBS script for a multi-node MPI job.
+
+    Args:
+        config_file (str): Path to the YAML configuration file.
+        script_path (str): Path to the script that will be executed by the MPI job.
+        launch (bool, optional): If True, the PBS job will be submitted to the queue. Defaults to True.
+        backend (str, optional): Backend to be used for distributed training (e.g., 'nccl'). Defaults to 'nccl'.
+    """
 
     with open(config_file) as cf:
         config = yaml.load(cf, Loader=yaml.FullLoader)
@@ -78,13 +93,18 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
 
     config_save_path = os.path.join(save_loc, "model.yml")
 
-    # if os.path.exists(config_save_path):
-    #     os.remove(config_save_path)
-    #     logger.info('Remove the old model.yml at {}'.format(config_save_path))
+    # Define the source and destination paths
+    source_path = config_file
+    destination_path = config_save_path
+
+    # Only delete the original if the source and destination paths are different
+    if os.path.exists(destination_path) and os.path.abspath(source_path) != os.path.abspath(destination_path):
+        os.remove(destination_path)
+        logger.info(f'Removed the old model.yml at {destination_path}')
 
     try:
-        shutil.copy(config_file, config_save_path)
-        logger.info('Copy the new {} to {}'.format(config_file, config_save_path))
+        shutil.copy(source_path, destination_path)
+        logger.info(f'Copied the new {source_path} to {destination_path}')
     except shutil.SameFileError:
         pass
 

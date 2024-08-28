@@ -59,6 +59,20 @@ def load_dataset_and_sampler(conf,
                              rank,
                              is_train=True,
                              seed=42):
+    """
+    Load the dataset and sampler for training or validation.
+
+    Args:
+        conf (dict): Configuration dictionary containing dataset and training parameters.
+        files (list): List of file paths for the dataset.
+        world_size (int): Number of processes participating in the job.
+        rank (int): Rank of the current process.
+        is_train (bool): Flag indicating whether the dataset is for training or validation.
+        seed (int, optional): Seed for random number generation. Defaults to 42.
+
+    Returns:
+        tuple: A tuple containing the dataset and the distributed sampler.
+    """
 
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
@@ -176,6 +190,17 @@ def load_dataset_and_sampler(conf,
 
 
 def load_model_states_and_optimizer(conf, model, device):
+    """
+    Load the model states, optimizer, scheduler, and gradient scaler.
+
+    Args:
+        conf (dict): Configuration dictionary containing training parameters.
+        model (torch.nn.Module): The model to be trained.
+        device (torch.device): The device (CPU or GPU) where the model is located.
+
+    Returns:
+        tuple: A tuple containing the updated configuration, model, optimizer, scheduler, and scaler.
+    """
 
     # convert $USER to the actual user name
     conf['save_loc'] = save_loc = os.path.expandvars(conf['save_loc'])
@@ -244,6 +269,19 @@ def load_model_states_and_optimizer(conf, model, device):
 
 
 def main(rank, world_size, conf, backend, trial=False):
+    """
+    Main function to set up training and validation processes.
+
+    Args:
+        rank (int): Rank of the current process.
+        world_size (int): Number of processes participating in the job.
+        conf (dict): Configuration dictionary containing model, data, and training parameters.
+        backend (str): Backend to be used for distributed training.
+        trial (bool, optional): Flag for whether this is an Optuna trial. Defaults to False.
+
+    Returns:
+        Any: The result of the training process.
+    """
 
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
@@ -458,12 +496,39 @@ def main(rank, world_size, conf, backend, trial=False):
 
 
 class Objective(BaseObjective):
+    """
+    Optuna objective class for hyperparameter optimization.
+
+    Attributes:
+        config (dict): Configuration dictionary containing training parameters.
+        metric (str): Metric to optimize, defaults to "val_loss".
+        device (str): Device for training, defaults to "cpu".
+    """
+
     def __init__(self, config, metric="val_loss", device="cpu"):
+        """
+        Initialize the Objective class.
+
+        Args:
+            config (dict): Configuration dictionary containing training parameters.
+            metric (str, optional): Metric to optimize. Defaults to "val_loss".
+            device (str, optional): Device for training. Defaults to "cpu".
+        """
 
         # Initialize the base class
         BaseObjective.__init__(self, config, metric, device)
 
     def train(self, trial, conf):
+        """
+        Train the model using the given trial configuration.
+
+        Args:
+            trial (optuna.trial.Trial): Optuna trial object.
+            conf (dict): Configuration dictionary for the current trial.
+
+        Returns:
+            Any: The result of the training process.
+        """
 
         conf['model']['dim_head'] = conf['model']['dim']
         conf['model']['vq_codebook_dim'] = conf['model']['dim']

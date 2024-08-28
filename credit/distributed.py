@@ -29,11 +29,29 @@ import logging
 
 
 def setup(rank, world_size, mode, backend="nccl"):
+    """Initializes the distributed process group.
+
+    Args:
+        rank (int): The rank of the process within the distributed setup.
+        world_size (int): The total number of processes in the distributed setup.
+        mode (str): The mode of operation (e.g., 'fsdp', 'ddp').
+        backend (str, optional): The backend to use for distributed training. Defaults to 'nccl'.
+    """
+
     logging.info(f"Running {mode.upper()} on rank {rank} with world_size {world_size} using {backend}.")
     dist.init_process_group(backend, rank=rank, world_size=world_size)
 
 
 def get_rank_info(trainer_mode):
+    """Gets rank and size information for distributed training.
+
+    Args:
+        trainer_mode (str): The mode of training (e.g., 'fsdp', 'ddp').
+
+    Returns:
+        tuple: A tuple containing LOCAL_RANK (int), WORLD_RANK (int), and WORLD_SIZE (int).
+    """
+
     if trainer_mode in ["fsdp", "ddp"]:
         try:
             from mpi4py import MPI
@@ -77,6 +95,16 @@ def get_rank_info(trainer_mode):
 
 
 def distributed_model_wrapper(conf, neural_network, device):
+    """Wraps the neural network model for distributed training.
+
+    Args:
+        conf (dict): The configuration dictionary containing training settings.
+        neural_network (torch.nn.Module): The neural network model to be wrapped.
+        device (torch.device): The device on which the model will be trained.
+
+    Returns:
+        torch.nn.Module: The wrapped model ready for distributed training.
+    """
 
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
