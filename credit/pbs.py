@@ -163,18 +163,19 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
         jobid = jobid.decode("utf-8").strip("\n")
         logger.info(jobid)
 
-        # copy launch.sh to the design location
-        launch_path = os.path.join(save_loc, "launch.sh")
+        # Copy launch.sh to the design location
+        # Define the source and destination paths
+        source_path = "launch.sh"
+        destination_path = os.path.join(save_loc, "launch.sh")
 
-        # if os.path.exists(launch_path):
-        #     os.remove(launch_path)
-        #     logger.info('Remove the old launch.sh at {}'.format(launch_path))
+        # Only delete the original if the source and destination paths are different
+        if os.path.exists(destination_path) and os.path.abspath(source_path) != os.path.abspath(destination_path):
+            os.remove(destination_path)
+            logger.info(f'Removed the old launch.sh at {destination_path}')
 
         try:
-            shutil.copy("launch.sh", os.path.join(save_loc, "launch.sh"))
-            logger.info('Generating the new script at {}'.format(launch_path))
-            # remove the one from local space
-            # os.remove("launch.sh")
+            shutil.copy(source_path, destination_path)
+            logger.info(f'Generated the new script at {destination_path}')
         except shutil.SameFileError:
             pass
 
