@@ -218,7 +218,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             
         if 'max_forecast_len' not in conf['data']:
             conf['data']['max_forecast_len'] = None #conf['data']['forecast_len']
-        
+            
         # one_shot
         if 'one_shot' not in conf['data']:
             conf['data']['one_shot'] = None
@@ -284,6 +284,9 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             assert 'valid_batches_per_epoch'  in conf['trainer'], (
                 "Number of validation batches per epoch ('valid_batches_per_epoch') is missing from onf['trainer']")
             
+        if 'save_metric_vars' not in conf['trainer']:
+            conf['trainer']['save_metric_vars'] = []
+        
         if 'use_scheduler' in conf['trainer']:
             # lr will be controlled by scheduler
             conf['trainer']['update_learning_rate'] = False
