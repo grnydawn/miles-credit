@@ -26,6 +26,7 @@ Usage:
         - GPH derived from geopotential_height ~ predicted ERA5 GPH
 
 Reference:
+    - https://journals.ametsoc.org/view/journals/clim/34/10/JCLI-D-20-0676.1.xml
     - https://doi.org/10.1175/JCLI-D-13-00018.1
     - https://github.com/ai2cm/ace/tree/main/fme/fme/core
 
@@ -33,8 +34,29 @@ Yingkai Sha
 ksha@ucar.edu
 '''
 
+
+
 import torch
 from credit.physics_constants import *
+
+# Earth's radius
+RAD_EARTH = 6371000 # m
+
+# ideal gas constant of water vapor
+RVGAS = 461.5 # J/kg/K
+
+# ideal gas constant of dry air
+RDGAS = 287.05 # J/kg/K
+
+# gravity
+GRAVITY = 9.80665 # m/s^2
+
+# density of water
+RHO_WATER = 1000.0 # kg/m^3
+
+# latent heat caused by the phase change of water
+# from liquid to gas
+LATENT_HEAT_OF_VAPORIZATION = 2.5e6  # J/kg
 
 class physics_pressure_level:
     '''
@@ -46,29 +68,7 @@ class physics_pressure_level:
         lat (torch.Tensor): Latitude in degrees.
     
     Methods:
-        virtual_temperature():
-            Computes the virtual temperature.
-        
-        evaporation_from_latent_heat():
-            Computes the evaporation rate from latent heat flux.
-        
-        latent_heat_from_evaporation():
-            Computes the latent heat from the evaporation rate.
-            
-        horizontal_advection():
-            Computes horizontal advection of a scalar field.
-        
-        pressure_level_integral():
-            Computes the vertical integral over pressure levels.
-        
-        surface_pressure_for_dry_air():
-            Computes surface pressure due to dry air.
-        
-        pressure_level_thickness():
-            Computes the thickness of pressure levels.
-        
-        geopotential_height():
-            Computes geopotential height from surface height and temperature.
+    
     '''
     
     def __init__(self,
@@ -141,51 +141,6 @@ class physics_pressure_level:
         '''
         return evaporation * LATENT_HEAT_OF_VAPORIZATION
 
-    def divergence_flux(self,
-                        q: torch.Tensor,
-                        u: torch.Tensor,
-                        v: torch.Tensor) -> torch.Tensor:
-        '''
-        Convert a variable to fulx-form and compute its divergence on spherical cooridantes using lon and lat.
-
-        div(F) = [1/(R*cos(lat))] * d[u*q*cos(lat)]/d(lon) + [1/(R*cos(lat))] * d[v*q*cos(lat)]/d(lat)
-
-        where
-        - q: the scalar quantity (e.g., specific humidity)
-        - (u, v): horizontal wind components
-        - (u*q, v*q): the flux-form of a scalar quantity (e.g., moisture flux from specific humidity)
-        - lon, lat: longitude and latitude
-        - R: RAD_EARTH
-
-        Args:
-            q (torch.Tensor): Scalar quantity (e.g., specific humidity).
-            u (torch.Tensor): Zonal (east-west) wind component (m/s).
-            v (torch.Tensor): Meridional (north-south) wind component (m/s).
-        
-        Returns:
-            torch.Tensor: Divergence of the flux (1/m).
-        '''
-        # degree to rad
-        lat_rad = torch.deg2rad(self.lat)
-        lon_rad = torch.deg2rad(self.lon)
-    
-        # Convert scalar to flux-form
-        Fx = q * u
-        Fy = q * v
-    
-        # Compute the partial derivatives
-        dlon = torch.gradient(lon_rad, dim=-1)[0]
-        dlat = torch.gradient(lat_rad, dim=-2)[0]
-        
-        dFx_dlon = torch.gradient(Fx * torch.cos(lat_rad), dim=-1)[0] / dlon
-        dFy_dlat = torch.gradient(Fy * torch.cos(lat_rad), dim=-2)[0] / dlat
-    
-        # Compute the divergence
-        div_Fq = (1 / (RAD_EARTH * torch.cos(lat_rad))) * (dFx_dlon + dFy_dlat)
-    
-    
-        return div_Fq
-        
     def horizontal_advection(self, 
                              T: torch.Tensor,
                              u: torch.Tensor, 
@@ -239,6 +194,54 @@ class physics_pressure_level:
             torch.Tensor: Vertical integral of the integrand (lat, lon).
         '''
         return torch.sum(self.pressure_thickness * T, dim=-1)
+    
+    def divergence_of_moisture_flux_integral(self,
+                                             q: torch.Tensor,
+                                             u: torch.Tensor,
+                                             v: torch.Tensor) -> torch.Tensor:
+        '''
+        Compute the divergence of vertical integral of water vapour flux
+
+        div(F) = [1/(R*cos(lat))] * d[int(u*q)*cos(lat)]/d(lon) + [1/R] * d[int(v*q)]/d(lat)
+
+        where
+        - q: specific humidity
+        - (u, v): horizontal wind components
+        - int(u*q), int(v*q): the vertical integral of water vapour flux
+        - lon, lat: longitude and latitude
+        - R: RAD_EARTH
+
+        Args:
+            q (torch.Tensor): Scalar quantity (e.g., specific humidity).
+            u (torch.Tensor): Zonal (east-west) wind component (m/s).
+            v (torch.Tensor): Meridional (north-south) wind component (m/s).
+        
+        Returns:
+            torch.Tensor: Divergence of the flux (1/m).
+        '''
+        # Convert lat and lon to radians
+        lat_rad = torch.deg2rad(self.lat)
+        lon_rad = torch.deg2rad(self.lon)
+    
+        # compute the vertical integrals of the moisture fluxes
+        # flux m/s * pressure kg/(ms^2) * gravity m/s^2 = kg/m/s
+        Fx = (1/GRAVITY) * self.pressure_level_integral(q * u)  
+        Fy = (1/GRAVITY) * self.pressure_level_integral(q * v)
+
+        # ------------------------------------------------------------------- #
+        # Compute the partial derivatives of the fluxes
+        dlon = torch.gradient(lon_rad, dim=-1)[0]
+        dlat = torch.gradient(lat_rad, dim=-2)[0]
+
+        # kg/m/s divided by RAD_EARTH: kg/m^2/s
+        dFx_dlon = torch.gradient(Fx * torch.cos(lat_rad), dim=-1)[0] / (dlon * RAD_EARTH * torch.cos(lat_rad))
+        dFy_dlat = torch.gradient(Fy, dim=-2)[0] / (dlat * RAD_EARTH)
+    
+        # Compute the divergence of the moisture flux
+        div_Fq = dFx_dlon + dFy_dlat
+        # ------------------------------------------------------------------- #
+        
+        return div_Fq
         
     def surface_pressure_for_dry_air(self, 
                                      specific_humidity: torch.Tensor, 
@@ -345,36 +348,5 @@ class physics_pressure_level:
         # e.g. Z500 = GPH[..., index_500hPa]
         
         return GPH
-        
-    # def surface_pressure_to_slp(self, 
-    #                             surface_pressure: torch.Tensor, 
-    #                             air_temperature: torch.Tensor, 
-    #                             specific_humidity: torch.Tensor, 
-    #                             surface_height: torch.Tensor) -> torch.Tensor:
-    #     '''
-    #     Compute surface pressure using barometric equation
-    
-    #     slp = p_surf * exp((g * h) / (Rd * Tv))
-    
-    #     where
-    #     - slp: sea level pressure
-    #     - p_surf: surface pressure
-    #     - g: gravity
-    #     - h: surface_height
-    #     - Rd: ideal gas constant for dry air
-    #     - Tv: virtual temperature
-        
-    #     Args:
-        
-    #     Returns:
-        
-    #     '''
-    #     # Compute Tv
-    #     Tv = self.virtual_temperature(air_temperature, specific_humidity)
-        
-    #     slp = surface_pressure * np.exp((GRAVITY * surface_height) / (RDGAS * Tv))
-    
-    #     return slp
-
 
 
