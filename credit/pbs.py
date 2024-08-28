@@ -94,7 +94,7 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
 
     # Load modules
     module purge
-    module load cuda cray-mpich conda
+    module load gcc craype cray-mpich cuda cudnn/8.8.1.3-12 conda
     conda activate {pbs_options.get('conda', 'holodec')}
 
     # Export environment variables
@@ -102,7 +102,7 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
     export LOGLEVEL=INFO
     export NCCL_DEBUG=INFO
 
-    export CUDA_VISIBLE_DEVICES=cuda_devices
+    export CUDA_VISIBLE_DEVICES={cuda_devices}
 
     export NCCL_SOCKET_IFNAME=hsn
     export MPICH_GPU_MANAGED_MEMORY_SUPPORT_ENABLED=1
