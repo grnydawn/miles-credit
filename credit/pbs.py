@@ -2,7 +2,10 @@ import re
 import os
 import yaml
 import shutil
+import logging
 import subprocess
+
+logger = logging.getLogger(__name__)
 
 
 def launch_script(config_file, script_path, launch=True):
@@ -48,7 +51,7 @@ def launch_script(config_file, script_path, launch=True):
             stderr=subprocess.PIPE,
         ).communicate()[0]
         jobid = jobid.decode("utf-8").strip("\n")
-        print(jobid)
+        logger.info(jobid)
         save_loc = os.path.expandvars(config["save_loc"])
         if not os.path.exists(os.path.join(save_loc, "launch.sh")):
             shutil.copy('launch.sh', os.path.join(save_loc, "launch.sh"))
@@ -56,7 +59,7 @@ def launch_script(config_file, script_path, launch=True):
 
 
 def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
-    
+
     with open(config_file) as cf:
         config = yaml.load(cf, Loader=yaml.FullLoader)
 
@@ -74,13 +77,13 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
     save_loc = os.path.expandvars(config["save_loc"])
 
     config_save_path = os.path.join(save_loc, "model.yml")
-    
+
     if os.path.exists(config_save_path):
         os.remove(config_save_path)
-        print('Remove the old model.yml at {}'.format(config_save_path))
+        logger.info('Remove the old model.yml at {}'.format(config_save_path))
 
     shutil.copy(config_file, config_save_path)
-    print('Copy the new {} to {}'.format(config_file, config_save_path))
+    logger.info('Copy the new {} to {}'.format(config_file, config_save_path))
 
     # Generate the PBS script
     script = f'''#!/bin/bash
@@ -94,7 +97,7 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
 
     # Load modules
     module purge
-    module load cuda cray-mpich conda
+    module load gcc craype cray-mpich cuda cudnn/8.8.1.3-12 conda
     conda activate {pbs_options.get('conda', 'holodec')}
 
     # Export environment variables
@@ -102,7 +105,7 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
     export LOGLEVEL=INFO
     export NCCL_DEBUG=INFO
 
-    export CUDA_VISIBLE_DEVICES=cuda_devices
+    export CUDA_VISIBLE_DEVICES={cuda_devices}
 
     export NCCL_SOCKET_IFNAME=hsn
     export MPICH_GPU_MANAGED_MEMORY_SUPPORT_ENABLED=1
@@ -110,7 +113,7 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
     export MPICH_GPU_SUPPORT_ENABLED=1
 
     export NCCL_IB_DISABLE=1
-    export NCCL_CROSS_NIC=1 
+    export NCCL_CROSS_NIC=1
     export NCCL_NCHANNELS_PER_NET_PEER=4
 
     export MPICH_RDMA_ENABLED_CUDA=1
@@ -122,7 +125,7 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
     export FI_MR_CACHE_MONITOR=userfaultfd
     export FI_CXI_DEFAULT_CQ_SIZE=131072
 
-    # Print the results
+    # logger.info the results
     echo "Number of nodes: {num_nodes}"
     echo "Number of GPUs per node: {num_gpus}"
     echo "Total number of GPUs: {total_gpus}"
@@ -131,7 +134,7 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
     # wandb login 02d2b1af00b5df901cb2bee071872de774781520
 
     # Launch MPIs
-    mpiexec -n {total_ranks} --ppn 4 --cpu-bind none python {script_path} -c {config_save_path} --backend {backend} 
+    mpiexec -n {total_ranks} --ppn 4 --cpu-bind none python {script_path} -c {config_save_path} --backend {backend}
     '''
 
     script = re.sub(r'^\s+', '', script, flags=re.MULTILINE)
@@ -148,17 +151,17 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
             stderr=subprocess.PIPE,
         ).communicate()[0]
         jobid = jobid.decode("utf-8").strip("\n")
-        print(jobid)
+        logger.info(jobid)
 
         # copy launch.sh to the design location
         launch_path = os.path.join(save_loc, "launch.sh")
-        
+
         if os.path.exists(launch_path):
             os.remove(launch_path)
-            print('Remove the old launch.sh at {}'.format(launch_path))
-            
+            logger.info('Remove the old launch.sh at {}'.format(launch_path))
+
         shutil.copy("launch.sh", os.path.join(save_loc, "launch.sh"))
-        print('Generating the new script at {}'.format(launch_path))
+        logger.info('Generating the new script at {}'.format(launch_path))
 
         # remove the one from local space
         os.remove("launch.sh")
@@ -169,4 +172,4 @@ if __name__ == "__main__":
     # Where does this script live?
     script_path = "../applications/trainer_vit2d.py"
     launch_script(config_file, script_path, launch=False)
-    #launch_script_mpi(config_file, script_path, launch = False)
+    # launch_script_mpi(config_file, script_path, launch = False)
