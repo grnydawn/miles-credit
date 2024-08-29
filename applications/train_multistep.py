@@ -9,7 +9,6 @@ import yaml
 import wandb
 import optuna
 import shutil
-import socket
 import logging
 import warnings
 
@@ -18,11 +17,10 @@ from argparse import ArgumentParser
 from echo.src.base_objective import BaseObjective
 
 import torch
-import torch.distributed as dist
 from torch.cuda.amp import GradScaler
 from torch.utils.data.distributed import DistributedSampler
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
-from credit.distributed import distributed_model_wrapper
+from credit.distributed import distributed_model_wrapper, setup, get_rank_info
 
 from credit.seed import seed_everything
 from credit.loss import VariableTotalLoss2D
@@ -48,58 +46,9 @@ warnings.filterwarnings("ignore")
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
-
-
 # https://stackoverflow.com/questions/59129812/how-to-avoid-cuda-out-of-memory-in-pytorch
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-
-def setup(rank, world_size, mode, backend="nccl"):
-    logging.info(f"Running {mode.upper()} on rank {rank} with world_size {world_size} using {backend}.")
-    dist.init_process_group(backend, rank=rank, world_size=world_size)
-
-def get_rank_info(trainer_mode):
-    if trainer_mode in ["fsdp", "ddp"]:
-        try:
-            from mpi4py import MPI
-            comm = MPI.COMM_WORLD
-            shmem_comm = comm.Split_type(MPI.COMM_TYPE_SHARED)
-            
-            LOCAL_RANK = shmem_comm.Get_rank()
-            WORLD_SIZE = comm.Get_size()
-            WORLD_RANK = comm.Get_rank()
-        
-        except:
-            if "LOCAL_RANK" in os.environ:
-                # Environment variables set by torch.distributed.launch or torchrun
-                LOCAL_RANK = int(os.environ["LOCAL_RANK"])
-                WORLD_SIZE = int(os.environ["WORLD_SIZE"])
-                WORLD_RANK = int(os.environ["RANK"])
-            elif "OMPI_COMM_WORLD_LOCAL_RANK" in os.environ:
-                # Environment variables set by mpirun
-                LOCAL_RANK = int(os.environ["OMPI_COMM_WORLD_LOCAL_RANK"])
-                WORLD_SIZE = int(os.environ["OMPI_COMM_WORLD_SIZE"])
-                WORLD_RANK = int(os.environ["OMPI_COMM_WORLD_RANK"])
-            elif "PMI_RANK" in os.environ:
-                # Environment variables set by cray-mpich
-                LOCAL_RANK = int(os.environ["PMI_LOCAL_RANK"])
-                WORLD_SIZE = int(os.environ["PMI_SIZE"])
-                WORLD_RANK = int(os.environ["PMI_RANK"])
-            else:
-                import sys
-                sys.exit("Can't find the environment variables for local rank")
-
-        # Set MASTER_ADDR and MASTER_PORT if not already set
-        if "MASTER_ADDR" not in os.environ:
-            os.environ['MASTER_ADDR'] = socket.gethostbyname(socket.gethostname())
-        if "MASTER_PORT" not in os.environ:
-            os.environ['MASTER_PORT'] = str(np.random.randint(1000, 8000))
-    else: 
-        LOCAL_RANK=0
-        WORLD_RANK=0
-        WORLD_SIZE=1
-
-    return LOCAL_RANK, WORLD_RANK, WORLD_SIZE
 
 def load_dataset_and_sampler(conf,
                              all_ERA_files,
@@ -110,6 +59,20 @@ def load_dataset_and_sampler(conf,
                              rank,
                              is_train=True,
                              seed=42):
+    """
+    Load the dataset and sampler for training or validation.
+
+    Args:
+        conf (dict): Configuration dictionary containing dataset and training parameters.
+        files (list): List of file paths for the dataset.
+        world_size (int): Number of processes participating in the job.
+        rank (int): Rank of the current process.
+        is_train (bool): Flag indicating whether the dataset is for training or validation.
+        seed (int, optional): Seed for random number generation. Defaults to 42.
+
+    Returns:
+        tuple: A tuple containing the dataset and the distributed sampler.
+    """
 
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
@@ -227,6 +190,17 @@ def load_dataset_and_sampler(conf,
 
 
 def load_model_states_and_optimizer(conf, model, device):
+    """
+    Load the model states, optimizer, scheduler, and gradient scaler.
+
+    Args:
+        conf (dict): Configuration dictionary containing training parameters.
+        model (torch.nn.Module): The model to be trained.
+        device (torch.device): The device (CPU or GPU) where the model is located.
+
+    Returns:
+        tuple: A tuple containing the updated configuration, model, optimizer, scheduler, and scaler.
+    """
 
     # convert $USER to the actual user name
     conf['save_loc'] = save_loc = os.path.expandvars(conf['save_loc'])
@@ -295,12 +269,25 @@ def load_model_states_and_optimizer(conf, model, device):
 
 
 def main(rank, world_size, conf, backend, trial=False):
+    """
+    Main function to set up training and validation processes.
+
+    Args:
+        rank (int): Rank of the current process.
+        world_size (int): Number of processes participating in the job.
+        conf (dict): Configuration dictionary containing model, data, and training parameters.
+        backend (str): Backend to be used for distributed training.
+        trial (bool, optional): Flag for whether this is an Optuna trial. Defaults to False.
+
+    Returns:
+        Any: The result of the training process.
+    """
 
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
 
     if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
-        setup(rank, world_size, conf["trainer"]["mode"],backend)
+        setup(rank, world_size, conf["trainer"]["mode"], backend)
 
     # infer device id from rank
 
@@ -509,12 +496,39 @@ def main(rank, world_size, conf, backend, trial=False):
 
 
 class Objective(BaseObjective):
+    """
+    Optuna objective class for hyperparameter optimization.
+
+    Attributes:
+        config (dict): Configuration dictionary containing training parameters.
+        metric (str): Metric to optimize, defaults to "val_loss".
+        device (str): Device for training, defaults to "cpu".
+    """
+
     def __init__(self, config, metric="val_loss", device="cpu"):
+        """
+        Initialize the Objective class.
+
+        Args:
+            config (dict): Configuration dictionary containing training parameters.
+            metric (str, optional): Metric to optimize. Defaults to "val_loss".
+            device (str, optional): Device for training. Defaults to "cpu".
+        """
 
         # Initialize the base class
         BaseObjective.__init__(self, config, metric, device)
 
     def train(self, trial, conf):
+        """
+        Train the model using the given trial configuration.
+
+        Args:
+            trial (optuna.trial.Trial): Optuna trial object.
+            conf (dict): Configuration dictionary for the current trial.
+
+        Returns:
+            Any: The result of the training process.
+        """
 
         conf['model']['dim_head'] = conf['model']['dim']
         conf['model']['vq_codebook_dim'] = conf['model']['dim']
@@ -576,6 +590,7 @@ if __name__ == "__main__":
     args_dict = vars(args)
     config = args_dict.pop("model_config")
     launch = int(args_dict.pop("launch"))
+    backend = args_dict.pop("backend")
     use_wandb = int(args_dict.pop("wandb"))
 
     # Set up logger to print stuff
@@ -631,4 +646,4 @@ if __name__ == "__main__":
     seed_everything(seed)
 
     local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])
-    main(world_rank,world_size,conf,args.backend)
+    main(world_rank, world_size, conf, backend)

@@ -4,13 +4,11 @@ train.py
 Content
     load_dataset_and_sampler_zscore_only
     load_model_states_and_optimizer
-    
 '''
 import os
 import sys
 import glob
 import yaml
-import socket
 import optuna
 import shutil
 import logging
@@ -19,14 +17,12 @@ import warnings
 from pathlib import Path
 from argparse import ArgumentParser
 from echo.src.base_objective import BaseObjective
-import numpy as np
 
 import torch
-import torch.distributed as dist
 from torch.cuda.amp import GradScaler
 from torch.utils.data.distributed import DistributedSampler
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
-from credit.distributed import distributed_model_wrapper
+from credit.distributed import distributed_model_wrapper, setup, get_rank_info
 
 from credit.seed import seed_everything
 from credit.loss import VariableTotalLoss2D
@@ -54,57 +50,22 @@ os.environ["MKL_NUM_THREADS"] = "1"
 # https://stackoverflow.com/questions/59129812/how-to-avoid-cuda-out-of-memory-in-pytorch
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
-def setup(rank, world_size, mode, backend="nccl"):
-    logging.info(f"Running {mode.upper()} on rank {rank} with world_size {world_size} using {backend}.")
-    dist.init_process_group(backend, rank=rank, world_size=world_size)
-
-def get_rank_info(trainer_mode):
-    if trainer_mode in ["fsdp", "ddp"]:
-        try:
-            from mpi4py import MPI
-            comm = MPI.COMM_WORLD
-            shmem_comm = comm.Split_type(MPI.COMM_TYPE_SHARED)
-            
-            LOCAL_RANK = shmem_comm.Get_rank()
-            WORLD_SIZE = comm.Get_size()
-            WORLD_RANK = comm.Get_rank()
-        
-        except:
-            if "LOCAL_RANK" in os.environ:
-                # Environment variables set by torch.distributed.launch or torchrun
-                LOCAL_RANK = int(os.environ["LOCAL_RANK"])
-                WORLD_SIZE = int(os.environ["WORLD_SIZE"])
-                WORLD_RANK = int(os.environ["RANK"])
-            elif "OMPI_COMM_WORLD_LOCAL_RANK" in os.environ:
-                # Environment variables set by mpirun
-                LOCAL_RANK = int(os.environ["OMPI_COMM_WORLD_LOCAL_RANK"])
-                WORLD_SIZE = int(os.environ["OMPI_COMM_WORLD_SIZE"])
-                WORLD_RANK = int(os.environ["OMPI_COMM_WORLD_RANK"])
-            elif "PMI_RANK" in os.environ:
-                # Environment variables set by cray-mpich
-                LOCAL_RANK = int(os.environ["PMI_LOCAL_RANK"])
-                WORLD_SIZE = int(os.environ["PMI_SIZE"])
-                WORLD_RANK = int(os.environ["PMI_RANK"])
-            else:
-                sys.exit("Can't find the environment variables for local rank")
-
-
-        # Set MASTER_ADDR and MASTER_PORT if not already set
-        if "MASTER_ADDR" not in os.environ:
-            os.environ['MASTER_ADDR'] = socket.gethostbyname(socket.gethostname())
-        if "MASTER_PORT" not in os.environ:
-            os.environ['MASTER_PORT'] = str(np.random.randint(1000, 8000))
-    else: 
-        LOCAL_RANK=0
-        WORLD_RANK=0
-        WORLD_SIZE=1
-
-    return LOCAL_RANK, WORLD_RANK, WORLD_SIZE
-
-
-
 
 def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
+    """
+    Load the dataset and sampler for training or validation.
+
+    Args:
+        conf (dict): Configuration dictionary containing dataset and training parameters.
+        files (list): List of file paths for the dataset.
+        world_size (int): Number of processes participating in the job.
+        rank (int): Rank of the current process.
+        is_train (bool): Flag indicating whether the dataset is for training or validation.
+        seed (int, optional): Seed for random number generation. Defaults to 42.
+
+    Returns:
+        tuple: A tuple containing the dataset and the distributed sampler.
+    """
 
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
@@ -175,56 +136,73 @@ def load_dataset_and_sampler_zscore_only(conf,
                                          dyn_forcing_files,
                                          diagnostic_files,
                                          world_size, rank, is_train, seed=42):
+    """
+    Load the Z-score only dataset and sampler for training or validation.
+
+    Args:
+        conf (dict): Configuration dictionary containing dataset and training parameters.
+        all_ERA_files (list): List of ERA file paths.
+        surface_files (list): List of surface file paths.
+        dyn_forcing_files (list): List of dynamic forcing file paths.
+        diagnostic_files (list): List of diagnostic file paths.
+        world_size (int): Number of processes participating in the job.
+        rank (int): Rank of the current process.
+        is_train (bool): Flag indicating whether the dataset is for training or validation.
+        seed (int, optional): Seed for random number generation. Defaults to 42.
+
+    Returns:
+        tuple: A tuple containing the dataset and the distributed sampler.
+    """
 
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
 
     # ======================================================== #
     # parse intputs
-    
+
     # upper air variables
     varname_upper_air = conf['data']['variables']
-    
+
     if ('forcing_variables' in conf['data']) and (len(conf['data']['forcing_variables']) > 0):
         forcing_files = conf['data']['save_loc_forcing']
         varname_forcing = conf['data']['forcing_variables']
     else:
         forcing_files = None
         varname_forcing = None
-        
+
     if ('static_variables' in conf['data']) and (len(conf['data']['static_variables']) > 0):
         static_files = conf['data']['save_loc_static']
         varname_static = conf['data']['static_variables']
     else:
         static_files = None
         varname_static = None
-    
+
     # get surface variable names
     if surface_files is not None:
         varname_surface = conf['data']['surface_variables']
     else:
         varname_surface = None
-    
+
     # get dynamic forcing variable names
     if dyn_forcing_files is not None:
         varname_dyn_forcing = conf['data']['dynamic_forcing_variables']
     else:
         varname_dyn_forcing = None
-    
+
     # get diagnostic variable names
     if diagnostic_files is not None:
         varname_diagnostic = conf['data']['diagnostic_variables']
     else:
         varname_diagnostic = None
-            
+
     # number of previous lead time inputs
     history_len = conf["data"]["history_len"]
     valid_history_len = conf["data"]["valid_history_len"]
-    
+
     # number of lead times to forecast
     forecast_len = conf["data"]["forecast_len"]
     valid_forecast_len = conf["data"]["valid_forecast_len"]
-    
+
     if is_train:
         history_len = history_len
         forecast_len = forecast_len
@@ -233,19 +211,19 @@ def load_dataset_and_sampler_zscore_only(conf,
         history_len = valid_history_len
         forecast_len = valid_forecast_len
         name = 'validation'
-        
+
     # max_forecast_len
     if "max_forecast_len" not in conf["data"]:
         max_forecast_len = None
     else:
         max_forecast_len = conf["data"]["max_forecast_len"]
-    
+
     # skip_periods
     if "skip_periods" not in conf["data"]:
         skip_periods = None
     else:
         skip_periods = conf["data"]["skip_periods"]
-        
+
     # one_shot
     if "one_shot" not in conf["data"]:
         one_shot = None
@@ -296,6 +274,17 @@ def load_dataset_and_sampler_zscore_only(conf,
 
 
 def load_model_states_and_optimizer(conf, model, device):
+    """
+    Load the model states, optimizer, scheduler, and gradient scaler.
+
+    Args:
+        conf (dict): Configuration dictionary containing training parameters.
+        model (torch.nn.Module): The model to be trained.
+        device (torch.device): The device (CPU or GPU) where the model is located.
+
+    Returns:
+        tuple: A tuple containing the updated configuration, model, optimizer, scheduler, and scaler.
+    """
 
     # convert $USER to the actual user name
     conf['save_loc'] = save_loc = os.path.expandvars(conf['save_loc'])
@@ -353,7 +342,7 @@ def load_model_states_and_optimizer(conf, model, device):
         # Update the config file to the current epoch
         if "reload_epoch" in conf["trainer"] and conf["trainer"]["reload_epoch"]:
             conf["trainer"]["start_epoch"] = checkpoint["epoch"] + 1
- 
+
         scaler.load_state_dict(checkpoint['scaler_state_dict'])
 
     # Enable updating the lr if not using a policy
@@ -365,6 +354,19 @@ def load_model_states_and_optimizer(conf, model, device):
 
 
 def main(rank, world_size, conf, backend, trial=False):
+    """
+    Main function to set up training and validation processes.
+
+    Args:
+        rank (int): Rank of the current process.
+        world_size (int): Number of processes participating in the job.
+        conf (dict): Configuration dictionary containing model, data, and training parameters.
+        backend (str): Backend to be used for distributed training.
+        trial (bool, optional): Flag for whether this is an Optuna trial. Defaults to False.
+
+    Returns:
+        Any: The result of the training process.
+    """
 
     # convert $USER to the actual user name
     conf['save_loc'] = os.path.expandvars(conf['save_loc'])
@@ -388,28 +390,28 @@ def main(rank, world_size, conf, backend, trial=False):
 
     # get file names
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
-    
+
     # <------------------------------------------ std_new
     if conf['data']['scaler_type'] == 'std_new':
-    
+
         # check and glob surface files
         if ('surface_variables' in conf['data']) and (len(conf['data']['surface_variables']) > 0):
             surface_files = sorted(glob.glob(conf["data"]["save_loc_surface"]))
-            
+
         else:
             surface_files = None
-    
+
         # check and glob dyn forcing files
         if ('dynamic_forcing_variables' in conf['data']) and (len(conf['data']['dynamic_forcing_variables']) > 0):
             dyn_forcing_files = sorted(glob.glob(conf["data"]["save_loc_dynamic_forcing"]))
-            
+
         else:
             dyn_forcing_files = None
-    
+
         # check and glob diagnostic files
         if ('diagnostic_variables' in conf['data']) and (len(conf['data']['diagnostic_variables']) > 0):
             diagnostic_files = sorted(glob.glob(conf["data"]["save_loc_diagnostic"]))
-            
+
         else:
             diagnostic_files = None
 
@@ -433,15 +435,15 @@ def main(rank, world_size, conf, backend, trial=False):
     # Filter the files for training / validation
     train_files = [file for file in all_ERA_files if any(year in file for year in train_years)]
     valid_files = [file for file in all_ERA_files if any(year in file for year in valid_years)]
-    
+
     # <----------------------------------- std_new
     if conf['data']['scaler_type'] == 'std_new':
-        
+
         if surface_files is not None:
-            
+
             train_surface_files = [file for file in surface_files if any(year in file for year in train_years)]
             valid_surface_files = [file for file in surface_files if any(year in file for year in valid_years)]
-    
+
             # ---------------------------- #
             # check total number of files
             assert len(train_surface_files) == len(train_files), (
@@ -450,16 +452,16 @@ def main(rank, world_size, conf, backend, trial=False):
             assert len(valid_surface_files) == len(valid_files), (
                 'Mismatch between the total number of validation set [surface files] and [upper-air files]'
             )
-        
+
         else:
             train_surface_files = None
             valid_surface_files = None
-    
+
         if dyn_forcing_files is not None:
-            
+
             train_dyn_forcing_files = [file for file in dyn_forcing_files if any(year in file for year in train_years)]
             valid_dyn_forcing_files = [file for file in dyn_forcing_files if any(year in file for year in valid_years)]
-    
+
             # ---------------------------- #
             # check total number of files
             assert len(train_dyn_forcing_files) == len(train_files), (
@@ -468,16 +470,16 @@ def main(rank, world_size, conf, backend, trial=False):
             assert len(valid_dyn_forcing_files) == len(valid_files), (
                 'Mismatch between the total number of validation set [dynamic forcing files] and [upper-air files]'
             )
-        
+
         else:
             train_dyn_forcing_files = None
             valid_dyn_forcing_files = None
-            
+
         if diagnostic_files is not None:
-            
+
             train_diagnostic_files = [file for file in diagnostic_files if any(year in file for year in train_years)]
             valid_diagnostic_files = [file for file in diagnostic_files if any(year in file for year in valid_years)]
-    
+
             # ---------------------------- #
             # check total number of files
             assert len(train_diagnostic_files) == len(train_files), (
@@ -486,7 +488,7 @@ def main(rank, world_size, conf, backend, trial=False):
             assert len(valid_diagnostic_files) == len(valid_files), (
                 'Mismatch between the total number of validation set [diagnostic files] and [upper-air files]'
             )
-        
+
         else:
             train_diagnostic_files = None
             valid_diagnostic_files = None
@@ -587,12 +589,39 @@ def main(rank, world_size, conf, backend, trial=False):
 
 
 class Objective(BaseObjective):
+    """
+    Optuna objective class for hyperparameter optimization.
+
+    Attributes:
+        config (dict): Configuration dictionary containing training parameters.
+        metric (str): Metric to optimize, defaults to "val_loss".
+        device (str): Device for training, defaults to "cpu".
+    """
+
     def __init__(self, config, metric="val_loss", device="cpu"):
+        """
+        Initialize the Objective class.
+
+        Args:
+            config (dict): Configuration dictionary containing training parameters.
+            metric (str, optional): Metric to optimize. Defaults to "val_loss".
+            device (str, optional): Device for training. Defaults to "cpu".
+        """
 
         # Initialize the base class
         BaseObjective.__init__(self, config, metric, device)
 
     def train(self, trial, conf):
+        """
+        Train the model using the given trial configuration.
+
+        Args:
+            trial (optuna.trial.Trial): Optuna trial object.
+            conf (dict): Configuration dictionary for the current trial.
+
+        Returns:
+            Any: The result of the training process.
+        """
 
         conf['model']['dim_head'] = conf['model']['dim']
         conf['model']['vq_codebook_dim'] = conf['model']['dim']
@@ -654,6 +683,7 @@ if __name__ == "__main__":
     args_dict = vars(args)
     config = args_dict.pop("model_config")
     launch = int(args_dict.pop("launch"))
+    backend = args_dict.pop("backend")
     use_wandb = int(args_dict.pop("wandb"))
 
     # Set up logger to print stuff
@@ -676,7 +706,7 @@ if __name__ == "__main__":
         conf = CREDIT_main_parser(conf, parse_training=True, parse_predict=False, print_summary=False)
         training_data_check(conf, print_summary=False)
     # ======================================================== #
-    
+
     # Create directories if they do not exist and copy yml file
     save_loc = os.path.expandvars(conf["save_loc"])
     os.makedirs(save_loc, exist_ok=True)
@@ -707,4 +737,4 @@ if __name__ == "__main__":
         )
 
     local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])
-    main(world_rank,world_size,conf,args.backend)
+    main(world_rank, world_size, conf, backend)

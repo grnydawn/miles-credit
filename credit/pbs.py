@@ -2,10 +2,20 @@ import re
 import os
 import yaml
 import shutil
+import logging
 import subprocess
+
+logger = logging.getLogger(__name__)
 
 
 def launch_script(config_file, script_path, launch=True):
+    """Generates and optionally launches a PBS script for a single-node job.
+
+    Args:
+        config_file (str): Path to the YAML configuration file.
+        script_path (str): Path to the script that will be executed by the PBS job.
+        launch (bool, optional): If True, the PBS job will be submitted to the queue. Defaults to True.
+    """
 
     # Load the configuration file
     with open(config_file, 'r') as file:
@@ -48,7 +58,7 @@ def launch_script(config_file, script_path, launch=True):
             stderr=subprocess.PIPE,
         ).communicate()[0]
         jobid = jobid.decode("utf-8").strip("\n")
-        print(jobid)
+        logger.info(jobid)
         save_loc = os.path.expandvars(config["save_loc"])
         if not os.path.exists(os.path.join(save_loc, "launch.sh")):
             shutil.copy('launch.sh', os.path.join(save_loc, "launch.sh"))
@@ -56,7 +66,15 @@ def launch_script(config_file, script_path, launch=True):
 
 
 def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
-    
+    """Generates and optionally launches a PBS script for a multi-node MPI job.
+
+    Args:
+        config_file (str): Path to the YAML configuration file.
+        script_path (str): Path to the script that will be executed by the MPI job.
+        launch (bool, optional): If True, the PBS job will be submitted to the queue. Defaults to True.
+        backend (str, optional): Backend to be used for distributed training (e.g., 'nccl'). Defaults to 'nccl'.
+    """
+
     with open(config_file) as cf:
         config = yaml.load(cf, Loader=yaml.FullLoader)
 
@@ -74,13 +92,21 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
     save_loc = os.path.expandvars(config["save_loc"])
 
     config_save_path = os.path.join(save_loc, "model.yml")
-    
-    if os.path.exists(config_save_path):
-        os.remove(config_save_path)
-        print('Remove the old model.yml at {}'.format(config_save_path))
 
-    shutil.copy(config_file, config_save_path)
-    print('Copy the new {} to {}'.format(config_file, config_save_path))
+    # Define the source and destination paths
+    source_path = config_file
+    destination_path = config_save_path
+
+    # Only delete the original if the source and destination paths are different
+    if os.path.exists(destination_path) and os.path.abspath(source_path) != os.path.abspath(destination_path):
+        os.remove(destination_path)
+        logger.info(f'Removed the old model.yml at {destination_path}')
+
+    try:
+        shutil.copy(source_path, destination_path)
+        logger.info(f'Copied the new {source_path} to {destination_path}')
+    except shutil.SameFileError:
+        pass
 
     # Generate the PBS script
     script = f'''#!/bin/bash
@@ -95,7 +121,7 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
     # Load modules
     module purge
     module load gcc craype cray-mpich cuda cudnn/8.8.1.3-12 conda
-    conda activate {pbs_options.get('conda', 'holodec')}
+    conda activate {pbs_options.get('conda', 'credit')}
 
     # Export environment variables
     export LSCRATCH=/glade/derecho/scratch/{user}/
@@ -110,7 +136,7 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
     export MPICH_GPU_SUPPORT_ENABLED=1
 
     export NCCL_IB_DISABLE=1
-    export NCCL_CROSS_NIC=1 
+    export NCCL_CROSS_NIC=1
     export NCCL_NCHANNELS_PER_NET_PEER=4
 
     export MPICH_RDMA_ENABLED_CUDA=1
@@ -122,7 +148,7 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
     export FI_MR_CACHE_MONITOR=userfaultfd
     export FI_CXI_DEFAULT_CQ_SIZE=131072
 
-    # Print the results
+    # logger.info the results
     echo "Number of nodes: {num_nodes}"
     echo "Number of GPUs per node: {num_gpus}"
     echo "Total number of GPUs: {total_gpus}"
@@ -131,7 +157,14 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
     # wandb login 02d2b1af00b5df901cb2bee071872de774781520
 
     # Launch MPIs
-    mpiexec -n {total_ranks} --ppn 4 --cpu-bind none python {script_path} -c {config_save_path} --backend {backend} 
+    nodes=( $( cat $PBS_NODEFILE ) )
+    echo nodes: $nodes
+
+    # Find headnode's IP:
+    head_node=${{nodes[0]}}
+    head_node_ip=$(ssh $head_node hostname -i | awk '{{print $1}}')
+
+    MASTER_ADDR=$head_node_ip MASTER_PORT=1234 mpiexec -n {total_ranks} --ppn 4 --cpu-bind none python {script_path} -c {config_save_path} --backend {backend}
     '''
 
     script = re.sub(r'^\s+', '', script, flags=re.MULTILINE)
@@ -148,20 +181,23 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
             stderr=subprocess.PIPE,
         ).communicate()[0]
         jobid = jobid.decode("utf-8").strip("\n")
-        print(jobid)
+        logger.info(jobid)
 
-        # copy launch.sh to the design location
-        launch_path = os.path.join(save_loc, "launch.sh")
-        
-        if os.path.exists(launch_path):
-            os.remove(launch_path)
-            print('Remove the old launch.sh at {}'.format(launch_path))
-            
-        shutil.copy("launch.sh", os.path.join(save_loc, "launch.sh"))
-        print('Generating the new script at {}'.format(launch_path))
+        # Copy launch.sh to the design location
+        # Define the source and destination paths
+        source_path = "launch.sh"
+        destination_path = os.path.join(save_loc, "launch.sh")
 
-        # remove the one from local space
-        os.remove("launch.sh")
+        # Only delete the original if the source and destination paths are different
+        if os.path.exists(destination_path) and os.path.abspath(source_path) != os.path.abspath(destination_path):
+            os.remove(destination_path)
+            logger.info(f'Removed the old launch.sh at {destination_path}')
+
+        try:
+            shutil.copy(source_path, destination_path)
+            logger.info(f'Generated the new script at {destination_path}')
+        except shutil.SameFileError:
+            pass
 
 
 if __name__ == "__main__":
@@ -169,4 +205,4 @@ if __name__ == "__main__":
     # Where does this script live?
     script_path = "../applications/trainer_vit2d.py"
     launch_script(config_file, script_path, launch=False)
-    #launch_script_mpi(config_file, script_path, launch = False)
+    # launch_script_mpi(config_file, script_path, launch = False)
