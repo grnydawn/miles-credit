@@ -1,82 +1,71 @@
 # --------------------------------------------------------------------------------------------------------------------- #
-# This yaml file implements hourly FuXi on NSF NCAR HPCs (casper.ucar.edu and derecho.hpc.ucar.edu) 
-# the FuXi architecture has been modified to reduce the overall model size
-# The model is trained on hourly model-level ERA5 data with top solar irradiance, geopotential, and land-sea mask
+# This yaml file configures an 6 hourly state-in-state-out CrossFormer
+# on NSF NCAR HPCs (casper.ucar.edu and derecho.hpc.ucar.edu) 
+# The model is trained on 6 hourly model-level ERA5 data with top solar irradiance, geopotential, and land-sea mask
 # Output variables: model level [U, V, T, Q], single level [SP, t2m], and 500 hPa [U, V, T, Z, Q]
-#
-# Yingkai Sha
-# ksha@ucar.edu
 # --------------------------------------------------------------------------------------------------------------------- #
-save_loc: '/glade/work/ksha/CREDIT_runs/fuxi_1h/'
+save_loc: '/glade/work/ksha/CREDIT_runs/wxformer_6h/'
 seed: 1000
 
 data:
     # upper-air variables
     variables: ['U','V','T','Q']
-    save_loc: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
-
+    save_loc: '/glade/derecho/scratch/wchapman/SixHourly_y_TOTAL*'
+    
     # surface variables
     surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
-    save_loc_surface: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
+    save_loc_surface: '/glade/derecho/scratch/wchapman/SixHourly_y_TOTAL*'
     
     # dynamic forcing variables
     dynamic_forcing_variables: ['tsi']
-    save_loc_dynamic_forcing: '/glade/derecho/scratch/dgagne/credit_solar_1h_0.25deg/*.nc'
+    save_loc_dynamic_forcing: '/glade/derecho/scratch/dgagne/credit_solar_6h_0.25deg/*.nc'
     
     # static variables
     static_variables: ['Z_GDS4_SFC','LSM'] 
-    save_loc_static: '/glade/campaign/cisl/aiml/ksha/CREDIT/static_norm_old.nc'
+    save_loc_static: '/glade/derecho/scratch/ksha/CREDIT_data/static_norm_old.nc'
     
     # mean / std path
-    mean_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/mean_1h_0.25deg.nc'
-    std_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/std_1h_0.25deg.nc'
+    mean_path: '/glade/derecho/scratch/ksha/CREDIT_data/mean_6h_1979_2018_16lev_0.25deg.nc'
+    # regular z-score version
+    std_path: '/glade/derecho/scratch/ksha/CREDIT_data/std_6h_1979_2018_16lev_0.25deg.nc'
+    # residual norm version
+    # std_path: '/glade/derecho/scratch/ksha/CREDIT_data/std_residual_6h_1979_2018_16lev_0.25deg.nc'
     
     # train / validation split
-    train_years: [1979, 2014]
-    valid_years: [2014, 2018]
+    train_years: [1979, 2018]
+    valid_years: [2018, 2019]
     
-    # data workflow
-    scaler_type: 'std_new'  
+    scaler_type: 'std_new'
     
-    # number of input states
-    # FuXi has 2 input states
-    history_len: 2
-    valid_history_len: 2
-    
-    # number of forecast steps to compute loss
-    # 0 for single step training / validation
-    # larger than 0 for multi-step training / validation
+    # state-in-state-out
+    history_len: 1
+    valid_history_len: 1
+
+    # single step
     forecast_len: 0
     valid_forecast_len: 0
     
-    # one_shot: True --> compute loss on the last forecast step only
-    # one_shot: False --> compute loss on all forecast steps
     one_shot: True
-    
-    # 1 for hourly model
-    lead_time_periods: 1
-    
-    # do not use skip_period
+    lead_time_periods: 6
     skip_periods: null
     
     # compatible with the old 'std'
     static_first: True
     
 trainer:
-    # type: standard for single-step or one-shot multi-step training
-    # type: multi-step for the "real" multi-step training
-    
     type: standard # <---------- change to your type
-    
-    # use fsdp
+
     mode: fsdp
-    cpu_offload: False # <------ can cause CPU memory problem ("Expects storage to be allocated")
+    cpu_offload: False
     activation_checkpoint: True
     
     load_weights: False # <----- change if load weights
     load_optimizer: False # <--- change if load optimizer
     skip_validation: False
     update_learning_rate: False
+
+    save_backup_weights: True
+    save_best_weights: True
     
     learning_rate: 1.0e-03 # <-- change to your lr
     weight_decay: 0
@@ -84,59 +73,58 @@ trainer:
     train_batch_size: 1
     valid_batch_size: 1
     
-    batches_per_epoch: 1000
-    valid_batches_per_epoch: 50
-    stopping_patience: 5
+    batches_per_epoch: 0
+    valid_batches_per_epoch: 0
+    stopping_patience: 999
     
     start_epoch: 0
+    # num_epoch: 6 # optional
     reload_epoch: True
     epochs: &epochs 70
-    
+     
     use_scheduler: True
     scheduler: {'scheduler_type': 'cosine-annealing', 'T_max': *epochs,  'last_epoch': -1}
-
-    # Automatic Mixed Precision: False
-    amp: False
     
-    # rescale loss as loss = loss / grad_accum_every
-    grad_accum_every: 1 
-    # gradient clipping
+    amp: False
+    grad_accum_every: 1
     grad_max_norm: 1.0
     
     # number of workers
     thread_workers: 4
     valid_thread_workers: 0
-    
+  
 model:
-    type: "fuxi"
+    # crossformer example
+    type: "crossformer"
+    frames: 1                         # number of input states (default: 1)
+    image_height: 640                 # number of latitude grids (default: 640)
+    image_width: 1280                 # number of longitude grids (default: 1280)
+    levels: 16                        # number of upper-air variable levels (default: 15)
+    channels: 4                       # upper-air variable channels
+    surface_channels: 7               # surface variable channels
+    input_only_channels: 3            # dynamic forcing, forcing, static channels
+    output_only_channels: 0           # diagnostic variable channels
     
-    frames: 2               # number of input states
-    image_height: 640       # number of latitude grids
-    image_width: 1280       # number of longitude grids
-    levels: 15              # number of upper-air variable levels
-    channels: 4             # upper-air variable channels
-    surface_channels: 7     # surface variable channels
-    input_only_channels: 3  # dynamic forcing, forcing, static channels
-    output_only_channels: 0 # diagnostic variable channels
+    patch_width: 1                    # number of latitude grids in each 3D patch (default: 1)
+    patch_height: 1                   # number of longitude grids in each 3D patch (default: 1)
+    frame_patch_size: 1               # number of input states in each 3D patch (default: 1)
     
-    # patchify layer
-    patch_height: 4         # number of latitude grids in each 3D patch
-    patch_width: 4          # number of longitude grids in each 3D patch
-    frame_patch_size: 2     # number of input states in each 3D patch
-    
-    # hidden layers
-    dim: 1024               # dimension (default: 1536)
-    num_groups: 32          # number of groups (default: 32)
-    num_heads: 8            # number of heads (default: 8)
-    window_size: 7          # window size (default: 7)
-    depth: 16               # number of swin transformers (default: 48)
+    dim: [128, 256, 512, 1024]        # Dimensionality of each layer
+    depth: [2, 2, 8, 2]               # Depth of each layer
+    global_window_size: [10, 5, 2, 1] # Global window size for each layer
+    local_window_size: 10             # Local window size
+    cross_embed_kernel_sizes:         # kernel sizes for cross-embedding
+    - [4, 8, 16, 32]
+    - [2, 4]
+    - [2, 4]
+    - [2, 4]
+    cross_embed_strides: [2, 2, 2, 2] # Strides for cross-embedding (default: [4, 2, 2, 2])
+    attn_dropout: 0.                  # Dropout probability for attention layers (default: 0.0)
+    ff_dropout: 0.                    # Dropout probability for feed-forward layers (default: 0.0)
     
     # map boundary padding
     pad_lon: 80             # number of grids to pad on 0 and 360 deg lon
     pad_lat: 80             # number of grids to pad on -90 and 90 deg lat
-    
-    # use spectral norm
-    use_spectral_norm: True
     
 loss: 
     # the main training loss
@@ -165,7 +153,7 @@ predict:
                              # (e.g., duration: 384 for 365-day rollout using 32 GPUs)
         days: 2              # forecast lead time as days (1 means 24-hour forecast)
         
-    save_forecast: '/glade/derecho/scratch/ksha/CREDIT/fuxi_1h/'
+    save_forecast: '/glade/derecho/scratch/ksha/CREDIT/wxformer_6h/'
     save_vars: ['SP','t2m','V500','U500','T500','Z500','Q500']
     
     # turn-off low-pass filter
@@ -177,7 +165,7 @@ predict:
 pbs: #derecho
     conda: "/glade/work/ksha/miniconda3/envs/credit"
     project: "NAML0001"
-    job_name: "fuxi_1h"
+    job_name: "wxformer_6h"
     walltime: "12:00:00"
     nodes: 8
     ncpus: 64

@@ -15,6 +15,7 @@ from collections import defaultdict
 
 from abc import ABC, abstractmethod
 from typing import Dict, Any, Optional
+from collections import OrderedDict
 
 import numpy as np
 import pandas as pd
@@ -37,7 +38,7 @@ class BaseTrainer(ABC):
     Abstract base class for training and validating machine learning models.
 
     This class provides a framework for training, validating, and saving model checkpoints.
-    It supports both single-GPU and distributed training. Subclasses must implement 
+    It supports both single-GPU and distributed training. Subclasses must implement
     the `train_one_epoch` and `validate` methods.
 
     Attributes:
@@ -215,6 +216,9 @@ class BaseTrainer(ABC):
         logger.info(f"The training metric being used is {training_metric} which has direction {direction}")
         direction = min if direction == "min" else max
 
+        # Check if we are saving user-defined variable metrics
+        save_metric_vars = conf['trainer'].get('save_metric_vars', [])
+
         # =========================================== #
         # user can specify to run a fixed number of epochs
         if 'num_epoch' in conf['trainer']:
@@ -256,17 +260,18 @@ class BaseTrainer(ABC):
             # backup the previous epoch
             # ========================= #
             if count > 0 and conf['trainer']['save_backup_weights']:
-                # checkpoint.pt
-                shutil.copyfile(os.path.join(save_loc, "checkpoint.pt"),
-                                os.path.join(save_loc, "backup_checkpoint.pt"))
-
-                # model_checkpoint.pt and optimizer_checkpoint.pt
-                if conf["trainer"]["mode"] == "fsdp":
-                    shutil.copyfile(os.path.join(save_loc, "model_checkpoint.pt"),
-                                    os.path.join(save_loc, "backup_model_checkpoint.pt"))
-                    
-                    shutil.copyfile(os.path.join(save_loc, "optimizer_checkpoint.pt"),
-                                    os.path.join(save_loc, "backup_optimizer_checkpoint.pt"))
+                if self.rank == 0:
+                    # checkpoint.pt
+                    shutil.copyfile(os.path.join(save_loc, "checkpoint.pt"),
+                                    os.path.join(save_loc, "backup_checkpoint.pt"))
+    
+                    # model_checkpoint.pt and optimizer_checkpoint.pt
+                    if conf["trainer"]["mode"] == "fsdp":
+                        shutil.copyfile(os.path.join(save_loc, "model_checkpoint.pt"),
+                                        os.path.join(save_loc, "backup_model_checkpoint.pt"))
+                        
+                        shutil.copyfile(os.path.join(save_loc, "optimizer_checkpoint.pt"),
+                                        os.path.join(save_loc, "backup_optimizer_checkpoint.pt"))
             
             logger.info(f"Beginning epoch {epoch}")
 
@@ -331,17 +336,46 @@ class BaseTrainer(ABC):
             # Put things into a results dictionary -> dataframe
 
             results_dict["epoch"].append(epoch)
-            for name in ["loss", "acc", "mae"]:
+
+            # Save metrics for select variables
+
+            if isinstance(save_metric_vars, list) and len(save_metric_vars) > 0:
+                names = [key.replace("train_", "") for key in train_results.keys() if any(var in key for var in save_metric_vars)]
+                # print(names)
+            elif isinstance(save_metric_vars, bool) and save_metric_vars:
+                names = [key.replace("train_", "") for key in train_results.keys()]
+            else:
+                names = ["loss", "acc", "mae"]
+
+            for name in names:
                 results_dict[f"train_{name}"].append(np.mean(train_results[f"train_{name}"]))
+                if skip_validation:
+                    continue
                 results_dict[f"valid_{name}"].append(np.mean(valid_results[f"valid_{name}"]))
-            results_dict['train_forecast_len'].append(np.mean(train_results['train_forecast_len']))
+            if 'train_forecast_len' in train_results:
+                results_dict['train_forecast_len'].append(np.mean(train_results['train_forecast_len']))
+            if 'valid_forecast_len' in valid_results:
+                results_dict['valid_forecast_len'].append(np.mean(valid_results['valid_forecast_len']))
             results_dict["lr"].append(optimizer.param_groups[0]["lr"])
 
-            df = pd.DataFrame.from_dict(results_dict).reset_index()
+            # Create pandas df
+
+            # Find the maximum length among all lists
+            max_len = max(len(lst) for lst in results_dict.values())
+
+            # Prepend NaNs to lists that are shorter than max_len
+            padded_dict = OrderedDict()
+            for key, lst in results_dict.items():
+                if len(lst) < max_len:
+                    padded_dict[key] = [np.nan] * (max_len - len(lst)) + lst
+                else:
+                    padded_dict[key] = lst
+
+            df = pd.DataFrame.from_dict(padded_dict).reset_index()
 
             # Save the dataframe to disk
 
-            if trial:
+            if trial:  # If using ECHO-opt, save to the trial_results directory
                 df.to_csv(
                     os.path.join(f"{save_loc}", "trial_results", f"training_log_{trial.number}.csv"),
                     index=False,
@@ -422,23 +456,24 @@ class BaseTrainer(ABC):
                 # backup the best epoch
                 # ==================== #
                 if offset == 0 and conf['trainer']['save_best_weights']:
-                    # checkpoint.pt
-                    shutil.copyfile(
-                        os.path.join(save_loc, "checkpoint.pt"),
-                        os.path.join(save_loc, "best_checkpoint.pt")
-                    )
-    
-                    # model_checkpoint.pt and optimizer_checkpoint.pt
-                    if conf["trainer"]["mode"] == "fsdp":
+                    if self.rank == 0:
+                        # checkpoint.pt
                         shutil.copyfile(
-                            os.path.join(save_loc, "model_checkpoint.pt"),
-                            os.path.join(save_loc, "best_model_checkpoint.pt")
+                            os.path.join(save_loc, "checkpoint.pt"),
+                            os.path.join(save_loc, "best_checkpoint.pt")
                         )
-                        
-                        shutil.copyfile(
-                            os.path.join(save_loc, "optimizer_checkpoint.pt"),
-                            os.path.join(save_loc, "best_optimizer_checkpoint.pt")
-                        )
+        
+                        # model_checkpoint.pt and optimizer_checkpoint.pt
+                        if conf["trainer"]["mode"] == "fsdp":
+                            shutil.copyfile(
+                                os.path.join(save_loc, "model_checkpoint.pt"),
+                                os.path.join(save_loc, "best_model_checkpoint.pt")
+                            )
+                            
+                            shutil.copyfile(
+                                os.path.join(save_loc, "optimizer_checkpoint.pt"),
+                                os.path.join(save_loc, "best_optimizer_checkpoint.pt")
+                            )
                     
                 # ==================== #
                 # early stopping block
@@ -454,8 +489,6 @@ class BaseTrainer(ABC):
             if 'stop_after_epoch' in conf['trainer']:
                 if conf['trainer']['stop_after_epoch']:
                     break
-
-        training_metric = "train_loss" if skip_validation else "valid_loss"
         
         best_epoch = [
             i for i, j in enumerate(results_dict[training_metric]) if j == direction(results_dict[training_metric])

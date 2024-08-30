@@ -32,6 +32,7 @@ dependencies:
   - pyg
   - xesmf
   - pip:
+    - mpi4py
     - einops
     - echo-opt
     - bridgescaler
