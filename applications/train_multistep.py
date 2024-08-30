@@ -440,9 +440,9 @@ def main(rank, world_size, conf, backend, trial=False):
         shuffle=False,
         sampler=valid_sampler,
         pin_memory=False,
-        num_workers=0,  # multiprocessing is handled in the dataset
+        num_workers=1,  # multiprocessing is handled in the dataset
         drop_last=True,
-        # prefetch_factor=8
+        prefetch_factor=8
     )
 
     # model
