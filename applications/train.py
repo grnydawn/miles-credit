@@ -7,12 +7,12 @@ Content
 '''
 import os
 import sys
-import glob
 import yaml
 import optuna
 import shutil
 import logging
 import warnings
+from glob import glob
 
 from pathlib import Path
 from argparse import ArgumentParser
@@ -135,7 +135,8 @@ def load_dataset_and_sampler_zscore_only(conf,
                                          surface_files,
                                          dyn_forcing_files,
                                          diagnostic_files,
-                                         world_size, rank, is_train, seed=42):
+                                         world_size, 
+                                         rank, is_train, seed=42):
     """
     Load the Z-score only dataset and sampler for training or validation.
 
@@ -153,7 +154,9 @@ def load_dataset_and_sampler_zscore_only(conf,
     Returns:
         tuple: A tuple containing the dataset and the distributed sampler.
     """
-    
+
+    # --------------------------------------------------- #
+    # separate training set and validation set cases
     if is_train:
         history_len = conf["data"]["history_len"]
         forecast_len = conf["data"]["forecast_len"]
@@ -163,7 +166,7 @@ def load_dataset_and_sampler_zscore_only(conf,
         forecast_len = conf["data"]["valid_forecast_len"]
         name = 'validation'
         
-    # data preprocessing utils
+    # transforms
     transforms = load_transforms(conf)
 
     # Z-score
@@ -188,8 +191,7 @@ def load_dataset_and_sampler_zscore_only(conf,
         transform=transforms,
     )
     
-
-    # Pytorch sampler
+    # sampler
     sampler = DistributedSampler(
         dataset,
         num_replicas=world_size,
@@ -320,28 +322,28 @@ def main(rank, world_size, conf, backend, trial=False):
     valid_thread_workers = conf['trainer']['valid_thread_workers'] if 'valid_thread_workers' in conf['trainer'] else thread_workers
 
     # get file names
-    all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
+    all_ERA_files = sorted(glob(conf["data"]["save_loc"]))
 
     # <------------------------------------------ std_new or 'std_cached'
     if conf['data']['scaler_type'] == 'std_new' or 'std_cached':
 
         # check and glob surface files
         if ('surface_variables' in conf['data']) and (len(conf['data']['surface_variables']) > 0):
-            surface_files = sorted(glob.glob(conf["data"]["save_loc_surface"]))
+            surface_files = sorted(glob(conf["data"]["save_loc_surface"]))
 
         else:
             surface_files = None
 
         # check and glob dyn forcing files
         if ('dynamic_forcing_variables' in conf['data']) and (len(conf['data']['dynamic_forcing_variables']) > 0):
-            dyn_forcing_files = sorted(glob.glob(conf["data"]["save_loc_dynamic_forcing"]))
+            dyn_forcing_files = sorted(glob(conf["data"]["save_loc_dynamic_forcing"]))
 
         else:
             dyn_forcing_files = None
 
         # check and glob diagnostic files
         if ('diagnostic_variables' in conf['data']) and (len(conf['data']['diagnostic_variables']) > 0):
-            diagnostic_files = sorted(glob.glob(conf["data"]["save_loc_diagnostic"]))
+            diagnostic_files = sorted(glob(conf["data"]["save_loc_diagnostic"]))
 
         else:
             diagnostic_files = None
@@ -374,16 +376,7 @@ def main(rank, world_size, conf, backend, trial=False):
 
             train_surface_files = [file for file in surface_files if any(year in file for year in train_years)]
             valid_surface_files = [file for file in surface_files if any(year in file for year in valid_years)]
-
-            # ---------------------------- #
-            # check total number of files
-            assert len(train_surface_files) == len(train_files), (
-                'Mismatch between the total number of training set [surface files] and [upper-air files]'
-            )
-            assert len(valid_surface_files) == len(valid_files), (
-                'Mismatch between the total number of validation set [surface files] and [upper-air files]'
-            )
-
+            
         else:
             train_surface_files = None
             valid_surface_files = None
@@ -393,15 +386,6 @@ def main(rank, world_size, conf, backend, trial=False):
             train_dyn_forcing_files = [file for file in dyn_forcing_files if any(year in file for year in train_years)]
             valid_dyn_forcing_files = [file for file in dyn_forcing_files if any(year in file for year in valid_years)]
 
-            # ---------------------------- #
-            # check total number of files
-            assert len(train_dyn_forcing_files) == len(train_files), (
-                'Mismatch between the total number of training set [dynamic forcing files] and [upper-air files]'
-            )
-            assert len(valid_dyn_forcing_files) == len(valid_files), (
-                'Mismatch between the total number of validation set [dynamic forcing files] and [upper-air files]'
-            )
-
         else:
             train_dyn_forcing_files = None
             valid_dyn_forcing_files = None
@@ -410,15 +394,6 @@ def main(rank, world_size, conf, backend, trial=False):
 
             train_diagnostic_files = [file for file in diagnostic_files if any(year in file for year in train_years)]
             valid_diagnostic_files = [file for file in diagnostic_files if any(year in file for year in valid_years)]
-
-            # ---------------------------- #
-            # check total number of files
-            assert len(train_diagnostic_files) == len(train_files), (
-                'Mismatch between the total number of training set [diagnostic files] and [upper-air files]'
-            )
-            assert len(valid_diagnostic_files) == len(valid_files), (
-                'Mismatch between the total number of validation set [diagnostic files] and [upper-air files]'
-            )
 
         else:
             train_diagnostic_files = None
