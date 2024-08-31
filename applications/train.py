@@ -391,8 +391,8 @@ def main(rank, world_size, conf, backend, trial=False):
     # get file names
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
 
-    # <------------------------------------------ std_new
-    if conf['data']['scaler_type'] == 'std_new':
+    # <------------------------------------------ std_new or 'std_cached'
+    if conf['data']['scaler_type'] == 'std_new' or 'std_cached':
 
         # check and glob surface files
         if ('surface_variables' in conf['data']) and (len(conf['data']['surface_variables']) > 0):
@@ -436,8 +436,8 @@ def main(rank, world_size, conf, backend, trial=False):
     train_files = [file for file in all_ERA_files if any(year in file for year in train_years)]
     valid_files = [file for file in all_ERA_files if any(year in file for year in valid_years)]
 
-    # <----------------------------------- std_new
-    if conf['data']['scaler_type'] == 'std_new':
+    # <----------------------------------- std_new or 'std_cached'
+    if conf['data']['scaler_type'] == 'std_new' or 'std_cached':
 
         if surface_files is not None:
 
@@ -494,8 +494,8 @@ def main(rank, world_size, conf, backend, trial=False):
             valid_diagnostic_files = None
 
     # load dataset and sampler
-    # <----------------------------------- std_new
-    if conf['data']['scaler_type'] == 'std_new':
+    # <----------------------------------- std_new or 'std_cached'
+    if conf['data']['scaler_type'] == 'std_new' or 'std_cached':
         # training set and sampler
         train_dataset, train_sampler = load_dataset_and_sampler_zscore_only(conf,
                                                                             train_files,
@@ -702,7 +702,7 @@ if __name__ == "__main__":
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
     # ======================================================== #
-    if conf['data']['scaler_type'] == 'std_new':
+    if conf['data']['scaler_type'] == 'std_new' or 'std_cached':
         conf = CREDIT_main_parser(conf, parse_training=True, parse_predict=False, print_summary=False)
         training_data_check(conf, print_summary=False)
     # ======================================================== #
