@@ -73,101 +73,37 @@ def load_dataset_and_sampler(conf,
     Returns:
         tuple: A tuple containing the dataset and the distributed sampler.
     """
-
-    # convert $USER to the actual user name
-    conf['save_loc'] = os.path.expandvars(conf['save_loc'])
-
-    # ======================================================== #
-    # parse intputs
-
-    # upper air variables
-    varname_upper_air = conf['data']['variables']
-
-    if ('forcing_variables' in conf['data']) and (len(conf['data']['forcing_variables']) > 0):
-        forcing_files = conf['data']['save_loc_forcing']
-        varname_forcing = conf['data']['forcing_variables']
-    else:
-        forcing_files = None
-        varname_forcing = None
-
-    if ('static_variables' in conf['data']) and (len(conf['data']['static_variables']) > 0):
-        static_files = conf['data']['save_loc_static']
-        varname_static = conf['data']['static_variables']
-    else:
-        static_files = None
-        varname_static = None
-
-    # get surface variable names
-    if surface_files is not None:
-        varname_surface = conf['data']['surface_variables']
-    else:
-        varname_surface = None
-
-    # get dynamic forcing variable names
-    if dyn_forcing_files is not None:
-        varname_dyn_forcing = conf['data']['dynamic_forcing_variables']
-    else:
-        varname_dyn_forcing = None
-
-    # get diagnostic variable names
-    if diagnostic_files is not None:
-        varname_diagnostic = conf['data']['diagnostic_variables']
-    else:
-        varname_diagnostic = None
-
-    # number of previous lead time inputs
-    history_len = conf["data"]["history_len"]
-    valid_history_len = conf["data"]["valid_history_len"]
-
-    # number of lead times to forecast
-    forecast_len = conf["data"]["forecast_len"]
-    valid_forecast_len = conf["data"]["valid_forecast_len"]
-
+    
     if is_train:
-        history_len = history_len
-        forecast_len = forecast_len
+        history_len = conf["data"]["history_len"]
+        forecast_len = conf["data"]["forecast_len"]
         name = "training"
     else:
-        history_len = valid_history_len
-        forecast_len = valid_forecast_len
+        history_len = conf["data"]["valid_history_len"]
+        forecast_len = conf["data"]["valid_forecast_len"]
         name = 'validation'
-
-    # max_forecast_len
-    if "max_forecast_len" not in conf["data"]:
-        max_forecast_len = None
-    else:
-        max_forecast_len = conf["data"]["max_forecast_len"]
-
-    # skip_periods
-    if "skip_periods" not in conf["data"]:
-        skip_periods = None
-    else:
-        skip_periods = conf["data"]["skip_periods"]
-
-    # # shufle
-    # shuffle = is_train
-
+        
     # data preprocessing utils
     transforms = load_transforms(conf)
 
     # Z-score
     dataset = ERA5_and_Forcing_MultiStep(
-        varname_upper_air=varname_upper_air,
-        varname_surface=varname_surface,
-        varname_dyn_forcing=varname_dyn_forcing,
-        varname_forcing=varname_forcing,
-        varname_static=varname_static,
-        varname_diagnostic=varname_diagnostic,
+        varname_upper_air=conf['data']['variables'],
+        varname_surface=conf['data']['surface_variables'],
+        varname_dyn_forcing=conf['data']['dynamic_forcing_variables'],
+        varname_forcing=conf['data']['forcing_variables'],
+        varname_static=conf['data']['static_variables'],
+        varname_diagnostic=conf['data']['diagnostic_variables'],
         filenames=all_ERA_files,
         filename_surface=surface_files,
         filename_dyn_forcing=dyn_forcing_files,
-        filename_forcing=forcing_files,
-        filename_static=static_files,
+        filename_forcing=conf['data']['save_loc_forcing'],
+        filename_static=conf['data']['save_loc_static'],
         filename_diagnostic=diagnostic_files,
         history_len=history_len,
         forecast_len=forecast_len,
-        skip_periods=skip_periods,
-        max_forecast_len=max_forecast_len,
+        skip_periods=conf["data"]["skip_periods"],
+        max_forecast_len=conf["data"]["max_forecast_len"],
         transform=transforms,
         rank=rank,
         world_size=world_size,
