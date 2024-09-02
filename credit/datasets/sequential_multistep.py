@@ -111,92 +111,115 @@ class DistributedSequentialDataset(torch.utils.data.IterableDataset):
         # max possible forecast len
         self.max_forecast_len = max_forecast_len
 
-        # ======================================================== #
-        # ERA5 operations
+        # =================================================================== #
+        # flags to determin if any of the [surface, dyn_forcing, diagnostics]
+        # variable groups share the same file as upper air variables
+        flag_share_surf = False
+        flag_share_dyn = False
+        flag_share_diag = False
+        
         all_files = []
         filenames = sorted(filenames)
 
+        # ------------------------------------------------------------------ #
+        # blocks that can handle no-sharing (each group has it own file)
+        ## surface
+        if filename_surface is not None:
+            surface_files = []
+            filename_surface = sorted(filename_surface)
+            
+            if filenames == filename_surface:
+                flag_share_surf = True
+            else:
+                for fn in filename_surface:
+    
+                    # drop variables if they are not in the config
+                    ds = get_forward_data(filename=fn)
+                    ds_surf = drop_var_from_dataset(ds, varname_surface)
+                    surface_files.append(ds_surf)
+                    
+                self.surface_files = surface_files
+        else:
+            self.surface_files = False
+            
+        ## dynamic forcing
+        if filename_dyn_forcing is not None:
+            dyn_forcing_files = []
+            filename_dyn_forcing = sorted(filename_dyn_forcing)
+            
+            if filenames == filename_dyn_forcing:
+                flag_share_dyn = True
+            else:
+                for fn in filename_dyn_forcing:
+    
+                    # drop variables if they are not in the config
+                    ds = get_forward_data(filename=fn)
+                    ds_dyn = drop_var_from_dataset(ds, varname_dyn_forcing)
+                    dyn_forcing_files.append(ds_dyn)
+    
+                self.dyn_forcing_files = dyn_forcing_files
+        else:
+            self.dyn_forcing_files = False
+
+        ## diagnostics
+        if filename_diagnostic is not None:
+            diagnostic_files = []
+            filename_diagnostic = sorted(filename_diagnostic)
+
+            if filenames == filename_diagnostic:
+                flag_share_diag = True
+            else:
+                for fn in filename_diagnostic:
+    
+                    # drop variables if they are not in the config
+                    ds = get_forward_data(filename=fn)
+                    ds_diag = drop_var_from_dataset(ds, varname_diagnostic)
+                    diagnostic_files.append(ds_diag)
+                    
+                self.diagnostic_files = diagnostic_files
+        else:
+            self.diagnostic_files = False
+
+        # ------------------------------------------------------------------ #
+        # blocks that can handle file sharing (share with upper air file)
         for fn in filenames:
             # drop variables if they are not in the config
-            xarray_dataset = get_forward_data(filename=fn)
-            xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_upper_air)
+            ds = get_forward_data(filename=fn)
+            ds_upper = drop_var_from_dataset(ds, varname_upper_air)
+            
+            if flag_share_surf:
+                ds_surf = drop_var_from_dataset(ds, varname_surface)
+                surface_files.append(ds_surf)
 
-            # collect yearly datasets within a list
-            all_files.append(xarray_dataset)
+            if flag_share_dyn:
+                ds_dyn = drop_var_from_dataset(ds, varname_dyn_forcing)
+                dyn_forcing_files.append(ds_dyn)
 
+            if flag_share_diag:
+                ds_diag = drop_var_from_dataset(ds, varname_diagnostic)
+                diagnostic_files.append(ds_diag)
+                
+            all_files.append(ds_upper)
+            
         self.all_files = all_files
+        
+        if flag_share_surf:
+            self.surface_files = surface_files
+        if flag_share_dyn:
+            self.dyn_forcing_files = dyn_forcing_files
+        if flag_share_diag:
+            self.diagnostic_files = diagnostic_files
 
+        # -------------------------------------------------------------------------- #
         # get sample indices from ERA5 upper-air files:
         ind_start = 0
-        self.ERA5_indices = {}  # <------ change
+        self.ERA5_indices = {} # <------ change
         for ind_file, ERA5_xarray in enumerate(self.all_files):
             # [number of samples, ind_start, ind_end]
             self.ERA5_indices[str(ind_file)] = [len(ERA5_xarray['time']),
                                                 ind_start,
                                                 ind_start + len(ERA5_xarray['time'])]
             ind_start += len(ERA5_xarray['time']) + 1
-
-        # ======================================================== #
-        # surface files
-        if filename_surface is not None:
-
-            surface_files = []
-            filename_surface = sorted(filename_surface)
-
-            for fn in filename_surface:
-
-                # drop variables if they are not in the config
-                xarray_dataset = get_forward_data(filename=fn)
-                xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_surface)
-
-                surface_files.append(xarray_dataset)
-
-            self.surface_files = surface_files
-
-        else:
-            self.surface_files = False
-
-        # ======================================================== #
-        # dynamic forcing files
-        if filename_dyn_forcing is not None:
-
-            dyn_forcing_files = []
-            filename_dyn_forcing = sorted(filename_dyn_forcing)
-
-            for fn in filename_dyn_forcing:
-
-                # drop variables if they are not in the config
-                xarray_dataset = get_forward_data(filename=fn)
-                xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_dyn_forcing)
-
-                dyn_forcing_files.append(xarray_dataset)
-
-            self.dyn_forcing_files = dyn_forcing_files
-
-        else:
-            self.dyn_forcing_files = False
-
-        # ======================================================== #
-        # diagnostic file
-        self.filename_diagnostic = filename_diagnostic
-
-        if self.filename_diagnostic is not None:
-
-            diagnostic_files = []
-            filename_diagnostic = sorted(filename_diagnostic)
-
-            for fn in filename_diagnostic:
-
-                # drop variables if they are not in the config
-                xarray_dataset = get_forward_data(filename=fn)
-                xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_diagnostic)
-
-                diagnostic_files.append(xarray_dataset)
-
-            self.diagnostic_files = diagnostic_files
-
-        else:
-            self.diagnostic_files = False
 
         # ======================================================== #
         # forcing file
