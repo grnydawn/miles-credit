@@ -143,7 +143,6 @@ def load_model_states_and_optimizer(conf, model, device):
     conf['save_loc'] = save_loc = os.path.expandvars(conf['save_loc'])
 
     # training hyperparameters
-    start_epoch = conf['trainer']['start_epoch']
     learning_rate = float(conf['trainer']['learning_rate'])
     weight_decay = float(conf['trainer']['weight_decay'])
     amp = conf['trainer']['amp']
@@ -189,12 +188,12 @@ def load_model_states_and_optimizer(conf, model, device):
         scheduler = load_scheduler(optimizer, conf)
         scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
 
-        if scheduler is not None:
-            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-
         # Update the config file to the current epoch
         if "reload_epoch" in conf["trainer"] and conf["trainer"]["reload_epoch"]:
             conf["trainer"]["start_epoch"] = checkpoint["epoch"] + 1
+
+        if scheduler is not None:
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
 
         scaler.load_state_dict(checkpoint['scaler_state_dict'])
 
