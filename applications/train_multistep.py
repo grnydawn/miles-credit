@@ -431,7 +431,7 @@ def main(rank, world_size, conf, backend, trial=False):
         persistent_workers=False,
         num_workers=1,  # multiprocessing is handled in the dataset
         drop_last=True,
-        prefetch_factor=8
+        prefetch_factor=4
     )
 
     valid_loader = torch.utils.data.DataLoader(
@@ -442,7 +442,7 @@ def main(rank, world_size, conf, backend, trial=False):
         pin_memory=False,
         num_workers=1,  # multiprocessing is handled in the dataset
         drop_last=True,
-        prefetch_factor=8
+        prefetch_factor=4
     )
 
     # model

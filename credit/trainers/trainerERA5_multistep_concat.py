@@ -204,6 +204,12 @@ class Trainer(BaseTrainer):
                 optimizer.zero_grad()
 
             # Metrics
+
+            # for now just compute metrics on the last predicted state 
+            # as means for comparing against the more mem efficient v2
+            y_true = forecast_arrays["y_true"][-1]
+            y_pred = forecast_arrays["y_pred"][-1]
+
             metrics_dict = metrics(y_pred.float(), y_true.float())
             for name, value in metrics_dict.items():
                 value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
@@ -381,6 +387,12 @@ class Trainer(BaseTrainer):
             results_dict["valid_loss"].append(batch_loss[0].item())
 
             # Metrics
+
+            # for now just compute metrics on the last predicted state 
+            # as means for comparing against the more mem efficient v2
+            y_true = forecast_arrays["y_true"][-1]
+            y_pred = forecast_arrays["y_pred"][-1]
+
             metrics_dict = metrics(y_pred.float(), y_true.float())
             for name, value in metrics_dict.items():
                 value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
@@ -402,105 +414,6 @@ class Trainer(BaseTrainer):
                 batch_group_generator.update(1)
                 batch_group_generator.set_description(to_print)
 
-        '''
-        stop_forecast = False
-        forecast_arrays = defaultdict(list)
-        with torch.no_grad():
-            for k, batch in enumerate(valid_loader):
-
-                y_pred = None  # Place holder that gets updated after first roll-out
-                for _, forecast_step in enumerate(batch["forecast_step"]):
-
-                    if forecast_step == 1:
-                        # Initialize x and x_surf with the first time step
-                        if "x_surf" in batch:
-                            # combine x and x_surf
-                            # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon)
-                            # output: (batch_num, var, time, lat, lon), 'x' first and then 'x_surf'
-                            x = self.model.concat_and_reshape(batch["x"], batch["x_surf"]).to(self.device).float()
-                        else:
-                            # no x_surf
-                            x = reshape_only(batch["x"]).to(self.device).float()
-
-                    # add forcing and static variables (regardless of fcst hours)
-                    if 'x_forcing_static' in batch:
-
-                        # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
-                        x_forcing_batch = batch['x_forcing_static'].to(self.device).permute(0, 2, 1, 3, 4).float()
-
-                        # concat on var dimension
-                        x = torch.cat((x, x_forcing_batch), dim=1)
-
-                    y_pred = self.model(x)
-
-                    # stop after user-defined number of steps
-                    if forecast_step == (forecast_len + 1):
-                        if "y_surf" in batch:
-                            y = concat_and_reshape(batch["y"], batch["y_surf"]).to(self.device)
-                        else:
-                            y = reshape_only(batch["y"]).to(self.device)
-
-                        if 'y_diag' in batch:
-
-                            # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
-                            y_diag_batch = batch['y_diag'].to(self.device).permute(0, 2, 1, 3, 4).float()
-
-                            # concat on var dimension
-                            y = torch.cat((y, y_diag_batch), dim=1)
-
-                        stop_forecast = True
-                        break
-                    elif history_len == 1:
-                        x = y_pred.detach()
-                    else:
-                        # use multiple past forecast steps as inputs
-                        # static channels will get updated on next pass
-                        static_dim_size = abs(x.shape[1] - y_pred.shape[1])
-
-                        # if static_dim_size=0 then :0 gives empty range
-                        x_detach = x[:, :-static_dim_size, 1:].detach() if static_dim_size else x[:, :, 1:].detach()
-                        x = torch.cat([x_detach, y_pred.detach()], dim=2)
-
-                if not stop_forecast:
-                    continue
-
-                # Aggregate the true and predicted states
-                y_pred = torch.cat(forecast_arrays["y_pred"], axis=1)
-                y_true = torch.cat(forecast_arrays["y_true"], axis=1)
-                loss = criterion(y_true.to(y_pred.dtype), y_pred).mean()
-
-                # Total loss
-                batch_loss = torch.Tensor([loss.item()]).cuda(self.device)
-                if distributed:
-                    torch.distributed.barrier()
-                results_dict["valid_loss"].append(batch_loss[0].item())
-
-                # Metrics
-                metrics_dict = metrics(y_pred.float(), y.float())
-                for name, value in metrics_dict.items():
-                    value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
-                    if distributed:
-                        dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
-                    results_dict[f"valid_{name}"].append(value[0].item())
-
-                stop_forecast = False
-                forecast_arrays = defaultdict(list)
-
-                # print to tqdm
-                to_print = "Epoch: {} valid_loss: {:.6f} valid_acc: {:.6f} valid_mae: {:.6f}".format(
-                    epoch,
-                    np.mean(results_dict["valid_loss"]),
-                    np.mean(results_dict["valid_acc"]),
-                    np.mean(results_dict["valid_mae"])
-                )
-                if self.rank == 0:
-                    batch_group_generator.update(1)
-                    batch_group_generator.set_description(to_print)
-
-                # if k // history_len >= valid_batches_per_epoch and k > 0:
-                #     break
-
-        '''
         # Shutdown the progbar
         batch_group_generator.close()
 

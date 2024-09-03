@@ -42,7 +42,7 @@ class Trainer(BaseTrainer):
         train_one_epoch(epoch, conf, trainloader, optimizer, criterion, scaler, 
                         scheduler, metrics):
             Perform training for one epoch and return training metrics.
-        
+
         validate(epoch, conf, valid_loader, criterion, metrics):
             Validate the model on the validation dataset and return validation metrics.
 
@@ -194,8 +194,6 @@ class Trainer(BaseTrainer):
                         break
 
                 # scale, accumulate, backward
-                # scaler.scale(loss).backward()
-                # accum_log(logs, {'loss': loss.item()})
 
                 if distributed:
                     torch.distributed.barrier()
@@ -258,7 +256,7 @@ class Trainer(BaseTrainer):
         criterion,
         metrics
     ):
-        
+
         """
         Validates the model on the validation dataset.
 
