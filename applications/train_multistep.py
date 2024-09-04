@@ -192,80 +192,172 @@ def load_dataset_and_sampler(conf,
 def load_model_states_and_optimizer(conf, model, device):
     """
     Load the model states, optimizer, scheduler, and gradient scaler.
-
-    Args:
-        conf (dict): Configuration dictionary containing training parameters.
-        model (torch.nn.Module): The model to be trained.
-        device (torch.device): The device (CPU or GPU) where the model is located.
-
-    Returns:
-        tuple: A tuple containing the updated configuration, model, optimizer, scheduler, and scaler.
     """
+    save_loc = os.path.expandvars(conf['save_loc'])
+    trainer_conf = conf['trainer']
 
-    # convert $USER to the actual user name
-    conf['save_loc'] = save_loc = os.path.expandvars(conf['save_loc'])
+    learning_rate = float(trainer_conf['learning_rate'])
+    weight_decay = float(trainer_conf['weight_decay'])
+    amp = trainer_conf['amp']
 
-    # training hyperparameters
-    learning_rate = float(conf['trainer']['learning_rate'])
-    weight_decay = float(conf['trainer']['weight_decay'])
-    amp = conf['trainer']['amp']
+    load_weights = trainer_conf.get('load_weights', False)
+    load_optimizer = trainer_conf.get('load_optimizer', False)
+    load_scaler = trainer_conf.get('load_scaler', False)
+    load_scheduler_flag = trainer_conf.get('load_scheduler', False)
 
-    # load weights falg
-    load_weights = False if 'load_weights' not in conf['trainer'] else conf['trainer']['load_weights']
+    is_fsdp = trainer_conf["mode"] == "fsdp"
+    is_ddp = trainer_conf["mode"] == "ddp"
 
-    #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
-    if not load_weights:  # Loaded after loading model weights when reloading
-        optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
-        if conf["trainer"]["mode"] == "fsdp":
-            optimizer = FSDPOptimizerWrapper(optimizer, model)
-        scheduler = load_scheduler(optimizer, conf)
-        scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
+    if is_fsdp:
+        optimizer = FSDPOptimizerWrapper(optimizer, model)
 
-    # load optimizer and grad scaler states
-    else:
-        ckpt = os.path.join(save_loc, "checkpoint.pt")
-        checkpoint = torch.load(ckpt, map_location=device)
+    scheduler = load_scheduler(optimizer, conf)
+    scaler = ShardedGradScaler(enabled=amp) if is_fsdp else GradScaler(enabled=amp)
 
-        # FSDP checkpoint settings
-        if conf["trainer"]["mode"] == "fsdp":
+    if load_weights or any([load_optimizer, load_scaler, load_scheduler_flag]):
+        if is_fsdp:
             logging.info(f"Loading FSDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-            optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
-            optimizer = FSDPOptimizerWrapper(optimizer, model)
             checkpoint_io = TorchFSDPCheckpointIO()
             checkpoint_io.load_unsharded_model(model, os.path.join(save_loc, "model_checkpoint.pt"))
-            if 'load_optimizer' in conf['trainer'] and conf['trainer']['load_optimizer']:
+            if load_optimizer:
                 checkpoint_io.load_unsharded_optimizer(optimizer, os.path.join(save_loc, "optimizer_checkpoint.pt"))
-
         else:
-            # DDP settings
-            if conf["trainer"]["mode"] == "ddp":
+            ckpt = os.path.join(save_loc, "checkpoint.pt")
+            checkpoint = torch.load(ckpt, map_location=device)
+
+            if is_ddp:
                 logging.info(f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
                 model.module.load_state_dict(checkpoint["model_state_dict"])
             else:
                 logging.info(f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
                 model.load_state_dict(checkpoint["model_state_dict"])
-            optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
-            if 'load_optimizer' in conf['trainer'] and conf['trainer']['load_optimizer']:
+
+            if load_optimizer:
                 optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
-        scheduler = load_scheduler(optimizer, conf)
-        scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
+            if trainer_conf.get("reload_epoch", False):
+                conf["trainer"]["start_epoch"] = checkpoint["epoch"] + 1
 
-        # Update the config file to the current epoch
-        if "reload_epoch" in conf["trainer"] and conf["trainer"]["reload_epoch"]:
-            conf["trainer"]["start_epoch"] = checkpoint["epoch"] + 1
+            if conf["trainer"]["start_epoch"] > 0:
+                if scheduler is not None and load_scheduler_flag:
+                    scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+                if load_scaler:
+                    scaler.load_state_dict(checkpoint['scaler_state_dict'])
 
-        if scheduler is not None:
-            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-
-        scaler.load_state_dict(checkpoint['scaler_state_dict'])
-
-    # Enable updating the lr if not using a policy
-    if (conf["trainer"]["update_learning_rate"] if "update_learning_rate" in conf["trainer"] else False):
+    if trainer_conf.get("update_learning_rate", False):
         for param_group in optimizer.param_groups:
             param_group['lr'] = learning_rate
 
     return conf, model, optimizer, scheduler, scaler
+
+# def load_model_states_and_optimizer(conf, model, device):
+#     """
+#     Load the model states, optimizer, scheduler, and gradient scaler.
+
+#     Args:
+#         conf (dict): Configuration dictionary containing training parameters.
+#         model (torch.nn.Module): The model to be trained.
+#         device (torch.device): The device (CPU or GPU) where the model is located.
+
+#     Returns:
+#         tuple: A tuple containing the updated configuration, model, optimizer, scheduler, and scaler.
+#     """
+
+#     # convert $USER to the actual user name
+#     conf['save_loc'] = save_loc = os.path.expandvars(conf['save_loc'])
+
+#     # training hyperparameters
+#     learning_rate = float(conf['trainer']['learning_rate'])
+#     weight_decay = float(conf['trainer']['weight_decay'])
+#     amp = conf['trainer']['amp']
+
+#     # load weights / states flags
+#     load_weights = False if 'load_weights' not in conf['trainer'] else conf['trainer']['load_weights']
+#     load_optimizer_conf = False if 'load_optimizer' not in conf['trainer'] else conf['trainer']['load_optimizer']
+#     load_scaler_conf = False if 'load_scaler' not in conf['trainer'] else conf['trainer']['load_scaler']
+#     load_scheduler_conf = False if 'load_scheduler' not in conf['trainer'] else conf['trainer']['load_scheduler']
+
+#     #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
+#     if not load_weights:  # Loaded after loading model weights when reloading
+#         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
+#         if conf["trainer"]["mode"] == "fsdp":
+#             optimizer = FSDPOptimizerWrapper(optimizer, model)
+#         scheduler = load_scheduler(optimizer, conf)
+#         scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
+
+#     # Multi-step training case -- when starting, only load the model weights (then after load all states)
+#     elif load_weights and not (load_optimizer_conf or load_scaler_conf or load_scheduler_conf):
+#         optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
+#         # FSDP checkpoint settings
+#         if conf["trainer"]["mode"] == "fsdp":
+#             logging.info(f"Loading FSDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+#             optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
+#             optimizer = FSDPOptimizerWrapper(optimizer, model)
+#             checkpoint_io = TorchFSDPCheckpointIO()
+#             checkpoint_io.load_unsharded_model(model, os.path.join(save_loc, "model_checkpoint.pt"))
+#         else:
+#             # DDP settings
+#             ckpt = os.path.join(save_loc, "checkpoint.pt")
+#             checkpoint = torch.load(ckpt, map_location=device)
+#             if conf["trainer"]["mode"] == "ddp":
+#                 logging.info(f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+#                 model.module.load_state_dict(checkpoint["model_state_dict"])
+#             else:
+#                 logging.info(f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+#                 model.load_state_dict(checkpoint["model_state_dict"])
+#         # Load the learning rate scheduler and mixed precision grad scaler
+#         scheduler = load_scheduler(optimizer, conf)
+#         scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
+
+#     # load optimizer and grad scaler states
+#     else:
+#         ckpt = os.path.join(save_loc, "checkpoint.pt")
+#         checkpoint = torch.load(ckpt, map_location=device)
+
+#         # FSDP checkpoint settings
+#         if conf["trainer"]["mode"] == "fsdp":
+#             logging.info(f"Loading FSDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+#             optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
+#             optimizer = FSDPOptimizerWrapper(optimizer, model)
+#             checkpoint_io = TorchFSDPCheckpointIO()
+#             checkpoint_io.load_unsharded_model(model, os.path.join(save_loc, "model_checkpoint.pt"))
+#             if 'load_optimizer' in conf['trainer'] and conf['trainer']['load_optimizer']:
+#                 checkpoint_io.load_unsharded_optimizer(optimizer, os.path.join(save_loc, "optimizer_checkpoint.pt"))
+
+#         else:
+#             # DDP settings
+#             if conf["trainer"]["mode"] == "ddp":
+#                 logging.info(f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+#                 model.module.load_state_dict(checkpoint["model_state_dict"])
+#             else:
+#                 logging.info(f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+#                 model.load_state_dict(checkpoint["model_state_dict"])
+#             optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay, betas=(0.9, 0.95))
+#             if 'load_optimizer' in conf['trainer'] and conf['trainer']['load_optimizer']:
+#                 optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
+#         scheduler = load_scheduler(optimizer, conf)
+#         scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
+
+#         # Update the config file to the current epoch
+#         if "reload_epoch" in conf["trainer"] and conf["trainer"]["reload_epoch"]:
+#             conf["trainer"]["start_epoch"] = checkpoint["epoch"] + 1
+
+#         if conf["trainer"]["start_epoch"] > 0:
+#             # Only reload the scheduler state if not starting over from epoch 0
+#             if scheduler is not None:
+#                 scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+
+#             # reload the AMP gradient scaler
+#             scaler.load_state_dict(checkpoint['scaler_state_dict'])
+
+#     # Enable updating the lr if not using a policy
+#     if (conf["trainer"]["update_learning_rate"] if "update_learning_rate" in conf["trainer"] else False):
+#         for param_group in optimizer.param_groups:
+#             param_group['lr'] = learning_rate
+
+#     return conf, model, optimizer, scheduler, scaler
 
 
 def main(rank, world_size, conf, backend, trial=False):
@@ -431,7 +523,7 @@ def main(rank, world_size, conf, backend, trial=False):
         persistent_workers=False,
         num_workers=1,  # multiprocessing is handled in the dataset
         drop_last=True,
-        prefetch_factor=8
+        prefetch_factor=4
     )
 
     valid_loader = torch.utils.data.DataLoader(
@@ -440,9 +532,9 @@ def main(rank, world_size, conf, backend, trial=False):
         shuffle=False,
         sampler=valid_sampler,
         pin_memory=False,
-        num_workers=0,  # multiprocessing is handled in the dataset
+        num_workers=1,  # multiprocessing is handled in the dataset
         drop_last=True,
-        # prefetch_factor=8
+        prefetch_factor=4
     )
 
     # model

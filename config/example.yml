@@ -130,9 +130,12 @@ trainer:
     #       run train_multistep.py for multi-step
     type: standard
     
-    # load existing weights / optimier state
+    # load existing weights / optimizer / mixed-precision grad scaler / learning rate scheduler state(s)
+    # when starting multi-step training, only use reload weights initially, then set all to true
     load_weights: True
     load_optimizer: True
+    load_scaler: True 
+    load_scheduler: True
 
     # CREDIT save checkpoints at the end of every epoch
     # save_backup_weights will also save checkpoints in the beginning of every epoch
