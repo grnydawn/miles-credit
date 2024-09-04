@@ -42,19 +42,13 @@ data:
     # data workflow
     scaler_type: 'std_new'  
     
-    # number of input states
-    # FuXi has 2 input states
+    # state-in-state-out
     history_len: 2
     valid_history_len: 2
     
-    # number of forecast steps to compute loss
-    # 0 for single step training / validation
-    # larger than 0 for multi-step training / validation
     forecast_len: 7
     valid_forecast_len: 7
     
-    # one_shot: True --> compute loss on the last forecast step only
-    # one_shot: False --> compute loss on all forecast steps
     one_shot: True
     
     # 1 for hourly model
@@ -68,18 +62,22 @@ data:
     
 trainer:
     type: multi-step # <---------- change to your type
-    
+
     mode: fsdp
     cpu_offload: False
     activation_checkpoint: True
     
-    load_weights: True # <----- change if load weights
-    load_optimizer: True # <--- change if load optimizer
+    load_weights: True
+    load_optimizer: False
+    load_scaler: False
+    load_sheduler: False
+    
     skip_validation: False
     update_learning_rate: False
-    
+
     save_backup_weights: True
     save_best_weights: True
+    save_metric_vars: ['SP','t2m','V500','U500','T500','Z500','Q500']
     
     learning_rate: 1.0e-04 # <-- change to your lr
     weight_decay: 0
@@ -87,19 +85,17 @@ trainer:
     train_batch_size: 1
     valid_batch_size: 1
     
-    batches_per_epoch: 590 # full epoch: 1772
+    batches_per_epoch: 759 # full epoch: 1772
     valid_batches_per_epoch: 0
     stopping_patience: 50
     
     start_epoch: 0
-    #num_epoch: 5
-    # False when switching from single-step to multi-step
     reload_epoch: False 
-    epochs: &epochs 45
+    epochs: &epochs 35
     
     use_scheduler: True
     scheduler: {'scheduler_type': 'cosine-annealing', 'T_max': *epochs,  'last_epoch': -1}
-
+    
     # Automatic Mixed Precision: False
     amp: False
     

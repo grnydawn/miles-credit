@@ -260,7 +260,16 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         
         assert 'train_batch_size'  in conf['trainer'], (
             "Training set batch size ('train_batch_size') is missing from onf['trainer']")
-    
+
+        if 'load_scaler' not in conf['trainer']:
+            conf['trainer']['load_scaler'] = False
+
+        if 'load_scheduler' not in conf['trainer']:
+            conf['trainer']['load_scheduler'] = False
+
+        if 'load_optimizer' not in conf['trainer']:
+            conf['trainer']['load_optimizer'] = False
+                    
         if 'thread_workers' not in conf['trainer']:
             conf['trainer']['thread_workers'] = 4
 
@@ -294,11 +303,28 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             assert 'scheduler' in conf['trainer'], (
                 "must specify 'scheduler' in conf['trainer'] if a scheduler is used")
             
-            assert 'load_optimizer' in conf['trainer'], (
-                "must specify 'load_optimizer' in conf['trainer'] if a scheduler is used")
-            
             assert 'reload_epoch' in conf['trainer'], (
                 "must specify 'reload_epoch' in conf['trainer'] if a scheduler is used")
+            
+            assert 'load_optimizer' in conf['trainer'], (
+                "must specify 'load_optimizer' in conf['trainer'] if a scheduler is used")
+
+            assert 'load_scheduler' in conf['trainer'], (
+                "must specify 'load_scheduler' in conf['trainer'] if a scheduler is used")
+
+            assert 'load_scaler' in conf['trainer'], (
+                "must specify 'load_scaler' in conf['trainer'] if a scheduler is used")
+        
+        else:
+            if 'load_scaler' not in conf['trainer']:
+                conf['trainer']['load_scaler'] = False
+    
+            if 'load_scheduler' not in conf['trainer']:
+                conf['trainer']['load_scheduler'] = False
+    
+            if 'load_optimizer' not in conf['trainer']:
+                conf['trainer']['load_optimizer'] = False
+                
         
         if 'update_learning_rate' not in conf['trainer']:
             conf['trainer']['update_learning_rate'] = False

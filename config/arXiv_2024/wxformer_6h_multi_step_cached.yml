@@ -78,13 +78,13 @@ trainer:
     train_batch_size: 1
     valid_batch_size: 1
     
-    batches_per_epoch: 590 # full epoch: 1772
+    batches_per_epoch: 759 # full epoch: 1772
     valid_batches_per_epoch: 0
     stopping_patience: 50
     
     start_epoch: 0
     reload_epoch: False 
-    epochs: &epochs 45
+    epochs: &epochs 35
     
     use_scheduler: True
     scheduler: {'scheduler_type': 'cosine-annealing', 'T_max': *epochs,  'last_epoch': -1}

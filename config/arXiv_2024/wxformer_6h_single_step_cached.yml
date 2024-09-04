@@ -60,8 +60,11 @@ trainer:
     cpu_offload: False
     activation_checkpoint: True
     
-    load_weights: False # <----- change if load weights
-    load_optimizer: False # <--- change if load optimizer
+    load_weights: False
+    load_optimizer: False
+    load_scaler: False
+    load_sheduler: False
+    
     skip_validation: False
     update_learning_rate: False
 
