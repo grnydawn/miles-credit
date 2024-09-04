@@ -341,11 +341,10 @@ class BaseTrainer(ABC):
 
             if isinstance(save_metric_vars, list) and len(save_metric_vars) > 0:
                 names = [key.replace("train_", "") for key in train_results.keys() if any(var in key for var in save_metric_vars)]
-                # print(names)
             elif isinstance(save_metric_vars, bool) and save_metric_vars:
                 names = [key.replace("train_", "") for key in train_results.keys()]
             else:
-                names = ["loss", "acc", "mae"]
+                names = ["loss", "acc", "mae", "forecast_len"]
 
             for name in names:
                 results_dict[f"train_{name}"].append(np.mean(train_results[f"train_{name}"]))
