@@ -325,16 +325,6 @@ class BaseTrainer(ABC):
             #
             #################
 
-            # update the learning rate if epoch-by-epoch updates
-
-            if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] in update_on_epoch:
-                if conf['trainer']['scheduler']['scheduler_type'] == 'plateau':
-                    scheduler.step(results_dict[training_metric][-1])
-                else:
-                    scheduler.step()
-
-            # Put things into a results dictionary -> dataframe
-
             results_dict["epoch"].append(epoch)
 
             # Save metrics for select variables
@@ -352,6 +342,14 @@ class BaseTrainer(ABC):
                     continue
                 results_dict[f"valid_{name}"].append(np.mean(valid_results[f"valid_{name}"]))
             results_dict["lr"].append(optimizer.param_groups[0]["lr"])
+
+            # update the learning rate if epoch-by-epoch updates
+
+            if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] in update_on_epoch:
+                if conf['trainer']['scheduler']['scheduler_type'] == 'plateau':
+                    scheduler.step(results_dict[training_metric][-1])
+                else:
+                    scheduler.step()
 
             # Create pandas df
 
