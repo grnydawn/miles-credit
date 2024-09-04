@@ -130,6 +130,8 @@ model:
     # map boundary padding
     pad_lon: 80             # number of grids to pad on 0 and 360 deg lon
     pad_lat: 80             # number of grids to pad on -90 and 90 deg lat
+
+    use_spectral_norm: True
     
 loss: 
     # the main training loss
