@@ -60,13 +60,17 @@ trainer:
     cpu_offload: False
     activation_checkpoint: True
     
-    load_weights: True # <----- change if load weights
-    load_optimizer: True # <--- change if load optimizer
+    load_weights: True
+    load_optimizer: False
+    load_scaler: False
+    load_sheduler: False
+    
     skip_validation: False
     update_learning_rate: False
 
     save_backup_weights: True
     save_best_weights: True
+    save_metric_vars: ['SP','t2m','V500','U500','T500','Z500','Q500']
     
     learning_rate: 1.0e-04 # <-- change to your lr
     weight_decay: 0
@@ -79,8 +83,6 @@ trainer:
     stopping_patience: 50
     
     start_epoch: 0
-    #num_epoch: 5
-    # False when switching from single-step to multi-step
     reload_epoch: False 
     epochs: &epochs 45
     
