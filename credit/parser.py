@@ -239,7 +239,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
     
     # skip_periods
     if ('skip_periods' not in conf['data']) or (conf['data']['skip_periods'] is None):
-        conf['data']['skip_periods'] = None
+        conf['data']['skip_periods'] = 1
         
     if 'static_first' not in conf['data']:
         conf['data']['static_first'] = True
