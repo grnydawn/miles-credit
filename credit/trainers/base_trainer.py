@@ -328,13 +328,14 @@ class BaseTrainer(ABC):
             results_dict["epoch"].append(epoch)
 
             # Save metrics for select variables
-
+            required_metrics = ["loss", "acc", "mae", "forecast_len"]  # Base required metrics
             if isinstance(save_metric_vars, list) and len(save_metric_vars) > 0:
                 names = [key.replace("train_", "") for key in train_results.keys() if any(var in key for var in save_metric_vars)]
             elif isinstance(save_metric_vars, bool) and save_metric_vars:
                 names = [key.replace("train_", "") for key in train_results.keys()]
             else:
-                names = ["loss", "acc", "mae", "forecast_len"]
+                names = []
+            names = list(set(names + required_metrics))
 
             for name in names:
                 results_dict[f"train_{name}"].append(np.mean(train_results[f"train_{name}"]))
