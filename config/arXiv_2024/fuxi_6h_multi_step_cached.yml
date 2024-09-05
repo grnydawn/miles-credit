@@ -74,7 +74,7 @@ trainer:
 
     save_backup_weights: True
     save_best_weights: True
-    save_metric_vars: ['SP','t2m','V500','U500','T500','Z500','Q500']
+    # save_metric_vars: ['SP','t2m','V500','U500','T500','Z500','Q500']
     
     learning_rate: 1.0e-04 # <-- change to your lr
     weight_decay: 0
