@@ -55,6 +55,8 @@ This document provides a detailed guide on how to define, train, and use AI weat
 * **Scaler Type**: 
   * `std_new` is the new data workflow that works with z-score.
     * `scaler_type`: `std_new`
+  * `std_cached` does not perform normalization, it works for cached dataset.
+    * `scaler_type`: `std_cached`
 
 * **Input and output temporal dimensions**:
   * Specify the number of input time frames.

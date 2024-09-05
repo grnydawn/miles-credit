@@ -1,94 +1,104 @@
 # --------------------------------------------------------------------------------------------------------------------- #
-# This yaml file configures an hourly FuXi model on NSF NCAR HPCs (casper.ucar.edu and derecho.hpc.ucar.edu) 
+# This yaml file implements 6 hourly FuXi on NSF NCAR HPCs (casper.ucar.edu and derecho.hpc.ucar.edu) 
 # the FuXi architecture has been modified to reduce the overall model size
-# The model is trained on hourly model-level ERA5 data with top solar irradiance, geopotential, and land-sea mask
+# The model is trained on hourly model-level ERA5 data with top solar irradiance, geopotential, and land-sea mask inputs
 # Output variables: model level [U, V, T, Q], single level [SP, t2m], and 500 hPa [U, V, T, Z, Q]
 #
 # Yingkai Sha
 # ksha@ucar.edu
 # --------------------------------------------------------------------------------------------------------------------- #
-save_loc: '/glade/work/ksha/CREDIT_runs/fuxi_1h/'
+save_loc: '/glade/work/ksha/CREDIT_runs/fuxi_6h/'
 seed: 1000
 
 data:
     # upper-air variables
     variables: ['U','V','T','Q']
-    save_loc: '/glade/derecho/scratch/wchapman/y_TOTAL*'
-    
+    save_loc: '/glade/derecho/scratch/ksha/CREDIT_data/arXiv_cached/cache_arXiv_6h_*'
+
     # surface variables
-    surface_variables: ['SP','t2m', 'V500','U500','T500','Z500','Q500']
-    save_loc_surface: '/glade/derecho/scratch/wchapman/y_TOTAL*'
-    
+    surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
+    save_loc_surface: '/glade/derecho/scratch/ksha/CREDIT_data/arXiv_cached/cache_arXiv_6h_*'
+
     # dynamic forcing variables
     dynamic_forcing_variables: ['tsi']
-    save_loc_dynamic_forcing: '/glade/derecho/scratch/dgagne/credit_solar_1h_0.25deg/*.nc'
-    
+    save_loc_dynamic_forcing: '/glade/derecho/scratch/ksha/CREDIT_data/arXiv_cached/cache_arXiv_6h_*'
+
     # static variables
-    static_variables: ['Z_GDS4_SFC','LSM'] 
+    static_variables: ['Z_GDS4_SFC','LSM']
     save_loc_static: '/glade/derecho/scratch/ksha/CREDIT_data/static_norm_old.nc'
-    
+
     # mean / std path
-    mean_path: '/glade/derecho/scratch/ksha/CREDIT_data/mean_1h_1979_2018_16lev_0.25deg.nc'
-    # regular z-score version
-    std_path: '/glade/derecho/scratch/ksha/CREDIT_data/std_1h_1979_2018_16lev_0.25deg.nc'
-    # residual norm version
-    # std_path: '/glade/derecho/scratch/ksha/CREDIT_data/std_residual_1h_1979_2018_16lev_0.25deg.nc'
+    mean_path: '/glade/derecho/scratch/ksha/CREDIT_data/mean_6h_1979_2018_16lev_0.25deg.nc'
+    std_path: '/glade/derecho/scratch/ksha/CREDIT_data/std_residual_6h_1979_2018_16lev_0.25deg.nc'
     
     # train / validation split
     train_years: [1979, 2018]
     valid_years: [2018, 2019]
     
-    scaler_type: 'std_new'  
+    # data workflow
+    scaler_type: 'std_cached'  
     
+    # number of input states
+    # FuXi has 2 input states
     history_len: 2
     valid_history_len: 2
-
-    # single-step
-    forecast_len: 0
-    valid_forecast_len: 0
+    
+    forecast_len: 7
+    valid_forecast_len: 7
     
     one_shot: True
-    lead_time_periods: 1
+    
+    # 1 for hourly model
+    lead_time_periods: 6
+    
+    # do not use skip_period
     skip_periods: null
-
+    
     # compatible with the old 'std'
     static_first: True
     
 trainer:
-    type: standard # <---------- change to your type
-    
+    type: multi-step # <---------- change to your type
+
     mode: fsdp
     cpu_offload: False
     activation_checkpoint: True
     
-    load_weights: False # <----- change if load weights
-    load_optimizer: False # <--- change if load optimizer
+    load_weights: True
+    load_optimizer: False
+    load_scaler: False
+    load_sheduler: False
+    
     skip_validation: False
     update_learning_rate: False
-    
+
     save_backup_weights: True
     save_best_weights: True
+    # save_metric_vars: ['SP','t2m','V500','U500','T500','Z500','Q500']
     
-    learning_rate: 1.0e-03 # <-- change to your lr
+    learning_rate: 1.0e-04 # <-- change to your lr
     weight_decay: 0
     
     train_batch_size: 1
     valid_batch_size: 1
     
-    batches_per_epoch: 5340 # use 50% of full epoch; full epoch = 10681(batches) * 32(samples)
+    batches_per_epoch: 759 # full epoch: 1772
     valid_batches_per_epoch: 0
-    stopping_patience: 999
+    stopping_patience: 50
     
     start_epoch: 0
-    # num_epoch: 6 # optional
-    reload_epoch: True
-    epochs: &epochs 140
+    reload_epoch: False 
+    epochs: &epochs 35
     
     use_scheduler: True
     scheduler: {'scheduler_type': 'cosine-annealing', 'T_max': *epochs,  'last_epoch': -1}
     
+    # Automatic Mixed Precision: False
     amp: False
-    grad_accum_every: 1
+    
+    # rescale loss as loss = loss / grad_accum_every
+    grad_accum_every: 1 
+    # gradient clipping
     grad_max_norm: 1.0
     
     # number of workers
@@ -165,7 +175,7 @@ predict:
                              # (e.g., duration: 384 for 365-day rollout using 32 GPUs)
         days: 2              # forecast lead time as days (1 means 24-hour forecast)
         
-    save_forecast: '/glade/derecho/scratch/ksha/CREDIT/fuxi_1h/'
+    save_forecast: '/glade/derecho/scratch/ksha/CREDIT/fuxi_6h/'
     save_vars: ['SP','t2m','V500','U500','T500','Z500','Q500']
     
     # turn-off low-pass filter
@@ -177,7 +187,7 @@ predict:
 pbs: #derecho
     conda: "/glade/work/ksha/miniconda3/envs/credit"
     project: "NAML0001"
-    job_name: "fuxi_1h"
+    job_name: "fuxi_6h"
     walltime: "12:00:00"
     nodes: 8
     ncpus: 64

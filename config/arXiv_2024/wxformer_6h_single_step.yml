@@ -1,35 +1,35 @@
 # --------------------------------------------------------------------------------------------------------------------- #
-# This yaml file configures an hourly state-in-state-out CrossFormer
+# This yaml file configures an 6 hourly state-in-state-out CrossFormer
 # on NSF NCAR HPCs (casper.ucar.edu and derecho.hpc.ucar.edu) 
-# The model is trained on hourly model-level ERA5 data with top solar irradiance, geopotential, and land-sea mask
+# The model is trained on 6 hourly model-level ERA5 data with top solar irradiance, geopotential, and land-sea mask
 # Output variables: model level [U, V, T, Q], single level [SP, t2m], and 500 hPa [U, V, T, Z, Q]
 # --------------------------------------------------------------------------------------------------------------------- #
-save_loc: '/glade/work/ksha/CREDIT_runs/wxformer_1h/'
+save_loc: '/glade/work/ksha/CREDIT_runs/wxformer_6h/'
 seed: 1000
 
 data:
     # upper-air variables
     variables: ['U','V','T','Q']
-    save_loc: '/glade/derecho/scratch/wchapman/y_TOTAL*'
+    save_loc: '/glade/derecho/scratch/wchapman/SixHourly_y_TOTAL*'
     
     # surface variables
-    surface_variables: ['SP','t2m', 'V500','U500','T500','Z500','Q500']
-    save_loc_surface: '/glade/derecho/scratch/wchapman/y_TOTAL*'
+    surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
+    save_loc_surface: '/glade/derecho/scratch/wchapman/SixHourly_y_TOTAL*'
     
     # dynamic forcing variables
     dynamic_forcing_variables: ['tsi']
-    save_loc_dynamic_forcing: '/glade/derecho/scratch/dgagne/credit_solar_1h_0.25deg/*.nc'
+    save_loc_dynamic_forcing: '/glade/derecho/scratch/dgagne/credit_solar_6h_0.25deg/*.nc'
     
     # static variables
     static_variables: ['Z_GDS4_SFC','LSM'] 
     save_loc_static: '/glade/derecho/scratch/ksha/CREDIT_data/static_norm_old.nc'
     
     # mean / std path
-    mean_path: '/glade/derecho/scratch/ksha/CREDIT_data/mean_1h_1979_2018_16lev_0.25deg.nc'
+    mean_path: '/glade/derecho/scratch/ksha/CREDIT_data/mean_6h_1979_2018_16lev_0.25deg.nc'
     # regular z-score version
-    std_path: '/glade/derecho/scratch/ksha/CREDIT_data/std_1h_1979_2018_16lev_0.25deg.nc'
+    std_path: '/glade/derecho/scratch/ksha/CREDIT_data/std_6h_1979_2018_16lev_0.25deg.nc'
     # residual norm version
-    # std_path: '/glade/derecho/scratch/ksha/CREDIT_data/std_residual_1h_1979_2018_16lev_0.25deg.nc'
+    # std_path: '/glade/derecho/scratch/ksha/CREDIT_data/std_residual_6h_1979_2018_16lev_0.25deg.nc'
     
     # train / validation split
     train_years: [1979, 2018]
@@ -46,7 +46,7 @@ data:
     valid_forecast_len: 0
     
     one_shot: True
-    lead_time_periods: 1
+    lead_time_periods: 6
     skip_periods: null
     
     # compatible with the old 'std'
@@ -59,8 +59,11 @@ trainer:
     cpu_offload: False
     activation_checkpoint: True
     
-    load_weights: False # <----- change if load weights
-    load_optimizer: False # <--- change if load optimizer
+    load_weights: False
+    load_optimizer: False
+    load_scaler: False
+    load_sheduler: False
+    
     skip_validation: False
     update_learning_rate: False
 
@@ -73,14 +76,14 @@ trainer:
     train_batch_size: 1
     valid_batch_size: 1
     
-    batches_per_epoch: 5340 # use 50% of full epoch; full epoch = 10681(batches) * 32(samples)
+    batches_per_epoch: 0
     valid_batches_per_epoch: 0
     stopping_patience: 999
     
     start_epoch: 0
     # num_epoch: 6 # optional
     reload_epoch: True
-    epochs: &epochs 140
+    epochs: &epochs 70
      
     use_scheduler: True
     scheduler: {'scheduler_type': 'cosine-annealing', 'T_max': *epochs,  'last_epoch': -1}
@@ -125,6 +128,8 @@ model:
     # map boundary padding
     pad_lon: 80             # number of grids to pad on 0 and 360 deg lon
     pad_lat: 80             # number of grids to pad on -90 and 90 deg lat
+
+    use_spectral_norm: True
     
 loss: 
     # the main training loss
@@ -153,7 +158,7 @@ predict:
                              # (e.g., duration: 384 for 365-day rollout using 32 GPUs)
         days: 2              # forecast lead time as days (1 means 24-hour forecast)
         
-    save_forecast: '/glade/derecho/scratch/ksha/CREDIT/wxformer_1h/'
+    save_forecast: '/glade/derecho/scratch/ksha/CREDIT/wxformer_6h/'
     save_vars: ['SP','t2m','V500','U500','T500','Z500','Q500']
     
     # turn-off low-pass filter
@@ -165,7 +170,7 @@ predict:
 pbs: #derecho
     conda: "/glade/work/ksha/miniconda3/envs/credit"
     project: "NAML0001"
-    job_name: "wxformer_1h"
+    job_name: "wxformer_6h"
     walltime: "12:00:00"
     nodes: 8
     ncpus: 64

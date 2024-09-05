@@ -37,14 +37,32 @@ def remove_string_by_pattern(list_string, pattern):
 
 def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summary=False):
     '''
-    This function examines the config.yml input, and produce its standardized version.
-    Missing keywords will either trigger assertion errors or receive a defualt value.
-    All other components of this repo rely on CREDIT_main_parser.
-    ----------------------------------------------------------------------------------
-    Where is it applied?
+    Parses and validates the configuration input for the CREDIT project.
+    
+    This function examines the provided configuration dictionary (`conf`), ensures that all required fields are 
+    present, and assigns default values where necessary. It is designed to be used in various training and 
+    prediction modules within the CREDIT repository. Missing critical fields will trigger assertion errors, while 
+    others will receive default values. A standardized version of the input configuration will be returned, ensuring 
+    consistency across different applications.
+
+    Args:
+        conf (dict): Configuration dictionary containing all settings for data, model, trainer, and prediction phases.
+        parse_training (bool, optional): If True, the function will check for training-specific fields. Defaults to True.
+        parse_predict (bool, optional): If True, the function will check for prediction-specific fields. Defaults to True.
+        print_summary (bool, optional): If True, a summary of the parsed variables will be printed. Defaults to False.
+
+    Returns:
+        dict: The standardized and validated configuration dictionary.
+
+    Raises:
+        AssertionError: If any critical fields are missing or invalid in the provided configuration.
+    
+    Notes:
+        This function is used in the following scripts:
         - applications/train.py
         - applications/train_multistep.py
-        - applications/rollout_to_netcdf_new.py
+        - applications/rollout_to_netcdf.py
+
     '''
     
     assert 'save_loc' in conf, "save location of the CREDIT project ('save_loc') is missing from conf"
@@ -260,7 +278,16 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         
         assert 'train_batch_size'  in conf['trainer'], (
             "Training set batch size ('train_batch_size') is missing from onf['trainer']")
-    
+
+        if 'load_scaler' not in conf['trainer']:
+            conf['trainer']['load_scaler'] = False
+
+        if 'load_scheduler' not in conf['trainer']:
+            conf['trainer']['load_scheduler'] = False
+
+        if 'load_optimizer' not in conf['trainer']:
+            conf['trainer']['load_optimizer'] = False
+                    
         if 'thread_workers' not in conf['trainer']:
             conf['trainer']['thread_workers'] = 4
 
@@ -294,11 +321,28 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             assert 'scheduler' in conf['trainer'], (
                 "must specify 'scheduler' in conf['trainer'] if a scheduler is used")
             
-            assert 'load_optimizer' in conf['trainer'], (
-                "must specify 'load_optimizer' in conf['trainer'] if a scheduler is used")
-            
             assert 'reload_epoch' in conf['trainer'], (
                 "must specify 'reload_epoch' in conf['trainer'] if a scheduler is used")
+            
+            assert 'load_optimizer' in conf['trainer'], (
+                "must specify 'load_optimizer' in conf['trainer'] if a scheduler is used")
+
+            assert 'load_scheduler' in conf['trainer'], (
+                "must specify 'load_scheduler' in conf['trainer'] if a scheduler is used")
+
+            assert 'load_scaler' in conf['trainer'], (
+                "must specify 'load_scaler' in conf['trainer'] if a scheduler is used")
+        
+        else:
+            if 'load_scaler' not in conf['trainer']:
+                conf['trainer']['load_scaler'] = False
+    
+            if 'load_scheduler' not in conf['trainer']:
+                conf['trainer']['load_scheduler'] = False
+    
+            if 'load_optimizer' not in conf['trainer']:
+                conf['trainer']['load_optimizer'] = False
+                
         
         if 'update_learning_rate' not in conf['trainer']:
             conf['trainer']['update_learning_rate'] = False

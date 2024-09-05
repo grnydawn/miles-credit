@@ -66,7 +66,9 @@ data:
     valid_years: [2014, 2018] # 2014 - 2017
     
     # std_new is the new data workflow that works with z-score
-    scaler_type: 'std_new'  
+    scaler_type: 'std_new'
+    # std_cached does not perform normalization, it works for cached dataset (preprocessed dataset)
+    # scaler_type: 'std_cached'
 
     # number of input time frames
     # 2 for Fuxi, 
