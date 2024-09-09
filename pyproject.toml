@@ -10,7 +10,7 @@ license = {file = "LICENSE"}
 dynamic = ["version"]
 requires-python = ">=3.8"
 dependencies = [
-    "numpy<2",
+    "numpy",
     "pandas",
     "matplotlib",
     "cartopy",
@@ -21,7 +21,6 @@ dependencies = [
     "netcdf4",
     "torch",
     "torchvision",
-    "wandb",
     "pyyaml",
     "cartopy",
     "dask",
@@ -36,7 +35,6 @@ dependencies = [
     "vector-quantize-pytorch",
     "haversine",
     "pvlib",
-    "sphinx",
     "geocat-comp",
    ]
 
