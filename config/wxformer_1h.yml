@@ -10,11 +10,11 @@ seed: 1000
 data:
     # upper-air variables
     variables: ['U','V','T','Q']
-    save_loc: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
+    save_loc: '/lustre/desc1/mirrors/cisl/aiml/wchapman/MLWPS/STAGING/TOTAL_*'
 
     # surface variables
     surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
-    save_loc_surface: '/glade/derecho/scratch/schreck/STAGING/TOTAL_*'
+    save_loc_surface: '/lustre/desc1/mirrors/cisl/aiml/wchapman/MLWPS/STAGING/TOTAL_*'
     
     # dynamic forcing variables
     dynamic_forcing_variables: ['tsi']
