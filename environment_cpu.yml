@@ -28,8 +28,9 @@ dependencies:
   - jupyter
   - geocat-comp
   - xesmf
+  - mpi4py
+  - mpich
   - pip:
-    - mpi4py
     - einops
     - echo-opt
     - bridgescaler
