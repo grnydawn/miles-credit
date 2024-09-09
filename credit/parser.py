@@ -15,6 +15,7 @@ import os
 import copy
 import warnings
 from glob import glob
+from collections import Counter
 
 import numpy as np
 import xarray as xr
@@ -36,14 +37,32 @@ def remove_string_by_pattern(list_string, pattern):
 
 def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summary=False):
     '''
-    This function examines the config.yml input, and produce its standardized version.
-    Missing keywords will either trigger assertion errors or receive a defualt value.
-    All other components of this repo rely on CREDIT_main_parser.
-    ----------------------------------------------------------------------------------
-    Where is it applied?
+    Parses and validates the configuration input for the CREDIT project.
+    
+    This function examines the provided configuration dictionary (`conf`), ensures that all required fields are 
+    present, and assigns default values where necessary. It is designed to be used in various training and 
+    prediction modules within the CREDIT repository. Missing critical fields will trigger assertion errors, while 
+    others will receive default values. A standardized version of the input configuration will be returned, ensuring 
+    consistency across different applications.
+
+    Args:
+        conf (dict): Configuration dictionary containing all settings for data, model, trainer, and prediction phases.
+        parse_training (bool, optional): If True, the function will check for training-specific fields. Defaults to True.
+        parse_predict (bool, optional): If True, the function will check for prediction-specific fields. Defaults to True.
+        print_summary (bool, optional): If True, a summary of the parsed variables will be printed. Defaults to False.
+
+    Returns:
+        dict: The standardized and validated configuration dictionary.
+
+    Raises:
+        AssertionError: If any critical fields are missing or invalid in the provided configuration.
+    
+    Notes:
+        This function is used in the following scripts:
         - applications/train.py
         - applications/train_multistep.py
-        - applications/rollout_to_netcdf_new.py
+        - applications/rollout_to_netcdf.py
+
     '''
     
     assert 'save_loc' in conf, "save location of the CREDIT project ('save_loc') is missing from conf"
@@ -180,6 +199,20 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         conf['data']['static_variables'] = []
     # ===================================================== #
     
+    # duplicated variable name check
+    all_varnames = conf['data']['variables'] + \
+                   conf['data']['surface_variables'] + \
+                   conf['data']['dynamic_forcing_variables'] + \
+                   conf['data']['diagnostic_variables'] + \
+                   conf['data']['forcing_variables'] + \
+                   conf['data']['static_variables']
+    
+    varname_counts = Counter(all_varnames)
+    duplicates = [varname for varname, count in varname_counts.items() if count > 1]
+
+    assert len(duplicates) == 0, (
+        "Duplicated variable names: [{}] found. No duplicates allowed, stop.".format(duplicates))
+    
     ## I/O data sizes
     if parse_training:
         assert 'train_years' in conf['data'], (
@@ -203,11 +236,14 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             
         if 'max_forecast_len' not in conf['data']:
             conf['data']['max_forecast_len'] = None #conf['data']['forecast_len']
-        
+            
         # one_shot
         if 'one_shot' not in conf['data']:
             conf['data']['one_shot'] = None
 
+        if conf['data']['one_shot'] is not True:
+            conf['data']['one_shot'] = None
+        
         if "total_time_steps" not in conf["data"]:
             conf["data"]["total_time_steps"] =  conf["data"]['forecast_len']
     
@@ -242,24 +278,42 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         
         assert 'train_batch_size'  in conf['trainer'], (
             "Training set batch size ('train_batch_size') is missing from onf['trainer']")
-    
+
+        if 'load_scaler' not in conf['trainer']:
+            conf['trainer']['load_scaler'] = False
+
+        if 'load_scheduler' not in conf['trainer']:
+            conf['trainer']['load_scheduler'] = False
+
+        if 'load_optimizer' not in conf['trainer']:
+            conf['trainer']['load_optimizer'] = False
+                    
         if 'thread_workers' not in conf['trainer']:
             conf['trainer']['thread_workers'] = 4
 
         if 'valid_thread_workers' not in conf['trainer']:
             conf['trainer']['valid_thread_workers'] = 0
+
+        if 'save_backup_weights' not in conf['trainer']:
+            conf['trainer']['save_backup_weights'] = False
+
+        if 'save_best_weights' not in conf['trainer']:
+            conf['trainer']['save_best_weights'] = True
         
         if 'skip_validation' not in conf['trainer']:
             conf['trainer']['skip_validation'] = False
     
         if conf['trainer']['skip_validation'] is False:
-            
+            # do not skip validaiton
             assert 'valid_batch_size'  in conf['trainer'], (
                 "Validation set batch size ('valid_batch_size') is missing from onf['trainer']")
             
             assert 'valid_batches_per_epoch'  in conf['trainer'], (
                 "Number of validation batches per epoch ('valid_batches_per_epoch') is missing from onf['trainer']")
             
+        if 'save_metric_vars' not in conf['trainer']:
+            conf['trainer']['save_metric_vars'] = []
+        
         if 'use_scheduler' in conf['trainer']:
             # lr will be controlled by scheduler
             conf['trainer']['update_learning_rate'] = False
@@ -267,11 +321,28 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             assert 'scheduler' in conf['trainer'], (
                 "must specify 'scheduler' in conf['trainer'] if a scheduler is used")
             
-            assert 'load_optimizer' in conf['trainer'], (
-                "must specify 'load_optimizer' in conf['trainer'] if a scheduler is used")
-            
             assert 'reload_epoch' in conf['trainer'], (
                 "must specify 'reload_epoch' in conf['trainer'] if a scheduler is used")
+            
+            assert 'load_optimizer' in conf['trainer'], (
+                "must specify 'load_optimizer' in conf['trainer'] if a scheduler is used")
+
+            assert 'load_scheduler' in conf['trainer'], (
+                "must specify 'load_scheduler' in conf['trainer'] if a scheduler is used")
+
+            assert 'load_scaler' in conf['trainer'], (
+                "must specify 'load_scaler' in conf['trainer'] if a scheduler is used")
+        
+        else:
+            if 'load_scaler' not in conf['trainer']:
+                conf['trainer']['load_scaler'] = False
+    
+            if 'load_scheduler' not in conf['trainer']:
+                conf['trainer']['load_scheduler'] = False
+    
+            if 'load_optimizer' not in conf['trainer']:
+                conf['trainer']['load_optimizer'] = False
+                
         
         if 'update_learning_rate' not in conf['trainer']:
             conf['trainer']['update_learning_rate'] = False
@@ -320,6 +391,31 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         if conf['loss']['use_variable_weights']:
             assert 'variable_weights' in conf['loss'], (
                 "must specify 'variable_weights' in conf['loss'] if 'use_variable_weights': True")
+
+            # ----------------------------------------------------------------------------------------- #
+            # check and reorganize variable weights
+            varname_upper_air = conf['data']['variables']
+            varname_surface = conf['data']['surface_variables']
+            varname_diagnostics = conf['data']['diagnostic_variables']
+            N_levels = conf['data']['levels']
+            
+            weights_dict_ordered = {}
+            
+            varname_covered = list(conf['loss']['variable_weights'].keys())
+            
+            for varname in varname_upper_air:
+                assert varname in varname_covered, "missing variable weights for '{}'".format(varname)
+                N_weights = len(conf['loss']['variable_weights'][varname])
+                assert N_weights == N_levels, (
+                    "{} levels were defined, but weights only have {} levels".format(N_levels, N_weights))
+                weights_dict_ordered[varname] = conf['loss']['variable_weights'][varname]
+                
+            for varname in varname_surface+varname_diagnostics:
+                assert varname in varname_covered, "missing variable weights for '{}'".format(varname)
+                weights_dict_ordered[varname] = conf['loss']['variable_weights'][varname]
+
+            conf['loss']['variable_weights'] = weights_dict_ordered
+            # ----------------------------------------------------------------------------------------- #
     
         if 'use_power_loss' not in conf['loss']:
             conf['loss']['use_power_loss'] = False

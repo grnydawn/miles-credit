@@ -1,107 +1,54 @@
-# --------------------------------------------------------------------------------------------------------------------- #
-# This yaml file implements hourly state-in-state-out crossformer
-# on NSF NCAR HPCs (casper.ucar.edu and derecho.hpc.ucar.edu) 
-# The model is trained on hourly model-level ERA5 data with top solar irradiance, geopotential, and land-sea mask
-# Output variables: model level [U, V, T, Q], single level [SP, t2m], and 500 hPa [U, V, T, Z, Q]
-# --------------------------------------------------------------------------------------------------------------------- #
-save_loc: '/glade/work/ksha/CREDIT_runs/wxformer_1h/'
+save_loc: '/glade/derecho/scratch/schreck/repos/miles-credit/production/multistep/test/'
 seed: 1000
 
 data:
-    # upper-air variables
     variables: ['U','V','T','Q']
-    save_loc: '/lustre/desc1/mirrors/cisl/aiml/wchapman/MLWPS/STAGING/TOTAL_*'
-
-    # surface variables
+    save_loc: '/lustre/desc1/mirrors/cisl/aiml/wchapman/MLWPS/STAGING/SixHourly_TOTAL_*'
     surface_variables: ['SP','t2m','V500','U500','T500','Z500','Q500']
-    save_loc_surface: '/lustre/desc1/mirrors/cisl/aiml/wchapman/MLWPS/STAGING/TOTAL_*'
-    
-    # dynamic forcing variables
+    save_loc_surface: '/lustre/desc1/mirrors/cisl/aiml/wchapman/MLWPS/STAGING/SixHourly_TOTAL_*'
     dynamic_forcing_variables: ['tsi']
-    save_loc_dynamic_forcing: '/glade/derecho/scratch/dgagne/credit_solar_1h_0.25deg/*.nc'
-    
-    # static variables
+    save_loc_dynamic_forcing: '/glade/derecho/scratch/dgagne/credit_solar_6h_0.25deg/*.nc'
     static_variables: ['Z_GDS4_SFC','LSM'] 
     save_loc_static: '/glade/campaign/cisl/aiml/ksha/CREDIT/static_norm_old.nc'
-    
-    # mean / std path
-    mean_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/mean_1h_0.25deg.nc'
-    std_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/std_1h_0.25deg.nc'
-    
-    # train / validation split
+    mean_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/mean_6h_0.25deg.nc'
+    std_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/std_6h_0.25deg.nc'
     train_years: [1979, 2014]
     valid_years: [2014, 2018]
-    
-    # data workflow
     scaler_type: 'std_new'  
-    
-    # number of input states
-    # state-in-state-out
     history_len: 1
     valid_history_len: 1
-    
-    # number of forecast steps to compute loss
-    # 0 for single step training / validation
-    # larger than 0 for multi-step training / validation
-    forecast_len: 0
+    forecast_len: 4
     valid_forecast_len: 0
-    
-    # one_shot: True --> compute loss on the last forecast step only
-    # one_shot: False --> compute loss on all forecast steps
     one_shot: True
-    
-    # 1 for hourly model
-    lead_time_periods: 1
-    
-    # do not use skip_period
+    lead_time_periods: 6
     skip_periods: null
-    
-    # compatible with the old 'std'
     static_first: True
     
 trainer:
-    # type: standard for single-step or one-shot multi-step training
-    # type: multi-step for the "real" multi-step training
-    
-    type: standard # <---------- change to your type
-    
-    # use fsdp
+    type: multi-step # <---------- change to your type
     mode: fsdp
     cpu_offload: False # <------ can cause CPU memory problem ("Expects storage to be allocated")
     activation_checkpoint: True
-    
-    load_weights: False # <----- change if load weights
+    load_weights: True # <----- change if load weights
     load_optimizer: False # <--- change if load optimizer
-    skip_validation: False
-    update_learning_rate: False
-    
-    learning_rate: 1.0e-03 # <-- change to your lr
+    skip_validation: True
+    train_one_epoch: True
+    learning_rate: 1.0e-04 # <-- change to your lr
     weight_decay: 0
-    
     train_batch_size: 1
     valid_batch_size: 1
-    
-    batches_per_epoch: 1000
+    batches_per_epoch: 0
     valid_batches_per_epoch: 50
-    stopping_patience: 5
-    
-    start_epoch: 0
-    reload_epoch: True
-    epochs: &epochs 70
-    
-    use_scheduler: True
+    stopping_patience: 500
+    start_epoch: 1
+    reload_epoch: False
+    epochs: &epochs 15
+    use_scheduler: False
     scheduler: {'scheduler_type': 'cosine-annealing', 'T_max': *epochs,  'last_epoch': -1}
-
-    # Automatic Mixed Precision: False
     amp: False
-    
-    # rescale loss as loss = loss / grad_accum_every
     grad_accum_every: 1 
-    # gradient clipping
     grad_max_norm: 1.0
-    
-    # number of workers
-    thread_workers: 4
+    thread_workers: 1
     valid_thread_workers: 0
   
 model:
@@ -115,15 +62,13 @@ model:
     surface_channels: 7               # surface variable channels
     input_only_channels: 3            # dynamic forcing, forcing, static channels
     output_only_channels: 0           # diagnostic variable channels
-    
     patch_width: 1                    # number of latitude grids in each 3D patch (default: 1)
     patch_height: 1                   # number of longitude grids in each 3D patch (default: 1)
     frame_patch_size: 1               # number of input states in each 3D patch (default: 1)
-    
-    dim: [128, 256, 512, 1024]        # Dimensionality of each layer
-    depth: [2, 2, 8, 2]               # Depth of each layer
-    global_window_size: [10, 5, 2, 1] # Global window size for each layer
-    local_window_size: 10             # Local window size
+    dim: [128, 256, 512, 1024]              # Dimensionality of each layer (default: [64, 128, 256, 512])
+    depth: [2, 2, 8, 2]                    # Depth of each layer (default: [2, 2, 8, 2])
+    global_window_size: [10, 5, 2, 1]      # Global window size for each layer (default: [10, 5, 2, 1])
+    local_window_size: 10                  # Local window size (default: 10)
     cross_embed_kernel_sizes:         # kernel sizes for cross-embedding
     - [4, 8, 16, 32]
     - [2, 4]
@@ -132,7 +77,6 @@ model:
     cross_embed_strides: [2, 2, 2, 2] # Strides for cross-embedding (default: [4, 2, 2, 2])
     attn_dropout: 0.                  # Dropout probability for attention layers (default: 0.0)
     ff_dropout: 0.                    # Dropout probability for feed-forward layers (default: 0.0)
-    
     # map boundary padding
     pad_lon: 80             # number of grids to pad on 0 and 360 deg lon
     pad_lat: 80             # number of grids to pad on -90 and 90 deg lat
@@ -140,17 +84,23 @@ model:
 loss: 
     # the main training loss
     training_loss: "mse"
-    
-    # power loss (x), spectral_loss (x)
     use_power_loss: False
     use_spectral_loss: False
-    
-    # use latitude weighting
     use_latitude_weights: True
     latitude_weights: "/glade/u/home/wchapman/MLWPS/DataLoader/LSM_static_variables_ERA5_zhght.nc"
-    
-    # turn-off variable weighting
     use_variable_weights: False
+    variable_weights:
+        U: [0.005, 0.011, 0.02, 0.029, 0.039, 0.048, 0.057, 0.067, 0.076, 0.085, 0.095, 0.104, 0.113, 0.123, 0.132]
+        V: [0.005, 0.011, 0.02, 0.029, 0.039, 0.048, 0.057, 0.067, 0.076, 0.085, 0.095, 0.104, 0.113, 0.123, 0.132]
+        T: [0.005, 0.011, 0.02, 0.029, 0.039, 0.048, 0.057, 0.067, 0.076, 0.085, 0.095, 0.104, 0.113, 0.123, 0.132]
+        Q: [0.005, 0.011, 0.02, 0.029, 0.039, 0.048, 0.057, 0.067, 0.076, 0.085, 0.095, 0.104, 0.113, 0.123, 0.132]
+        SP: 0.1
+        t2m: 0.1
+        V500: 0.1
+        U500: 0.1
+        T500: 0.1
+        Z500: 1.0
+        Q500: 0.1
     
 predict:
     forecasts:
@@ -164,7 +114,7 @@ predict:
                              # (e.g., duration: 384 for 365-day rollout using 32 GPUs)
         days: 2              # forecast lead time as days (1 means 24-hour forecast)
         
-    save_forecast: '/glade/derecho/scratch/ksha/CREDIT/wxformer_1h/'
+    save_forecast: '/glade/u/home/schreck/scratch/repos/miles-credit/results/6hr/wxformer/'
     save_vars: ['SP','t2m','V500','U500','T500','Z500','Q500']
     
     # turn-off low-pass filter
@@ -174,17 +124,12 @@ predict:
     # save_format: "nc"
 
 pbs: #derecho
-    conda: "/glade/work/ksha/miniconda3/envs/credit"
+    conda: "credit"
     project: "NAML0001"
-    job_name: "wxformer_1h"
+    job_name: "wxformer_6h"
     walltime: "12:00:00"
     nodes: 8
     ncpus: 64
     ngpus: 4
     mem: '480GB'
     queue: 'main'
-
-scaler:
-    type: standard
-    options:
-        channels_last: False
