@@ -6,7 +6,7 @@ that can emulate full NWP models by predicting
 the next state of the atmosphere given the current state.
 
 ## NSF-NCAR Derecho Installation
-Currently, the framework for running MILES-CREDIT on an hpc is designed around Derecho.Derecho requires building PyTorch to enable correct MPI usage, but this requires specific depencies found in credit. To begin create a clone of the pre-built credit environment, which contains the correct version of torch and other packes (torch-vision, numpy and others).
+Currently, the framework for running miles-credit in parallel is centered around NSF-NCAR's Derecho HPC. Derecho requires building several miles-credit dependent packages locally, including PyTorch, to enable correct MPI configuration. To begin, create a clone of the pre-built miles-credit environment, which contains compatiable versions of torch, torch-vision, numpy, and others. 
 
 ```bash
 module purge 
@@ -14,7 +14,7 @@ module load ncarenv/23.09 gcc/12.2.0 ncarcompilers cray-mpich/8.1.27 cuda/12.2.1
 conda create --name credit-derecho --clone /glade/derecho/scratch/benkirk/derecho-pytorch-mpi/envs/credit-pytorch-v2.3.1-derecho-gcc-12.2.0-cray-mpich-8.1.27
 ```
 
-Going forward, care must be taken when installing new packages so that PyTorch and the other credit dependencies are not overridden. Next, grab the most updated version of miles-credit from github:
+Going forward, care must be taken when installing new packages so that PyTorch and the other relevant miles-credit dependencies are not overridden. Next, grab the most updated version of miles-credit from github (assuming no changes to the local-build dependencies):
 
 ```bash
 conda activate credit-derecho
