@@ -131,6 +131,9 @@ trainer:
     # type: multi-step --> full multi-step training (without one-shot)
     #       run train_multistep.py for multi-step
     type: standard
+
+    # (optional) use torch.compile: False. May not be compatiable with custom models
+    compile: False
     
     # load existing weights / optimizer / mixed-precision grad scaler / learning rate scheduler state(s)
     # when starting multi-step training, only use reload weights initially, then set all to true

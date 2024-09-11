@@ -5,7 +5,32 @@ CREDIT is a package to train and run neural networks
 that can emulate full NWP models by predicting
 the next state of the atmosphere given the current state.
 
-## Installation
+## NSF-NCAR Derecho Installation
+Currently, the framework for running MILES-CREDIT on an hpc is designed around Derecho.Derecho requires building PyTorch to enable correct MPI usage, but this requires specific depencies found in credit. To begin create a clone of the pre-built credit environment, which contains the correct version of torch and other packes (torch-vision, numpy and others).
+
+```bash
+module purge 
+module load ncarenv/23.09 gcc/12.2.0 ncarcompilers cray-mpich/8.1.27 cuda/12.2.1 cudnn/8.8.1.3-12 conda/latest
+conda create --name credit-derecho --clone /glade/derecho/scratch/benkirk/derecho-pytorch-mpi/envs/credit-pytorch-v2.3.1-derecho-gcc-12.2.0-cray-mpich-8.1.27
+```
+
+Going forward, care must be taken when installing new packages so that PyTorch and the other credit dependencies are not overridden. Next, grab the most updated version of miles-credit from github:
+
+```bash
+conda activate credit-derecho
+git clone git@github.com:NCAR/miles-credit.git
+cd miles-credit
+```
+
+and then install without dependencies by
+
+```bash
+pip install --no-deps .
+```
+
+Henceforth, when adding new packages aim to use the no dependenices option. 
+
+## Standard Installation 
 Clone from miles-credit github page:
 ```bash
 git clone git@github.com:NCAR/miles-credit.git
