@@ -263,6 +263,12 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         conf['data']['static_first'] = True
     
     # --------------------------------------------------------- #
+    # conf['model'] section
+
+    if 'use_skebs' not in conf['model']:
+        conf['model']['use_skebs'] = False
+    
+    # --------------------------------------------------------- #
     # conf['trainer'] section
     
     if parse_training:

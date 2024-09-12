@@ -275,6 +275,7 @@ model:
 
     # use spectral norm
     use_spectral_norm: True
+    use_skebs: True
 
 loss: 
     # the main training loss

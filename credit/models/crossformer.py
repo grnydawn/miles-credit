@@ -7,6 +7,8 @@ from einops import rearrange
 from einops.layers.torch import Rearrange
 
 from credit.models.base_model import BaseModel
+from credit.skebs import SKEBS_module
+
 
 logger = logging.getLogger(__name__)
 
@@ -322,6 +324,7 @@ class CrossFormer(BaseModel):
         pad_lon=0,
         pad_lat=0,
         use_spectral_norm=True,
+        use_skebs=False,
         **kwargs
     ):
         super().__init__()
@@ -401,6 +404,12 @@ class CrossFormer(BaseModel):
             logger.info(f"Padding each longitudinal boundary with {self.pad_lon} pixels from the other side")
         if self.pad_lat > 0:
             logger.info(f"Padding each pole using a reflection with {self.pad_lat} pixels")
+        
+        
+        self.use_skebs = use_skebs
+        if self.use_skebs:
+            conf = {"model": {"image_width": self.image_width}}
+            self.skebs = SKEBS_module(conf)
 
     def forward(self, x):
 
@@ -449,8 +458,11 @@ class CrossFormer(BaseModel):
             x = x[..., self.pad_lat:-self.pad_lat, :]
 
         x = F.interpolate(x, size=(self.image_height, self.image_width), mode="bilinear")
+        x = x.unsqueeze(2)
 
-        return x.unsqueeze(2)
+        if self.use_skebs:
+            x = self.skebs(x)
+        return x
 
     def rk4(self, x):
 
