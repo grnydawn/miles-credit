@@ -28,6 +28,8 @@ logger = logging.getLogger(__name__)
 
 
 def load_transforms(conf):
+    # ------------------------------------------------------------------- #
+    # transform class
     if conf["data"]["scaler_type"] == 'quantile':
         transform_scaler = NormalizeState_Quantile(conf)
     elif conf["data"]["scaler_type"] == 'quantile-cached':
@@ -37,38 +39,32 @@ def load_transforms(conf):
     elif conf["data"]["scaler_type"] == 'std':
         transform_scaler = NormalizeState(conf)
     elif conf["data"]["scaler_type"] == 'std_new':
-        # --------------------------------------------------- #
-        # the new pipeline
         transform_scaler = Normalize_ERA5_and_Forcing(conf)
-    elif conf["data"]["scaler_type"] == 'sixhour-cached':
+    elif conf["data"]["scaler_type"] == 'std_cached':
         transform_scaler = None
     else:
         logger.log('scaler type not supported check data: scaler_type in config file')
         raise
 
+    # ------------------------------------------------------------------- #
+    # ToTensor class
     if conf["data"]["scaler_type"] == 'quantile-cached':
+        # beidge scaler ToTensor
         to_tensor_scaler = ToTensor_BridgeScaler(conf)
-    elif conf["data"]["scaler_type"] == 'std_new':
-        # --------------------------------------------------- #
-        # the new pipeline
+        
+    elif conf["data"]["scaler_type"] == 'std_new' or 'std_cached':
+        # std_new and std_cached ToTensor
         to_tensor_scaler = ToTensor_ERA5_and_Forcing(conf)
     else:
+        # the old ToTensor
         to_tensor_scaler = ToTensor(conf=conf)
 
+    # ------------------------------------------------------------------- #
+    # combine transform and ToTensor
     if transform_scaler is not None:
-        # transform --> ToTensor
-        transforms = [
-            transform_scaler,
-            to_tensor_scaler
-        ]
+        transforms = [transform_scaler, to_tensor_scaler]
     else:
-        # 'sixhour-cached' needs ToTensor only
-        transforms = [
-            to_tensor_scaler
-        ]
-    
-    # # Filter out None values from the transforms list
-    # transforms = [t for t in transforms if t is not None]
+        transforms = [to_tensor_scaler]
 
     return tforms.Compose(transforms)
 

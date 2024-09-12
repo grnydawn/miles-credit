@@ -8,28 +8,6 @@ from tqdm import tqdm
 import torch
 from collections.abc import Sequence
 
-
-class TOADataLoader:
-    def __init__(self, conf):
-        self.TOA = xr.open_dataset(conf["data"]["TOA_forcing_path"]).load()
-        self.times_b = pd.to_datetime(self.TOA.time.values)
-
-        # Precompute day of year and hour arrays
-        self.days_of_year = self.times_b.dayofyear
-        self.hours_of_day = self.times_b.hour
-
-    def __call__(self, datetime_input):
-        doy = datetime_input.dayofyear
-        hod = datetime_input.hour
-
-        # Use vectorized comparison for masking
-        mask_toa = (self.days_of_year == doy) & (self.hours_of_day == hod)
-        selected_tsi = self.TOA['tsi'].sel(time=mask_toa) / 2540585.74
-
-        # Convert to tensor and add dimension
-        return torch.tensor(selected_tsi.to_numpy()).unsqueeze(0).float()
-        
-
 def era5_tsi_data() -> xr.DataArray:
     """A TsiDataProvider that returns ERA5 compatible TSI data. From [Graphcast](https://github.com/google-deepmind/graphcast/blob/main/graphcast/solar_radiation.py).
 

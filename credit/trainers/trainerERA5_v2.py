@@ -230,6 +230,7 @@ class Trainer(BaseTrainer):
 
             if not np.isfinite(np.mean(results_dict["train_loss"])):
                 try:
+                    print('Invalid loss value: {}'.format(np.mean(results_dict["train_loss"])))
                     raise optuna.TrialPruned()
                 except Exception as E:
                     raise E
@@ -403,6 +404,7 @@ class Trainer(BaseTrainer):
                     torch.distributed.barrier()
 
                 results_dict["valid_loss"].append(batch_loss[0].item())
+                results_dict["valid_forecast_len"].append(forecast_len + 1)
 
                 # print to tqdm
                 to_print = "Epoch: {} valid_loss: {:.6f} valid_acc: {:.6f} valid_mae: {:.6f}".format(
