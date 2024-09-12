@@ -84,6 +84,9 @@ data:
     valid_forecast_len: 0
 
     # TRAINING ONLY
+    # [Optional] backprop_on_timestep: use a list, for ex., [1, 2, 3, 5, 6, 7] to backprop on those timesteps when doing multi-step training
+    # backprop_on_timestep: [1, 2, 3, 5, 6, 7]
+
     # when forecast_len = 0, it does nothing
     # when forecast_len > 0, it computes training loss on the last forecast state only
     # this option speed-up multi-step training, it ONLY works with trainer type: standard
@@ -114,7 +117,7 @@ trainer:
     # the keyword that controls GPU usage
     # fsdp: fully sharded data parallel
     # ddp: distributed data parallel
-    # none: CPU-based training
+    # none: single-GPU training
     mode: fsdp
     
     # fsdp-specific GPU optimization
