@@ -92,6 +92,16 @@ class Trainer(BaseTrainer):
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
         forecast_length = conf["data"]["forecast_len"]
 
+        # [Optional] Use the config option to set when to backprop
+        if 'backprop_on_timestep' in conf['data']:
+            backprop_on_timestep = conf['data']['backprop_on_timestep']
+        else:
+            # If not specified in config, use the range 1 to forecast_len
+            backprop_on_timestep = list(range(1, conf['data']['forecast_len']+1))
+        assert forecast_length <= backprop_on_timestep[-1], (
+            f"forecast_length ({forecast_length + 1}) must not exceed the max value in backprop_on_timestep {backprop_on_timestep}"
+        )
+
         # update the learning rate if epoch-by-epoch updates that dont depend on a metric
         if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "lambda":
             scheduler.step()
@@ -150,27 +160,30 @@ class Trainer(BaseTrainer):
                         # predict with the model
                         y_pred = self.model(x)
 
-                        # calculate rolling loss
-                        if "y_surf" in batch:
-                            y = concat_and_reshape(batch["y"], batch["y_surf"]).to(self.device)
-                        else:
-                            y = reshape_only(batch["y"]).to(self.device)
+                        # only load y-truth data if we intend to backprop (default is every step gets grads computed
+                        if forecast_step in backprop_on_timestep:
 
-                        if 'y_diag' in batch:
+                            # calculate rolling loss
+                            if "y_surf" in batch:
+                                y = concat_and_reshape(batch["y"], batch["y_surf"]).to(self.device)
+                            else:
+                                y = reshape_only(batch["y"]).to(self.device)
 
-                            # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
-                            y_diag_batch = batch['y_diag'].to(self.device).permute(0, 2, 1, 3, 4).float()
+                            if 'y_diag' in batch:
 
-                            # concat on var dimension
-                            y = torch.cat((y, y_diag_batch), dim=1)
+                                # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
+                                y_diag_batch = batch['y_diag'].to(self.device).permute(0, 2, 1, 3, 4).float()
 
-                        loss = criterion(y.to(y_pred.dtype), y_pred).mean()
+                                # concat on var dimension
+                                y = torch.cat((y, y_diag_batch), dim=1)
 
-                        # track the loss
-                        accum_log(logs, {'loss': loss.item()})
+                            loss = criterion(y.to(y_pred.dtype), y_pred).mean()
 
-                        # compute gradients
-                        scaler.scale(loss).backward()
+                            # track the loss
+                            accum_log(logs, {'loss': loss.item()})
+
+                            # compute gradients
+                            scaler.scale(loss).backward()
 
                         if distributed:
                             torch.distributed.barrier()
