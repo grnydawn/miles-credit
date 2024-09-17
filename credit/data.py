@@ -44,6 +44,9 @@ Array = Union[np.ndarray, xr.DataArray]
 IMAGE_ATTR_NAMES = ('historical_ERA5_images', 'target_ERA5_images')
 
 def generate_datetime(start_time, end_time, interval_hr):
+    '''
+    Generate a list of datetime.datetime based on stat, end times, and hour interval. 
+    '''
     # Define the time interval (e.g., every hour)
     interval = datetime.timedelta(hours=interval_hr)
     
@@ -56,10 +59,16 @@ def generate_datetime(start_time, end_time, interval_hr):
     return datetime_list
 
 def hour_to_nanoseconds(input_hr):
+    '''
+    Convert hour to nanoseconds
+    '''
     # hr * min_per_hr * sec_per_min * nanosec_per_sec
     return input_hr*60 * 60 * 1000000000
 
 def nanoseconds_to_year(nanoseconds_value):
+    '''
+    Given datetime info as nanoseconds, compute which year it belongs to.
+    '''
     return np.datetime64(nanoseconds_value, 'ns').astype('datetime64[Y]').astype(int) + 1970
 
 def extract_month_day_hour(dates):
@@ -84,15 +93,18 @@ def find_common_indices(list1, list2):
     
     return indices_list1, indices_list2
     
-#
 def concat_and_reshape(x1, x2):
+    '''
+    Flattening the "level" coordinate of upper-air variables and concatenate it will surface variables. 
+    '''
     x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
     x_concat = torch.cat((x1, x2), dim=2)
     return x_concat.permute(0, 2, 1, 3, 4)
 
 def reshape_only(x1):
     '''
-    As in "concat_and_reshape", but for upper-air variables only.
+    Flattening the "level" coordinate of upper-air variables.
+    As in "concat_and_reshape", but no concat
     '''
     x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
     return x1.permute(0, 2, 1, 3, 4)
@@ -236,7 +248,7 @@ def find_key_for_number(input_number, data_dict):
 def drop_var_from_dataset(xarray_dataset, varname_keep):
     '''
     Preserve a given set of variables from an xarray.Dataset, and drop the rest.
-    It will raise if xarray.Dataset.keys() != varname_keep
+    It will raise error if `varname_key` is missing from `xarray_dataset`
     '''
     varname_all = list(xarray_dataset.keys())
 
@@ -339,22 +351,106 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         # max possible forecast len
         self.max_forecast_len = max_forecast_len
 
-        # ======================================================== #
-        # upper-air files
-
+        # =================================================================== #
+        # flags to determin if any of the [surface, dyn_forcing, diagnostics]
+        # variable groups share the same file as upper air variables
+        flag_share_surf = False
+        flag_share_dyn = False
+        flag_share_diag = False
+        
         all_files = []
         filenames = sorted(filenames)
-        
+
+        # ------------------------------------------------------------------ #
+        # blocks that can handle no-sharing (each group has it own file)
+        ## surface
+        if filename_surface is not None:
+            surface_files = []
+            filename_surface = sorted(filename_surface)
+            
+            if filenames == filename_surface:
+                flag_share_surf = True
+            else:
+                for fn in filename_surface:
+    
+                    # drop variables if they are not in the config
+                    ds = get_forward_data(filename=fn)
+                    ds_surf = drop_var_from_dataset(ds, varname_surface)
+                    surface_files.append(ds_surf)
+                    
+                self.surface_files = surface_files
+        else:
+            self.surface_files = False
+            
+        ## dynamic forcing
+        if filename_dyn_forcing is not None:
+            dyn_forcing_files = []
+            filename_dyn_forcing = sorted(filename_dyn_forcing)
+            
+            if filenames == filename_dyn_forcing:
+                flag_share_dyn = True
+            else:
+                for fn in filename_dyn_forcing:
+    
+                    # drop variables if they are not in the config
+                    ds = get_forward_data(filename=fn)
+                    ds_dyn = drop_var_from_dataset(ds, varname_dyn_forcing)
+                    dyn_forcing_files.append(ds_dyn)
+    
+                self.dyn_forcing_files = dyn_forcing_files
+        else:
+            self.dyn_forcing_files = False
+
+        ## diagnostics
+        if filename_diagnostic is not None:
+            diagnostic_files = []
+            filename_diagnostic = sorted(filename_diagnostic)
+
+            if filenames == filename_diagnostic:
+                flag_share_diag = True
+            else:
+                for fn in filename_diagnostic:
+    
+                    # drop variables if they are not in the config
+                    ds = get_forward_data(filename=fn)
+                    ds_diag = drop_var_from_dataset(ds, varname_diagnostic)
+                    diagnostic_files.append(ds_diag)
+                    
+                self.diagnostic_files = diagnostic_files
+        else:
+            self.diagnostic_files = False
+
+        # ------------------------------------------------------------------ #
+        # blocks that can handle file sharing (share with upper air file)
         for fn in filenames:
             # drop variables if they are not in the config
-            xarray_dataset = get_forward_data(filename=fn)
-            xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_upper_air)
+            ds = get_forward_data(filename=fn)
+            ds_upper = drop_var_from_dataset(ds, varname_upper_air)
+            
+            if flag_share_surf:
+                ds_surf = drop_var_from_dataset(ds, varname_surface)
+                surface_files.append(ds_surf)
 
-            # collect yearly datasets within a list
-            all_files.append(xarray_dataset)
+            if flag_share_dyn:
+                ds_dyn = drop_var_from_dataset(ds, varname_dyn_forcing)
+                dyn_forcing_files.append(ds_dyn)
+
+            if flag_share_diag:
+                ds_diag = drop_var_from_dataset(ds, varname_diagnostic)
+                diagnostic_files.append(ds_diag)
+                
+            all_files.append(ds_upper)
             
         self.all_files = all_files
         
+        if flag_share_surf:
+            self.surface_files = surface_files
+        if flag_share_dyn:
+            self.dyn_forcing_files = dyn_forcing_files
+        if flag_share_diag:
+            self.diagnostic_files = diagnostic_files
+
+        # -------------------------------------------------------------------------- #
         # get sample indices from ERA5 upper-air files:
         ind_start = 0
         self.ERA5_indices = {} # <------ change
@@ -364,70 +460,7 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
                                                 ind_start,
                                                 ind_start + len(ERA5_xarray['time'])]
             ind_start += len(ERA5_xarray['time']) + 1
-
-        # ======================================================== #
-        # surface files
-        if filename_surface is not None:
-
-            surface_files = []
-            filename_surface = sorted(filename_surface)
-
-            for fn in filename_surface:
-
-                # drop variables if they are not in the config
-                xarray_dataset = get_forward_data(filename=fn)
-                xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_surface)
-
-                surface_files.append(xarray_dataset)
-
-            self.surface_files = surface_files
-
-        else:
-            self.surface_files = False
-
-
-        # ======================================================== #
-        # dynamic forcing files
-        if filename_dyn_forcing is not None:
-
-            dyn_forcing_files = []
-            filename_dyn_forcing = sorted(filename_dyn_forcing)
-
-            for fn in filename_dyn_forcing:
-
-                # drop variables if they are not in the config
-                xarray_dataset = get_forward_data(filename=fn)
-                xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_dyn_forcing)
-
-                dyn_forcing_files.append(xarray_dataset)
-
-            self.dyn_forcing_files = dyn_forcing_files
-
-        else:
-            self.dyn_forcing_files = False
-
-        # ======================================================== #
-        # diagnostic file
-        self.filename_diagnostic = filename_diagnostic
-        
-        if self.filename_diagnostic is not None:
-
-            diagnostic_files = []
-            filename_diagnostic = sorted(filename_diagnostic)
             
-            for fn in filename_diagnostic:
-
-                # drop variables if they are not in the config
-                xarray_dataset = get_forward_data(filename=fn)
-                xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_diagnostic)
-                
-                diagnostic_files.append(xarray_dataset)
-                
-            self.diagnostic_files = diagnostic_files
-
-        else:
-            self.diagnostic_files = False
-
         # ======================================================== #
         # forcing file
         self.filename_forcing = filename_forcing
@@ -436,10 +469,10 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
             assert os.path.isfile(filename_forcing), 'Cannot find forcing file [{}]'.format(filename_forcing)
 
             # drop variables if they are not in the config
-            xarray_dataset = get_forward_data(filename_forcing)
-            xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_forcing)
+            ds = get_forward_data(filename_forcing)
+            ds_forcing = drop_var_from_dataset(ds, varname_forcing)
 
-            self.xarray_forcing = xarray_dataset
+            self.xarray_forcing = ds_forcing
         else:
             self.xarray_forcing = False
 
@@ -451,10 +484,10 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
             assert os.path.isfile(filename_static), 'Cannot find static file [{}]'.format(filename_static)
 
             # drop variables if they are not in the config
-            xarray_dataset = get_forward_data(filename_static)
-            xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_static)
+            ds = get_forward_data(filename_static)
+            ds_static = drop_var_from_dataset(ds, varname_static)
             
-            self.xarray_static = xarray_dataset
+            self.xarray_static = ds_static
         else:
             self.xarray_static = False
 
@@ -653,7 +686,7 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         # ------------------------------------------------------------------------------ #
         
         ## no diagnostics because they are output only
-        varname_diagnostic = None
+        # varname_diagnostic = None
         
         self.rank = rank
         self.world_size = world_size
@@ -663,16 +696,18 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
 
         print(self.init_datetime)
         
-        self.which_forecast = which_forecast # <-- got from the old roll-out. Dont know 
+        self.which_forecast = which_forecast # <-- got from the old roll-out script. Dont know 
         
         # -------------------------------------- #
-        self.filenames = sorted(filenames) # <------------------------ a list of files
-        self.filename_surface = sorted(filename_surface) # <---------- a list of files
-        self.filename_dyn_forcing = sorted(filename_dyn_forcing) # <-- a list of files
+        # file names
+        self.filenames = filenames # <------------------------ a list of files
+        self.filename_surface = filename_surface # <---------- a list of files
+        self.filename_dyn_forcing = filename_dyn_forcing # <-- a list of files
         self.filename_forcing = filename_forcing # <-- single file
         self.filename_static = filename_static # <---- single file
         
         # -------------------------------------- #
+        # var names
         self.varname_upper_air = varname_upper_air
         self.varname_surface = varname_surface
         self.varname_dyn_forcing = varname_dyn_forcing
@@ -696,21 +731,11 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         self.current_epoch = 0
         self.rollout_p = rollout_p
         
-        if 'lead_time_periods' in conf['data']:
-            self.lead_time_periods = conf['data']['lead_time_periods']
-        else:
-            self.lead_time_periods = 1
-        
-        if 'skip_periods' in conf['data']:
-            self.skip_periods = conf['data']['skip_periods']
-        else:
-            self.skip_periods = 1
-            
-        if self.skip_periods is None:
-            self.skip_periods = 1
+        self.lead_time_periods = conf['data']['lead_time_periods']
+        self.skip_periods = conf['data']['skip_periods']
 
     def ds_read_and_subset(self, filename, time_start, time_end, varnames):
-        sliced_x = xr.open_zarr(filename, consolidated=True)
+        sliced_x = get_forward_data(filename)
         sliced_x = sliced_x.isel(time=slice(time_start, time_end))
         sliced_x = drop_var_from_dataset(sliced_x, varnames)
         return sliced_x
@@ -725,7 +750,7 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
                                            i_init_end+1,
                                            self.varname_upper_air)
         # surface variables
-        if self.varname_surface is not None:
+        if self.filename_surface is not None:
             sliced_surface = self.ds_read_and_subset(self.filename_surface[i_file], 
                                                      i_init_start,
                                                      i_init_end+1,
@@ -736,8 +761,8 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
 
 
         # dynamic forcing variables
-        if self.varname_dyn_forcing is not None:
-            sliced_dyn_forcing = self.ds_read_and_subset(self.filename_dyn_forcing[i_file],
+        if self.filename_dyn_forcing is not None:
+            sliced_dyn_forcing = self.ds_read_and_subset(self.filename_dyn_forcing[i_file], 
                                                          i_init_start,
                                                          i_init_end+1,
                                                          self.varname_dyn_forcing)
@@ -775,8 +800,7 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
             # merge static to sliced_x
             sliced_x = sliced_x.merge(sliced_static)
         return sliced_x
-
-    
+        
     def find_start_stop_indices(self, index):
         # ============================================================================ #
         # shift hours for history_len > 1, becuase more than one init times are needed
@@ -1024,131 +1048,6 @@ class ERA5Dataset(torch.utils.data.Dataset):
 
         return sample
 
-# ======================================= #
-# This dataset is replaced by ERA5Dataset
-# ======================================= #
-# class ERA5(torch.utils.data.Dataset):
-
-#     def __init__(
-#             self,
-#             filenames: list = ['/glade/derecho/scratch/wchapman/STAGING/TOTAL_2012-01-01_2012-12-31_staged.zarr',
-#                                '/glade/derecho/scratch/wchapman/STAGING/TOTAL_2013-01-01_2013-12-31_staged.zarr'],
-#             history_len: int = 1,
-#             forecast_len: int = 2,
-#             transform: Optional[Callable] = None,
-#             seed=42,
-#             skip_periods=None,
-#             one_shot=None,
-#             max_forecast_len=None
-#     ):
-#         self.history_len = history_len
-#         self.forecast_len = forecast_len
-#         self.transform = transform
-#         self.skip_periods = skip_periods
-#         self.one_shot = one_shot
-#         self.total_seq_len = self.history_len + self.forecast_len
-#         all_fils = []
-#         filenames = sorted(filenames)
-#         for fn in filenames:
-#             all_fils.append(get_forward_data(filename=fn))
-#         self.all_fils = all_fils
-#         self.data_array = all_fils[0]
-#         self.rng = np.random.default_rng(seed=seed)
-#         self.max_forecast_len = max_forecast_len
-
-#         # set data places:
-#         indo = 0
-#         self.meta_data_dict = {}
-#         for ee, bb in enumerate(self.all_fils):
-#             self.meta_data_dict[str(ee)] = [len(bb['time']), indo, indo + len(bb['time'])]
-#             indo += len(bb['time']) + 1
-
-#         # set out of bounds indexes...
-#         OOB = []
-#         for kk in self.meta_data_dict.keys():
-#             OOB.append(generate_integer_list_around(self.meta_data_dict[kk][2]))
-#         self.OOB = flatten_list(OOB)
-
-#     def __post_init__(self):
-#         # Total sequence length of each sample.
-#         self.total_seq_len = self.history_len + self.forecast_len
-
-#     def __len__(self):
-#         tlen = 0
-#         for bb in self.all_fils:
-#             tlen += len(bb['time']) - self.total_seq_len + 1
-#         return tlen
-
-#     def update_forecast_len(self, new_forecast_len):
-#         """Update the forecast length and recompute dependent attributes."""
-#         self.forecast_len = new_forecast_len
-#         self.total_seq_len = self.history_len + self.forecast_len
-
-#     def __getitem__(self, index):
-
-#         # Update forecast_len if needed
-#         if isinstance(self.max_forecast_len, int):
-#             self._forecast_len = self.forecast_len
-#             std_dev = 1.0
-#             new_len = int(np.random.normal(loc=self._forecast_len, scale=std_dev, size=1))
-#             new_len = np.clip(new_len, 1, 120)
-#             self.update_forecast_len(new_len)
-
-#         # find the result key:
-#         result_key = find_key_for_number(index, self.meta_data_dict)
-#         # get the data selection:
-#         true_ind = index - self.meta_data_dict[result_key][1]
-
-#         if true_ind > (len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 1)):
-#             true_ind = len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 1)
-
-#         datasel = self.all_fils[int(result_key)].isel(
-#             time=slice(true_ind, true_ind + self.history_len + self.forecast_len + 1))
-
-#         if (self.skip_periods is not None) and (self.one_shot is None):
-#             sample = Sample(
-#                 historical_ERA5_images=datasel.isel(time=slice(0, self.history_len, self.skip_periods)),
-#                 target_ERA5_images=datasel.isel(time=slice(self.history_len, len(datasel['time']), self.skip_periods)),
-#                 datetime_index=datasel.time.values.astype('datetime64[s]').astype(int)
-#             )
-
-#         elif (self.skip_periods is not None) and (self.one_shot is not None):
-#             target_ERA5_images = datasel.isel(time=slice(self.history_len, len(datasel['time']), self.skip_periods))
-#             target_ERA5_images = target_ERA5_images.isel(time=slice(0, 1))
-
-#             sample = Sample(
-#                 historical_ERA5_images=datasel.isel(time=slice(0, self.history_len, self.skip_periods)),
-#                 target_ERA5_images=target_ERA5_images,
-#                 datetime_index=datasel.time.values.astype('datetime64[s]').astype(int)
-#             )
-
-#         elif self.one_shot is not None:
-#             historical_data = datasel.isel(time=slice(0, self.history_len)).load()
-#             target_data = datasel.isel(time=slice(-1, None)).load()
-#             sample = Sample(
-#                 historical_ERA5_images=historical_data,
-#                 target_ERA5_images=target_data,
-#                 datetime_index=[int(historical_data.time.values[0].astype('datetime64[s]').astype(int)),
-#                                 int(target_data.time.values[0].astype('datetime64[s]').astype(int))]
-#             )
-#         else:
-#             sample = Sample(
-#                 historical_ERA5_images=datasel.isel(time=slice(0, self.history_len)),
-#                 target_ERA5_images=datasel.isel(time=slice(self.history_len, len(datasel['time']))),
-#                 datetime_index=datasel.time.values.astype('datetime64[s]').astype(int)
-#             )
-
-#         if self.transform:
-#             sample = self.transform(sample)
-
-#         sample["index"] = index
-
-#         if isinstance(self.max_forecast_len, int):
-#             sample["forecast_hour"] = self.forecast_len
-#             self.forecast_len = self._forecast_len
-
-#         return sample
-
 # ================================= #
 # This dataset is old, but not sure
 # if anyone still uses it
@@ -1326,100 +1225,6 @@ class Dataset_BridgeScaler(torch.utils.data.Dataset):
 # (1 class of?) huge sharded models, but otherwise have been
 # superseded by ERA5Dataset.
 # ================================================================== #
-# class DistributedSequentialDataset(torch.utils.data.IterableDataset):
-#     # https://colab.research.google.com/drive/1OFLZnX9y5QUFNONuvFsxOizq4M-tFvk-?usp=sharing#scrollTo=CxSCQPOMHgwo
-
-#     def __init__(self, filenames, history_len, forecast_len, skip_periods, rank, world_size, shuffle=False,
-#                  transform=None, rollout_p=0.0):
-
-#         self.dataset = ERA5Dataset(
-#             filenames=filenames,
-#             history_len=history_len,
-#             forecast_len=forecast_len,
-#             skip_periods=skip_periods,
-#             transform=transform
-#         )
-#         self.meta_data_dict = self.dataset.meta_data_dict
-#         self.all_fils = self.dataset.all_fils
-#         self.history_len = history_len
-#         self.forecast_len = forecast_len
-#         self.filenames = filenames
-#         self.transform = transform
-#         self.rank = rank
-#         self.world_size = world_size
-#         self.shuffle = shuffle
-#         self.skip_periods = skip_periods
-#         self.current_epoch = 0
-#         self.rollout_p = rollout_p
-
-#     def __len__(self):
-#         tlen = 0
-#         for bb in self.all_fils:
-#             tlen += (len(bb['time']) - self.forecast_len)
-#         return tlen
-
-#     def set_epoch(self, epoch):
-#         self.current_epoch = epoch
-
-#     def set_rollout_prob(self, p):
-#         self.rollout_p = p
-
-#     def __iter__(self):
-#         worker_info = get_worker_info()
-#         num_workers = worker_info.num_workers if worker_info is not None else 1
-#         worker_id = worker_info.id if worker_info is not None else 0
-#         sampler = DistributedSampler(self, num_replicas=num_workers * self.world_size,
-#                                      rank=self.rank * num_workers + worker_id, shuffle=self.shuffle)
-#         sampler.set_epoch(self.current_epoch)
-
-#         for index in iter(sampler):
-#             result_key = find_key_for_number(index, self.meta_data_dict)
-#             true_ind = index - self.meta_data_dict[result_key][1]
-
-#             if true_ind > (len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 1)):
-#                 true_ind = len(self.all_fils[int(result_key)]['time']) - (self.history_len + self.forecast_len + 3)
-
-#             indices = list(range(true_ind, true_ind + self.history_len + self.forecast_len))
-#             stop_forecast = False
-
-#             for k, ind in enumerate(indices):
-
-#                 concatenated_samples = {'x': [], 'x_surf': [], 'y': [], 'y_surf': [], "static": [], "TOA": []}
-#                 sliced = xr.open_zarr(self.filenames[int(result_key)], consolidated=True).isel(
-#                     time=slice(ind, ind + self.history_len + self.forecast_len + 1, self.skip_periods))
-#                 sample = {
-#                     'x': sliced.isel(time=slice(k, k + self.history_len, 1)),
-#                     'y': sliced.isel(time=slice(k + self.history_len, k + self.history_len + 1, 1)),
-#                     't': sliced.time.values.astype('datetime64[s]').astype(int),
-#                 }
-
-#                 if self.transform:
-#                     sample = self.transform(sample)
-
-#                 for key in concatenated_samples.keys():
-#                     concatenated_samples[key] = sample[key].squeeze()
-
-#                 stop_forecast = (torch.rand(1).item() < self.rollout_p)
-#                 stop_forecast = stop_forecast or (k == self.forecast_len)
-
-#                 concatenated_samples['forecast_hour'] = k
-#                 concatenated_samples['index'] = index
-#                 concatenated_samples['stop_forecast'] = stop_forecast
-
-#                 yield concatenated_samples
-
-#                 if stop_forecast:
-#                     break
-
-#                 if (k == self.forecast_len):
-#                     break
-
-# ================================================================== #
-# Note: DistributedSequentialDataset & DistributedSequentialDataset
-# are legacy; they wrap ERA5Dataset to send data batches to GPUs for
-# (1 class of?) huge sharded models, but otherwise have been
-# superseded by ERA5Dataset.
-# ================================================================== #
 class SequentialDataset(torch.utils.data.Dataset):
 
     def __init__(self, filenames, history_len=1, forecast_len=2, skip_periods=1, transform=None, random_forecast=True):
@@ -1486,8 +1291,6 @@ class SequentialDataset(torch.utils.data.Dataset):
         self.iteration_count += 1
 
         return sample
-
-
 
 # =========================================== #
 # This class may have the one-step-off problem

@@ -21,7 +21,6 @@ dependencies = [
     "netcdf4",
     "torch",
     "torchvision",
-    "wandb",
     "pyyaml",
     "cartopy",
     "dask",
@@ -36,7 +35,6 @@ dependencies = [
     "vector-quantize-pytorch",
     "haversine",
     "pvlib",
-    "sphinx",
     "geocat-comp",
    ]
 
