@@ -131,8 +131,8 @@ class Predict_Dataset_Metrics(Predict_Dataset):
                 output_dict = {}
 
                 # get all inputs in one xr.Dataset
-                #print(i_file, i_init_start, i_init_end, N_times)
                 sliced_x = self.load_zarr_as_input(i_file, i_init_start, i_init_end)
+                #print(i_file, i_init_start, i_init_end, N_times)
                 #print(sliced_x['time'])
                 
                 # Check if additional data from the next file is needed
