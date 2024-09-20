@@ -479,7 +479,10 @@ def main(rank, world_size, conf, backend, trial=False):
     # have to send the module to the correct device first
 
     m.to(device)
-    # m = torch.compile(m)
+
+    # move out of eager-mode
+    if conf["trainer"].get("compile", False):
+        m = torch.compile(m)
 
     # Wrap in DDP or FSDP module, or none
 

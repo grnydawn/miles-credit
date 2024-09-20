@@ -89,11 +89,14 @@ def main():
                 os.makedirs(args.dataout, exist_ok=True)
         print(f"Rank {rank:d}: ", era5_subset_times[0], era5_subset_times[-1])
         transform_era5_times(era5_subset_times, rank, scaler_file=args.scalerfile, era5_file_dir=e5_file_dir,
+                             scaler_type=scaler_type,
                              vars_3d=vars_3d, vars_surf=vars_surf, out_dir=args.dataout)
     if args.fitdt:
-        scalers = fit_scaled_era5_time_residuals(era5_subset_times, rank, era5_file_dir=args.dataout,
-                                       scaler_type=scaler_type,
-                                       scaler_config=scaler_config)
+        scalers = fit_scaled_era5_time_residuals(era5_subset_times, rank,
+                                                 dt=1,
+                                                 era5_file_dir=args.dataout,
+                                                 scaler_type=scaler_type,
+                                                 scaler_config=scaler_config)
         all_scalers = np.array(comm.gather(scalers, root=0))
         if rank == 0:
             all_scalers_dict = {"start_date": scaler_start_dates, "end_date": scaler_end_dates,
@@ -111,6 +114,9 @@ def main():
 
 def fit_era5_scaler_times(times, rank, era5_file_dir=None, vars_3d=None, vars_surf=None, scaler_type="quantile",
                           scaler_config=None):
+    """
+
+    """
     if scaler_config is None:
         scaler_config = dict()
     dsc_3d = scalers[scaler_type](**scaler_config)
@@ -154,7 +160,7 @@ def fit_era5_scaler_times(times, rank, era5_file_dir=None, vars_3d=None, vars_su
 def transform_era5_times(times, rank, scaler_file=None, era5_file_dir=None, vars_3d=None, vars_surf=None,
                          scaler_type=None, out_dir="/glade/derecho/scratch/dgagne/era5_quantile/", var_encoding=None):
     if var_encoding is None:
-        var_encoding = {"zlib": True, "complevel": 1, "shuffle": True}
+        var_encoding = {"zlib": True, "complevel": 3, "shuffle": True, "significant_digits": 4}
     dqs_df = pd.read_parquet(scaler_file)
     dqs_end_dates = pd.DatetimeIndex(dqs_df["end_date"])
     dqs_3d = dqs_df["scaler_3d"][dqs_end_dates < "2014-01-01"].apply(read_scaler).sum()
@@ -171,8 +177,6 @@ def transform_era5_times(times, rank, scaler_file=None, era5_file_dir=None, vars
             var_levels.append(f"{var}_{level:d}")
     n_times = times.size
     times_index = pd.DatetimeIndex(times)
-    n_3d_vars = len(var_levels)
-    n_vars = n_3d_vars + len(vars_surf)
     for t, ctime in enumerate(times_index):
         print(f"Rank {rank:d}: {ctime} {t + 1:d}/{n_times:d}")
         
@@ -209,15 +213,15 @@ def fit_scaled_era5_time_residuals(times, rank, era5_file_dir=None, dt=1, scaler
     Fit scalers to distributions of time differences for each variable.
 
     Args:
-        times:
-        rank:
-        era5_file_dir:
-        dt:
-        scaler_type:
-        scaler_config:
+        times: List or Series of times
+        rank (int): MPI rank
+        era5_file_dir (str): Path to era5 scaled files
+        dt (int): number of hours difference
+        scaler_type (str): standard or quantile
+        scaler_config (dict): kwargs for the scaler obj
 
     Returns:
-
+        3D scaler, surface scaler
     """
     times_index = pd.DatetimeIndex(times)
     n_times = times.size
@@ -228,15 +232,17 @@ def fit_scaled_era5_time_residuals(times, rank, era5_file_dir=None, dt=1, scaler
     for t, ctime in enumerate(times_index):
         ct1 = ctime + pd.Timedelta(dt, "hours")
         print(f"Rank {rank:d}: {ctime} {t + 1:d}/{n_times:d}")
-        sds_t_filename = join(era5_file_dir, ctime.strftime("%Y/%m/%d/"), f"TOTAL_{ctime}_{scaler_type}.nc")
-        sds_t1_filename = join(era5_file_dir, ctime.strftime("%Y/%m/%d/"),f"TOTAL_{ct1}_{scaler_type}.nc")
+        ct_str = ctime.strftime("%Y-%m-%dT%H:%M:%S")
+        ct1_str = ct1.strftime("%Y-%m-%dT%H:%M:%S")
+        sds_t_filename = join(era5_file_dir, ctime.strftime("%Y/%m/%d/"), f"TOTAL_{ct_str}_{scaler_type}.nc")
+        sds_t1_filename = join(era5_file_dir, ctime.strftime("%Y/%m/%d/"),f"TOTAL_{ct1_str}_{scaler_type}.nc")
         if not (exists(sds_t1_filename) and exists(sds_t_filename)):
             continue
         sds_t = xr.open_dataset(sds_t_filename)
         sds_t1 = xr.open_dataset(sds_t1_filename)
-        sds_3d_diff = sds_t1["levels"] - sds_t["levels"]
+        sds_3d_diff = (sds_t1["levels"].squeeze() - sds_t["levels"].squeeze()).expand_dims(dim="time", axis=0)
         dsc_3d.fit(sds_3d_diff)
-        sds_surf_diff = sds_t1["surface"] - sds_t["surface"]
+        sds_surf_diff = (sds_t1["surface"].squeeze() - sds_t["surface"].squeeze()).expand_dims(dim="time", axis=0)
         dsc_surf.fit(sds_surf_diff)
         sds_t.close()
         sds_t1.close()
