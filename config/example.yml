@@ -275,7 +275,9 @@ model:
 
     # use spectral norm
     use_spectral_norm: True
-    use_skebs: True
+    post_conf: 
+        use_skebs: False
+        image_width: 1280
 
 loss: 
     # the main training loss

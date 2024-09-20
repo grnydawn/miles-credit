@@ -9,7 +9,7 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 import torch.nn.functional as F
 from torch import nn
 #from credit.models.base_model import BaseModel
-from credit.skebs import SKEBS_module
+from credit.postBlock import PostBlock
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -69,9 +69,9 @@ class SegmentationModel(torch.nn.Module):
         self.model = load_premade_encoder_model(conf['model']['architecture'])
         # Additional layers for testing
 
-        self.use_skebs = conf["model"]["use_skebs"]
-        if self.use_skebs:
-            self.skebs = SKEBS_module(conf)
+        self.use_postBlock = conf["model"]["post_conf"]["use_skebs"] # or post_conf["use_lap"] etc
+        if self.use_postBlock:
+            self.postblock = PostBlock(conf["model"]["post_conf"])
 
 
     def concat_and_reshape(self, x1, x2):
@@ -89,8 +89,8 @@ class SegmentationModel(torch.nn.Module):
         x = F.avg_pool3d(x, kernel_size=(2, 1, 1)) if x.shape[2] > 1 else x
         x = x.squeeze(2) # squeeze time dim
         x = self.rk4(x) if self.rk4_integration else self.model(x)
-        if self.use_skebs:
-            x = self.skebs(x)
+        if self.use_postBlock:
+            x = self.postblock(x)
         return x.unsqueeze(2)
 
     def rk4(self, x):
