@@ -66,6 +66,10 @@ class Predict_Dataset_Metrics(Predict_Dataset):
         self.init_datetime[index] = generate_datetime(self.init_datetime[index][0], self.init_datetime[index][1], self.lead_time_periods)
         # convert datetime obj to nanosecondes
         init_time_list_dt = [np.datetime64(date.strftime('%Y-%m-%d %H:%M:%S')) for date in self.init_datetime[index]]
+        
+        # init_time_list_np: a list of python datetime objects, each is a forecast step
+        # init_time_list_np[0]: the first initialization time
+        # init_time_list_np[t]: the forcasted time of the (t-1)th step; the initialization time of the t-th step
         self.init_time_list_np = [np.datetime64(str(dt_obj) + '.000000000').astype(datetime) for dt_obj in init_time_list_dt]
 
         info = []

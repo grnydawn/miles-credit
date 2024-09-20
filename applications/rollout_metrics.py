@@ -21,6 +21,7 @@ import numpy as np
 
 # ---------- #
 import torch
+import torch.distributed as dist
 
 # ---------- #
 # credit
@@ -32,7 +33,7 @@ from credit.pbs import launch_script, launch_script_mpi
 from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
 from credit.metrics import LatWeightedMetrics
 from credit.forecast import load_forecasts
-from credit.distributed import distributed_model_wrapper, setup, get_rank_info
+from credit.distributed import distributed_model_wrapper
 from credit.models.checkpoint import load_model_state
 from torch.utils.data import get_worker_info
 from torch.utils.data.distributed import DistributedSampler
@@ -64,6 +65,10 @@ class Predict_Dataset_Metrics(Predict_Dataset):
         self.init_datetime[index] = generate_datetime(self.init_datetime[index][0], self.init_datetime[index][1], self.lead_time_periods)
         # convert datetime obj to nanosecondes
         init_time_list_dt = [np.datetime64(date.strftime('%Y-%m-%d %H:%M:%S')) for date in self.init_datetime[index]]
+        
+        # init_time_list_np: a list of python datetime objects, each is a forecast step
+        # init_time_list_np[0]: the first initialization time
+        # init_time_list_np[t]: the forcasted time of the (t-1)th step; the initialization time of the t-th step
         self.init_time_list_np = [np.datetime64(str(dt_obj) + '.000000000').astype(datetime) for dt_obj in init_time_list_dt]
 
         info = []
@@ -182,11 +187,16 @@ class Predict_Dataset_Metrics(Predict_Dataset):
                     break
 
 
-def predict(rank, world_size, conf, backend, p):
+def setup(rank, world_size, mode):
+    logging.info(f"Running {mode.upper()} on rank {rank} with world_size {world_size}.")
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+
+
+def predict(rank, world_size, conf, p):
 
     # setup rank and world size for GPU-based rollout
-    if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
-        setup(rank, world_size, conf["trainer"]["mode"], backend)
+    if conf["predict"]["mode"] in ["fsdp", "ddp"]:
+        setup(rank, world_size, conf["predict"]["mode"])
 
     # infer device id from rank
     if torch.cuda.is_available():
@@ -491,13 +501,6 @@ if __name__ == "__main__":
         default=8,
         help="Number of CPU workers to use per GPU",
     )
-    parser.add_argument(
-        "--backend",
-        type=str,
-        help="Backend for distribted training.",
-        default="nccl",
-        choices=["nccl", "gloo", "mpi"],
-    )
 
     # parse
     args = parser.parse_args()
@@ -509,7 +512,6 @@ if __name__ == "__main__":
     subset = int(args_dict.pop("subset"))
     number_of_subsets = int(args_dict.pop("no_subset"))
     num_cpus = int(args_dict.pop("num_cpus"))
-    backend = args_dict.pop("backend")
 
     # Set up logger to print stuff
     root = logging.getLogger()
@@ -580,17 +582,11 @@ if __name__ == "__main__":
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
 
-    local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])
-
     with mp.Pool(num_cpus) as p:
-        _ = predict(world_rank, world_size, conf, backend, p=p)
-
-        # main(world_rank, world_size, conf, backend)
-
-        # if conf["predict"]["mode"] in ["fsdp", "ddp"]:  # multi-gpu inference
-        #     _ = predict(int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf, p=p)
-        # else:  # single device inference
-        #     _ = predict(0, 1, conf, p=p)
+        if conf["predict"]["mode"] in ["fsdp", "ddp"]:  # multi-gpu inference
+            _ = predict(int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf, p=p)
+        else:  # single device inference
+            _ = predict(0, 1, conf, p=p)
 
     # Ensure all processes are finished
     p.close()
