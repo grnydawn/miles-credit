@@ -68,44 +68,47 @@ class Predict_Dataset_Metrics(Predict_Dataset):
         init_time_list_dt = [np.datetime64(date.strftime('%Y-%m-%d %H:%M:%S')) for date in self.init_datetime[index]]
         self.init_time_list_np = [np.datetime64(str(dt_obj) + '.000000000').astype(datetime) for dt_obj in init_time_list_dt]
 
-        for i_file, ds in enumerate(self.all_files):
-            # get the year of the current file
-            ds_year = int(np.datetime_as_string(ds['time'][0].values, unit='Y'))
-
-            # get the first and last years of init times
-            init_year0 = nanoseconds_to_year(self.init_time_list_np[0])
-
-            # found the right yearly file
-            if init_year0 == ds_year:
-
-                # convert ds['time'] to a list of nanosecondes
-                ds_time_list = [np.datetime64(ds_time.values).astype(datetime) for ds_time in ds['time']]
-                ds_start_time = ds_time_list[0]
-                ds_end_time = ds_time_list[-1]
-
-                init_time_start = self.init_time_list_np[0]
-                # if initalization time is within this (yearly) xr.Dataset
-                if ds_start_time <= init_time_start <= ds_end_time:
-
-                    # try getting the index of the first initalization time
-                    i_init_start = ds_time_list.index(init_time_start)
-
-                    # for multiple init time inputs (history_len > 1), init_end is different for init_start
-                    init_time_end = init_time_start + hour_to_nanoseconds(shifted_hours)
-
-                    # see if init_time_end is alos in this file
-                    if ds_start_time <= init_time_end <= ds_end_time:
-
-                        # try getting the index
-                        i_init_end = ds_time_list.index(init_time_end)
-                    else:
-                        # this set of initalizations have crossed years
-                        # get the last element of the current file
-                        # we have anthoer section that checks additional input data
-                        i_init_end = len(ds_time_list) - 1
-
-                    info = [i_file, i_init_start, i_init_end]
-                    return info
+        info = []
+        for init_time in self.init_time_list_np:
+            for i_file, ds in enumerate(self.all_files):
+                # get the year of the current file
+                ds_year = int(np.datetime_as_string(ds['time'][0].values, unit='Y'))
+    
+                # get the first and last years of init times
+                init_year0 = nanoseconds_to_year(init_time)
+    
+                # found the right yearly file
+                if init_year0 == ds_year:
+                    
+                    N_times = len(ds['time'])
+                    # convert ds['time'] to a list of nanosecondes
+                    ds_time_list = [np.datetime64(ds_time.values).astype(datetime) for ds_time in ds['time']]
+                    ds_start_time = ds_time_list[0]
+                    ds_end_time = ds_time_list[-1]
+    
+                    init_time_start = init_time
+                    # if initalization time is within this (yearly) xr.Dataset
+                    if ds_start_time <= init_time_start <= ds_end_time:
+    
+                        # try getting the index of the first initalization time
+                        i_init_start = ds_time_list.index(init_time_start)
+    
+                        # for multiple init time inputs (history_len > 1), init_end is different for init_start
+                        init_time_end = init_time_start + hour_to_nanoseconds(shifted_hours)
+    
+                        # see if init_time_end is alos in this file
+                        if ds_start_time <= init_time_end <= ds_end_time:
+    
+                            # try getting the index
+                            i_init_end = ds_time_list.index(init_time_end)
+                        else:
+                            # this set of initalizations have crossed years
+                            # get the last element of the current file
+                            # we have anthoer section that checks additional input data
+                            i_init_end = len(ds_time_list) - 1
+    
+                        info.append([i_file, i_init_start, i_init_end, N_times])
+        return info
 
     def __iter__(self):
         worker_info = get_worker_info()
@@ -122,18 +125,18 @@ class Predict_Dataset_Metrics(Predict_Dataset):
             for k, _ in enumerate(self.init_time_list_np):
 
                 # the first initialization time: get initalization from data
-                i_file, i_init_start, i_init_end = data_lookup #[k]
+                i_file, i_init_start, i_init_end, N_times = data_lookup[k]
 
                 # allocate output dict
                 output_dict = {}
 
                 # get all inputs in one xr.Dataset
-                #print(i_file, i_init_start, i_init_end)
-                sliced_x = self.load_zarr_as_input(i_file, i_init_start + k, i_init_end + k)
+                #print(i_file, i_init_start, i_init_end, N_times)
+                sliced_x = self.load_zarr_as_input(i_file, i_init_start, i_init_end)
                 #print(sliced_x['time'])
                 
                 # Check if additional data from the next file is needed
-                if len(sliced_x['time']) < self.history_len:
+                if (len(sliced_x['time']) < self.history_len) or (i_init_end+1 >= N_times):
 
                     # Load excess data from the next file
                     next_file_idx = self.filenames.index(self.filenames[i_file]) + 1
@@ -147,16 +150,19 @@ class Predict_Dataset_Metrics(Predict_Dataset):
                         sliced_x_next = self.load_zarr_as_input(next_file_idx, 0, self.history_len)
 
                         # Concatenate excess data from the next file with the current data
-                        sliced_x = xr.concat([sliced_x, sliced_x_next], dim='time')
-                        sliced_x = sliced_x.isel(time=slice(0, self.history_len))
+                        sliced_xy = xr.concat([sliced_x, sliced_x_next], dim='time')
+                        sliced_x = sliced_xy.isel(time=slice(0, self.history_len))
                         
-                        sliced_y = self.load_zarr_as_input(next_file_idx, self.history_len, self.history_len + 1)
+                        sliced_y = sliced_xy.isel(time=slice(self.history_len, self.history_len+1))
+                        #self.load_zarr_as_input(next_file_idx, self.history_len, self.history_len+1)
 
                 else:
-                    sliced_y = self.load_zarr_as_input(i_file, i_init_end + k + 1, i_init_end + k + 1)
+                    sliced_y = self.load_zarr_as_input(i_file, i_init_end+1, i_init_end+1)
 
                 # Prepare data for transform application
-                print(sliced_x['time'])
+                # print(sliced_x['time'])
+                # print(sliced_y['time'])
+                
                 sample_x = {'historical_ERA5_images': sliced_x, 'target_ERA5_images': sliced_y}
 
                 if self.transform:
