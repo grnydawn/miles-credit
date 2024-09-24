@@ -41,6 +41,7 @@ class SKEBS(nn.Module):
         self.additional_layer = nn.Linear(final_layer_size, final_layer_size)#.to(self.device) # Example: another layer
     
     def forward(self, x):
+        x = x["y_pred"]
         return self.additional_layer(x)
     
 if __name__ == "__main__":

@@ -9,7 +9,7 @@ from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 import torch.nn.functional as F
 from torch import nn
 #from credit.models.base_model import BaseModel
-from credit.postBlock import PostBlock
+from credit.postblock import PostBlock
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
@@ -69,8 +69,8 @@ class SegmentationModel(torch.nn.Module):
         self.model = load_premade_encoder_model(conf['model']['architecture'])
         # Additional layers for testing
 
-        self.use_postBlock = conf["model"]["post_conf"]["use_skebs"] # or post_conf["use_lap"] etc
-        if self.use_postBlock:
+        self.use_post_block = conf["model"]["post_conf"]["use_skebs"] # or post_conf["use_lap"] etc
+        if self.use_post_block:
             self.postblock = PostBlock(conf["model"]["post_conf"])
 
 
@@ -86,12 +86,22 @@ class SegmentationModel(torch.nn.Module):
         return tensor1, tensor2
 
     def forward(self, x):
+        if self.use_post_block:  # copy tensor to feed into postBlock later
+            x_copy = x.clone().detach()
+
         x = F.avg_pool3d(x, kernel_size=(2, 1, 1)) if x.shape[2] > 1 else x
         x = x.squeeze(2) # squeeze time dim
         x = self.rk4(x) if self.rk4_integration else self.model(x)
-        if self.use_postBlock:
+
+        x = x.unsqueeze(2)
+
+        if self.use_post_block:
+            x = {
+                "y_pred": x,
+                "x": x_copy,
+            }
             x = self.postblock(x)
-        return x.unsqueeze(2)
+        return x
 
     def rk4(self, x):
 

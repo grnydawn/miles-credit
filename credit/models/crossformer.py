@@ -7,7 +7,7 @@ from einops import rearrange
 from einops.layers.torch import Rearrange
 
 from credit.models.base_model import BaseModel
-from credit.postBlock import PostBlock
+from credit.postblock import PostBlock
 
 
 logger = logging.getLogger(__name__)
@@ -406,11 +406,13 @@ class CrossFormer(BaseModel):
             logger.info(f"Padding each pole using a reflection with {self.pad_lat} pixels")
         
         
-        self.use_postBlock = post_conf["use_skebs"] # or post_conf["use_lap"] etc
-        if self.use_postBlock:
+        self.use_post_block = post_conf["use_skebs"] # or post_conf["use_lap"] etc
+        if self.use_post_block:
             self.postblock = PostBlock(post_conf)
 
     def forward(self, x):
+        if self.use_post_block:  # copy tensor to feed into postBlock later
+            x_copy = x.clone().detach()
 
         if self.pad_lon > 0:
             x = circular_pad1d(x, pad=self.pad_lon)
@@ -459,7 +461,11 @@ class CrossFormer(BaseModel):
         x = F.interpolate(x, size=(self.image_height, self.image_width), mode="bilinear")
         x = x.unsqueeze(2)
 
-        if self.use_postBlock:
+        if self.use_post_block:
+            x = {
+                "y_pred": x,
+                "x": x_copy,
+            }
             x = self.postblock(x)
         return x
 

@@ -1,6 +1,6 @@
 import torch
-from credit.postBlock import PostBlock
-from credit.postBlock import SKEBS
+from credit.postblock import PostBlock
+from credit.postblock import SKEBS
     
 def test_SKEBS_rand():
     image_width = 100
@@ -10,7 +10,9 @@ def test_SKEBS_rand():
     postblock = PostBlock(**conf)
     assert any([isinstance(module, SKEBS) for module in postblock.modules()])
 
-    y_pred = postblock(input_tensor)
+    input_dict = {"y_pred": input_tensor}
+
+    y_pred = postblock(input_dict)
 
     assert y_pred.shape == input_tensor.shape
 

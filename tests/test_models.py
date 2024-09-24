@@ -8,17 +8,12 @@ from credit.models.unet import SegmentationModel
 from credit.models.crossformer import CrossFormer
 
 TEST_FILE_DIR = "/".join(os.path.abspath(__file__).split("/")[:-1])
-
-
-# todo: use config/*.yml as source files for testing
-#
-#
-#
-
+CONFIG_FILE_DIR = os.path.join("/".join(os.path.abspath(__file__).split("/")[:-2]),
+                      "config")
 
 def test_unet():
     #load config
-    config = os.path.join(TEST_FILE_DIR, "data/unet_config.yml")
+    config = os.path.join(CONFIG_FILE_DIR, "unet_test.yml")
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
     
@@ -38,60 +33,37 @@ def test_unet():
     input_tensor = torch.randn(1, in_channels, frames, image_height, image_width)
 
     y_pred = model(input_tensor)
-    
+
     assert y_pred.shape == torch.Size([1, in_channels, 1, image_height, image_width])
     assert not torch.isnan(y_pred).any()
 
-# def test_crossformer(): 
-#     # todo: test model loading later
-#     # todo: reduce model size in CI
+def test_crossformer(): 
+    #load config
+    config = os.path.join(CONFIG_FILE_DIR, "wxformer_1dg_test.yml")
+    with open(config) as cf:
+        conf = yaml.load(cf, Loader=yaml.FullLoader)
 
-#     image_height = 640  # 640, 192
-#     image_width = 1280  # 1280, 288
-#     levels = 16
-#     frames = 2
-#     channels = 4
-#     surface_channels = 7
-#     input_only_channels = 3
-#     frame_patch_size = 2
-#     pad_lon = 80
-#     pad_lat = 80
-#     post_conf={"use_skebs": True, "image_width": image_width}
+    image_height = conf["model"]["image_height"]
+    image_width = conf["model"]["image_width"]
 
-#     in_channels = channels * levels + surface_channels + input_only_channels
-#     input_tensor = torch.randn(1, in_channels, frames, image_height, image_width)
+    channels = conf["model"]["channels"]
+    levels = conf["model"]["levels"]
+    surface_channels = conf["model"]["surface_channels"]
+    input_only_channels = conf["model"]["input_only_channels"]
+    frames = conf["model"]["frames"]
 
-#     model = CrossFormer(
-#         image_height=image_height,
-#         image_width=image_width,
-#         frames=frames,
-#         frame_patch_size=frame_patch_size,
-#         channels=channels,
-#         surface_channels=surface_channels,
-#         input_only_channels=input_only_channels,
-#         levels=levels,
-#         dim=(128, 256, 512, 1024),
-#         depth=(2, 2, 18, 2),
-#         global_window_size=(8, 4, 2, 1),
-#         local_window_size=5,
-#         cross_embed_kernel_sizes=((4, 8, 16, 32), (2, 4), (2, 4), (2, 4)),
-#         cross_embed_strides=(4, 2, 2, 2),
-#         attn_dropout=0.,
-#         ff_dropout=0.,
-#         pad_lon=pad_lon,
-#         pad_lat=pad_lat,
-#         post_conf=post_conf,
-#     )
+    in_channels = channels * levels + surface_channels + input_only_channels
+    input_tensor = torch.randn(1, in_channels, frames, image_height, image_width)
 
+    model = load_model(conf)
 
-#     y_pred = model(input_tensor)
-    
-#     assert y_pred.shape == torch.Size([1, in_channels - input_only_channels, 1, image_height, image_width])
-#     assert not torch.isnan(y_pred).any()
+    y_pred = model(input_tensor)
+    assert y_pred.shape == torch.Size([1, in_channels - input_only_channels, 1, image_height, image_width])
+    assert not torch.isnan(y_pred).any()
 
-if __name__ == "__main__":
-    test_unet()
-    # test_crossformer()
+# if __name__ == "__main__":
+#     # test_unet()
+#     test_crossformer()
 
 
 

@@ -266,7 +266,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
     # conf['model'] section
 
     if 'post_conf' not in conf['model']:
-        conf['model']['post_conf']['use_skebs'] = False
+        conf['model']['post_conf'] = {'use_skebs': False}
     elif 'use_skebs' not in conf['model']['post_conf']:
         conf['model']['post_conf']['use_skebs'] = False
     if 'image_width' not in conf['model']['post_conf']:
