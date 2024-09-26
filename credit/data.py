@@ -20,12 +20,7 @@ ksha@ucar.edu
 
 # system tools
 import os
-from glob import glob
-from timeit import timeit
-from functools import reduce
-from itertools import repeat
-from dataclasses import dataclass, field
-from typing import Optional, Callable, TypedDict, Union, Iterable, NamedTuple, List
+from typing import Optional, Callable, TypedDict, Union
 
 # data utils
 import datetime

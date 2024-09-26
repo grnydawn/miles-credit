@@ -56,6 +56,8 @@ def test_crossformer():
     input_tensor = torch.randn(1, in_channels, frames, image_height, image_width)
 
     model = load_model(conf)
+    assert isinstance(model, CrossFormer)
+
 
     y_pred = model(input_tensor)
     assert y_pred.shape == torch.Size([1, in_channels - input_only_channels, 1, image_height, image_width])

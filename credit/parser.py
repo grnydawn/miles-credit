@@ -17,8 +17,6 @@ import warnings
 from glob import glob
 from collections import Counter
 
-import numpy as np
-import xarray as xr
 
 from credit.data import get_forward_data
 

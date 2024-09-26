@@ -8,7 +8,6 @@ Content:
 '''
 
 import os
-from os.path import join
 
 import yaml
 import logging
@@ -17,7 +16,6 @@ import xarray as xr
 
 logger = logging.getLogger(__name__)
 
-from datetime import datetime
 from credit.data import drop_var_from_dataset
 
 def load_metadata(conf):
