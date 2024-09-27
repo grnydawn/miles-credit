@@ -33,12 +33,12 @@ dependencies:
   - pip:
     - einops
     - echo-opt
+    - optuna=3.6.0
     - bridgescaler
     - rotary-embedding-torch
-    - segmentation-models-pytorch
+    - segmentation-models-pytorch>=0.3.4
     - vector_quantize_pytorch
     - haversine
-    - timm>=0.9.12
     - torchsummary
     - .
 
