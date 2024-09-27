@@ -29,7 +29,6 @@ from os.path import join
 import logging
 # ---------- #
 # Numerics
-import datetime
 import numpy as np
 import xarray as xr
 import netCDF4 as nc
@@ -39,10 +38,8 @@ import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
 import matplotlib.gridspec as gridspec
 from matplotlib import colormaps as plt_cmaps
-from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 # cartopy
 import cartopy.crs as ccrs
-import cartopy.mpl.geoaxes
 import cartopy.feature as cfeature
 
 

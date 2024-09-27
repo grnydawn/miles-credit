@@ -7,6 +7,8 @@ from einops import rearrange
 from einops.layers.torch import Rearrange
 
 from credit.models.base_model import BaseModel
+from credit.postblock import PostBlock
+
 
 logger = logging.getLogger(__name__)
 
@@ -322,6 +324,7 @@ class CrossFormer(BaseModel):
         pad_lon=0,
         pad_lat=0,
         use_spectral_norm=True,
+        post_conf={"use_skebs": False},
         **kwargs
     ):
         super().__init__()
@@ -401,8 +404,15 @@ class CrossFormer(BaseModel):
             logger.info(f"Padding each longitudinal boundary with {self.pad_lon} pixels from the other side")
         if self.pad_lat > 0:
             logger.info(f"Padding each pole using a reflection with {self.pad_lat} pixels")
+        
+        
+        self.use_post_block = post_conf["use_skebs"] # or post_conf["use_lap"] etc
+        if self.use_post_block:
+            self.postblock = PostBlock(post_conf)
 
     def forward(self, x):
+        if self.use_post_block:  # copy tensor to feed into postBlock later
+            x_copy = x.clone().detach()
 
         if self.pad_lon > 0:
             x = circular_pad1d(x, pad=self.pad_lon)
@@ -449,8 +459,15 @@ class CrossFormer(BaseModel):
             x = x[..., self.pad_lat:-self.pad_lat, :]
 
         x = F.interpolate(x, size=(self.image_height, self.image_width), mode="bilinear")
+        x = x.unsqueeze(2)
 
-        return x.unsqueeze(2)
+        if self.use_post_block:
+            x = {
+                "y_pred": x,
+                "x": x_copy,
+            }
+            x = self.postblock(x)
+        return x
 
     def rk4(self, x):
 

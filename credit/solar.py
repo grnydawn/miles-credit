@@ -5,7 +5,6 @@ from pvlib.solarposition import get_solarposition
 from scipy.integrate import trapezoid
 import xarray as xr
 from tqdm import tqdm
-import torch
 from collections.abc import Sequence
 
 def era5_tsi_data() -> xr.DataArray:

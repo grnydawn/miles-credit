@@ -1,7 +1,6 @@
 import xarray as xr
 import argparse
 import numpy as np
-from functools import partial
 from os.path import join, exists
 from os import makedirs
 from sklearn.neighbors import BallTree

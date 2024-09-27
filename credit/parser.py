@@ -17,8 +17,6 @@ import warnings
 from glob import glob
 from collections import Counter
 
-import numpy as np
-import xarray as xr
 
 from credit.data import get_forward_data
 
@@ -261,6 +259,16 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         
     if 'static_first' not in conf['data']:
         conf['data']['static_first'] = True
+    
+    # --------------------------------------------------------- #
+    # conf['model'] section
+
+    if 'post_conf' not in conf['model']:
+        conf['model']['post_conf'] = {'use_skebs': False}
+    elif 'use_skebs' not in conf['model']['post_conf']:
+        conf['model']['post_conf']['use_skebs'] = False
+    if 'image_width' not in conf['model']['post_conf']:
+        conf['model']['post_conf']['image_width'] = conf['model']['image_width']
     
     # --------------------------------------------------------- #
     # conf['trainer'] section
