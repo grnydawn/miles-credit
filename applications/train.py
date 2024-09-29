@@ -37,7 +37,8 @@ from credit.pbs import launch_script, launch_script_mpi
 from credit.models import load_model
 from credit.models.checkpoint import (
     FSDPOptimizerWrapper,
-    TorchFSDPCheckpointIO
+    TorchFSDPCheckpointIO,
+    load_state_dict_error_handler
 )
 
 
@@ -257,10 +258,12 @@ def load_model_states_and_optimizer(conf, model, device):
             checkpoint = torch.load(ckpt, map_location=device)
             if conf["trainer"]["mode"] == "ddp":
                 logging.info(f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-                model.module.load_state_dict(checkpoint["model_state_dict"])
+                load_msg = model.module.load_state_dict(checkpoint["model_state_dict"], strict=False)
+                load_state_dict_error_handler(load_msg)
             else:
                 logging.info(f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
-                model.load_state_dict(checkpoint["model_state_dict"])
+                load_msg = model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+                load_state_dict_error_handler(load_msg)
         # Load the learning rate scheduler and mixed precision grad scaler
         scheduler = load_scheduler(optimizer, conf)
         scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
@@ -479,7 +482,10 @@ def main(rank, world_size, conf, backend, trial=False):
     # have to send the module to the correct device first
 
     m.to(device)
-    # m = torch.compile(m)
+
+    # move out of eager-mode
+    if conf["trainer"].get("compile", False):
+        m = torch.compile(m)
 
     # Wrap in DDP or FSDP module, or none
 

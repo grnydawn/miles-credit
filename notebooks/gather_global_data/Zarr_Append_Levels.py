@@ -2,8 +2,6 @@ import os
 import glob
 import argparse
 
-import zarr
-import numpy as np
 import xarray as xr
 
 from distributed import Client
