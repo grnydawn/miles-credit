@@ -306,8 +306,8 @@ class Fuxi(BaseModel):
         
         # input resolution = number of embedded patches / 2
         # divide by two because "u_trasnformer" has a down-sampling block
-        input_resolution = int(img_size[1] / patch_size[1] / 2), int(img_size[2] / patch_size[2] / 2)
-
+        # input_resolution = int(img_size[1] / patch_size[1] / 2), int(img_size[2] / patch_size[2] / 2)
+        input_resolution = round(img_size[1] / patch_size[1] / 2), round(img_size[2] / patch_size[2] / 2)
         # FuXi cube embedding layer
         self.cube_embedding = CubeEmbedding(img_size, patch_size, in_chans, dim)
 
