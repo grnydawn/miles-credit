@@ -166,7 +166,13 @@ def load_dataset_and_sampler_zscore_only(conf,
         history_len = conf["data"]["valid_history_len"]
         forecast_len = conf["data"]["valid_forecast_len"]
         name = 'validation'
-        
+
+    if conf['data']['sst_forcing'] is not None:
+        sst_forcing = {'varname_skt': conf['data']['varname_skt'], 
+                       'varname_ocean_mask': conf['data']['varname_ocean_mask']}
+    else:
+        sst_forcing = None
+    
     # transforms
     transforms = load_transforms(conf)
 
@@ -190,6 +196,7 @@ def load_dataset_and_sampler_zscore_only(conf,
         one_shot=conf['data']['one_shot'],
         max_forecast_len=conf["data"]["max_forecast_len"],
         transform=transforms,
+        sst_forcing=sst_forcing
     )
     
     # sampler
