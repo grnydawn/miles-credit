@@ -290,7 +290,8 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         seed=42,
         skip_periods=None,
         one_shot=None,
-        max_forecast_len=None
+        max_forecast_len=None,
+        sst_forcing=None,
     ):
 
         '''
@@ -346,6 +347,9 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         # max possible forecast len
         self.max_forecast_len = max_forecast_len
 
+        # sst forcing
+        self.sst_forcing = sst_forcing
+        
         # =================================================================== #
         # flags to determin if any of the [surface, dyn_forcing, diagnostics]
         # variable groups share the same file as upper air variables
@@ -461,8 +465,6 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         self.filename_forcing = filename_forcing
 
         if self.filename_forcing is not None:
-            assert os.path.isfile(filename_forcing), 'Cannot find forcing file [{}]'.format(filename_forcing)
-
             # drop variables if they are not in the config
             ds = get_forward_data(filename_forcing)
             ds_forcing = drop_var_from_dataset(ds, varname_forcing)
@@ -476,8 +478,6 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         self.filename_static = filename_static
 
         if self.filename_static is not None:
-            assert os.path.isfile(filename_static), 'Cannot find static file [{}]'.format(filename_static)
-
             # drop variables if they are not in the config
             ds = get_forward_data(filename_static)
             ds_static = drop_var_from_dataset(ds, varname_static)
@@ -633,7 +633,38 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
                 
                 # merge into the target dataset
                 target_ERA5_images = target_ERA5_images.merge(diagnostic_subset)
+
+        # ------------------------------------------------------------------ #
+        # sst forcing operations
+        if self.sst_forcing is not None:
+            # get xr.dataset keys
+            varname_skt = self.sst_forcing['varname_skt']
+            varname_ocean_mask = self.sst_forcing['varname_ocean_mask']
             
+            # get xr.dataarray from the dataset
+            ocean_mask = historical_ERA5_images[varname_ocean_mask]
+            input_skt = historical_ERA5_images[varname_skt]
+            target_skt = target_ERA5_images[varname_skt]
+        
+            # for multi-input cases, use time=-1 ocean mask for all times
+            if self.history_len > 1:
+                ocean_mask[:self.history_len-1] = ocean_mask.isel(time=-1)
+            
+            # get ocean mask
+            ocean_mask_bool = ocean_mask.isel(time=-1) == 0
+        
+            # for multi-input cases, use time=-1 ocean SKT for all times
+            if self.history_len > 1:
+                input_skt[:self.history_len-1] = input_skt[:self.history_len-1].where(~ocean_mask_bool, input_skt.isel(time=-1))
+        
+            # for target skt, replace ocean values using time=-1 input SKT
+            target_skt = target_skt.where(~ocean_mask_bool, input_skt.isel(time=-1))
+        
+            # Update the target_ERA5_images dataset with the modified target_skt
+            historical_ERA5_images[varname_ocean_mask] = ocean_mask
+            historical_ERA5_images[varname_skt] = input_skt
+            target_ERA5_images[varname_skt] = target_skt
+        
         # pipe xarray datasets to the sampler
         sample = Sample(
             historical_ERA5_images=historical_ERA5_images,
