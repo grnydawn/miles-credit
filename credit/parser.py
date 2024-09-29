@@ -17,6 +17,8 @@ import warnings
 from glob import glob
 from collections import Counter
 
+import numpy as np
+import xarray as xr
 
 from credit.data import get_forward_data
 
@@ -259,17 +261,9 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         
     if 'static_first' not in conf['data']:
         conf['data']['static_first'] = True
-    
-    # --------------------------------------------------------- #
-    # conf['model'] section
 
-    if 'post_conf' not in conf['model']:
-        conf['model']['post_conf'] = {'use_skebs': False}
-    elif 'use_skebs' not in conf['model']['post_conf']:
-        conf['model']['post_conf']['use_skebs'] = False
-    if 'image_width' not in conf['model']['post_conf']:
-        conf['model']['post_conf']['image_width'] = conf['model']['image_width']
-    
+    if 'sst_forcing' not in conf['data']:
+        conf['data']['sst_forcing'] = False
     # --------------------------------------------------------- #
     # conf['trainer'] section
     
@@ -323,33 +317,36 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             conf['trainer']['save_metric_vars'] = []
         
         if 'use_scheduler' in conf['trainer']:
-            # lr will be controlled by scheduler
-            conf['trainer']['update_learning_rate'] = False
-            
-            assert 'scheduler' in conf['trainer'], (
-                "must specify 'scheduler' in conf['trainer'] if a scheduler is used")
-            
-            assert 'reload_epoch' in conf['trainer'], (
-                "must specify 'reload_epoch' in conf['trainer'] if a scheduler is used")
-            
-            assert 'load_optimizer' in conf['trainer'], (
-                "must specify 'load_optimizer' in conf['trainer'] if a scheduler is used")
-
-            assert 'load_scheduler' in conf['trainer'], (
-                "must specify 'load_scheduler' in conf['trainer'] if a scheduler is used")
-
-            assert 'load_scaler' in conf['trainer'], (
-                "must specify 'load_scaler' in conf['trainer'] if a scheduler is used")
+            # if use scheduler
+            if conf['trainer']['use_scheduler']:
+                
+                # lr will be controlled by scheduler
+                conf['trainer']['update_learning_rate'] = False
+                
+                assert 'scheduler' in conf['trainer'], (
+                    "must specify 'scheduler' in conf['trainer'] if a scheduler is used")
+                
+                assert 'reload_epoch' in conf['trainer'], (
+                    "must specify 'reload_epoch' in conf['trainer'] if a scheduler is used")
+                
+                assert 'load_optimizer' in conf['trainer'], (
+                    "must specify 'load_optimizer' in conf['trainer'] if a scheduler is used")
+    
+                assert 'load_scheduler' in conf['trainer'], (
+                    "must specify 'load_scheduler' in conf['trainer'] if a scheduler is used")
+    
+                assert 'load_scaler' in conf['trainer'], (
+                    "must specify 'load_scaler' in conf['trainer'] if a scheduler is used")
         
-        else:
-            if 'load_scaler' not in conf['trainer']:
-                conf['trainer']['load_scaler'] = False
-    
-            if 'load_scheduler' not in conf['trainer']:
-                conf['trainer']['load_scheduler'] = False
-    
-            if 'load_optimizer' not in conf['trainer']:
-                conf['trainer']['load_optimizer'] = False
+            else:
+                if 'load_scaler' not in conf['trainer']:
+                    conf['trainer']['load_scaler'] = False
+        
+                if 'load_scheduler' not in conf['trainer']:
+                    conf['trainer']['load_scheduler'] = False
+        
+                if 'load_optimizer' not in conf['trainer']:
+                    conf['trainer']['load_optimizer'] = False
                 
         
         if 'update_learning_rate' not in conf['trainer']:
