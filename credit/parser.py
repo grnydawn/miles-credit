@@ -320,15 +320,16 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         if conf['trainer']['skip_validation'] is False:
             # do not skip validaiton
             assert 'valid_batch_size'  in conf['trainer'], (
-                "Validation set batch size ('valid_batch_size') is missing from onf['trainer']")
+                "Validation set batch size ('valid_batch_size') is missing from conf['trainer']")
             
             assert 'valid_batches_per_epoch'  in conf['trainer'], (
-                "Number of validation batches per epoch ('valid_batches_per_epoch') is missing from onf['trainer']")
+                "Number of validation batches per epoch ('valid_batches_per_epoch') is missing from conf['trainer']")
             
         if 'save_metric_vars' not in conf['trainer']:
-            conf['trainer']['save_metric_vars'] = []
+            conf['trainer']['save_metric_vars'] = [] # averaged metrics only
         
         if 'use_scheduler' in conf['trainer']:
+            # ------------------------------------------------------------------------------ #
             # if use scheduler
             if conf['trainer']['use_scheduler']:
                 
@@ -336,20 +337,18 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
                 conf['trainer']['update_learning_rate'] = False
                 
                 assert 'scheduler' in conf['trainer'], (
-                    "must specify 'scheduler' in conf['trainer'] if a scheduler is used")
+                    "must specify 'scheduler' in conf['trainer'] when a scheduler is used")
                 
                 assert 'reload_epoch' in conf['trainer'], (
-                    "must specify 'reload_epoch' in conf['trainer'] if a scheduler is used")
+                    "must specify 'reload_epoch' in conf['trainer'] when a scheduler is used")
                 
                 assert 'load_optimizer' in conf['trainer'], (
-                    "must specify 'load_optimizer' in conf['trainer'] if a scheduler is used")
+                    "must specify 'load_optimizer' in conf['trainer'] when a scheduler is used")
     
                 assert 'load_scheduler' in conf['trainer'], (
-                    "must specify 'load_scheduler' in conf['trainer'] if a scheduler is used")
-    
-                assert 'load_scaler' in conf['trainer'], (
-                    "must specify 'load_scaler' in conf['trainer'] if a scheduler is used")
-        
+                    "must specify 'load_scheduler' in conf['trainer'] when a scheduler is used")
+                
+            # ------------------------------------------------------------------------------ #
             else:
                 if 'load_scaler' not in conf['trainer']:
                     conf['trainer']['load_scaler'] = False
@@ -378,6 +377,10 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             
         if 'amp' not in conf['trainer']:
             conf['trainer']['amp'] = False
+        
+        if conf['trainer']['amp']:            
+            assert 'load_scaler' in conf['trainer'], (
+                "must specify 'load_scaler' in conf['trainer'] if AMP is used")
             
         if 'weight_decay' not in conf['trainer']:
             conf['trainer']['weight_decay'] = 0
