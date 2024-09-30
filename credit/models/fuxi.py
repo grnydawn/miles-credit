@@ -5,6 +5,7 @@ from timm.layers.helpers import to_2tuple
 from timm.models.swin_transformer_v2 import SwinTransformerV2Stage
 import logging
 
+from credit.postblock import PostBlock
 from credit.models.base_model import BaseModel
 
 
@@ -289,7 +290,9 @@ class Fuxi(BaseModel):
                  window_size=7,
                  pad_lon=80,
                  pad_lat=80,
-                 use_spectral_norm=False):
+                 use_spectral_norm=True,
+                 post_conf={"use_skebs": False},
+                 **kwargs):
 
         super().__init__()
         # input tensor size (time, lat, lon)
@@ -344,8 +347,16 @@ class Fuxi(BaseModel):
         if self.pad_lat > 0:
             logger.info(f"Padding each pole using a reflection with {self.pad_lat} pixels")
 
+        self.use_post_block = post_conf["use_skebs"]
+        
+        if self.use_post_block:
+            self.postblock = PostBlock(post_conf)
+    
     def forward(self, x: torch.Tensor):
-
+        # copy tensor to feed into postblock later
+        if self.use_post_block:  
+            x_copy = x.clone().detach()
+            
         if self.pad_lon > 0:
             x = circular_pad1d(x, pad=self.pad_lon)
 
@@ -404,6 +415,14 @@ class Fuxi(BaseModel):
         # this will preserve the output size
         x = F.interpolate(x, size=img_size[1:], mode="bilinear")
 
+        if self.use_post_block:
+            x = {
+                "y_pred": x,
+                "x": x_copy,
+            }
+            x = self.postblock(x)
+        return x
+        
         # unfold the time dimension
         return x.unsqueeze(2)
 
@@ -452,9 +471,10 @@ if __name__ == "__main__":
         dim=dim,
         pad_lat=pad_lat,
         pad_lon=pad_lon,
-        use_spectral_norm=use_spectral_norm
+        use_spectral_norm=use_spectral_norm,
+        post_conf={"use_skebs": False}
     ).to("cuda")
-
+    
     # ============================================================= #
     # test the model
     
