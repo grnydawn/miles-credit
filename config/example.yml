@@ -275,9 +275,33 @@ model:
 
     # use spectral norm
     use_spectral_norm: True
+    
     post_conf: 
+        activate: True
         use_skebs: False
         image_width: 1280
+        
+        tracer_fixer:
+            activate: True
+            tracer_name_upper: ['specific_total_water',]
+            tracer_name_surface: []
+            tracer_name_diagnostics: ['specific_total_water_500', 'total_precipitation']
+            
+        global_mass_fixer:
+            activate: True
+            specific_total_water_name: ['specific_total_water']
+            precipitation_name: ['total_precipitation']
+            evaporation_name: ['evaporation']
+            
+        global_energy_fixer:
+            activate: True
+            air_temperature_name: ['T']
+            specific_total_water_name: ['specific_total_water']
+            surface_geopotential_name: ['z_norm']
+            TOA_net_radiation_flux_name: ['top_net_solar_radiation', 'top_net_thermal_radiation']
+            surface_net_radiation_flux_name: ['surface_net_solar_radiation', 'surface_net_thermal_radiation']
+            surface_energy_flux_name: ['surface_sensible_heat_flux', 'surface_latent_heat_flux',]
+
 
 loss: 
     # the main training loss
