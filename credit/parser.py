@@ -381,8 +381,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
                 i_var for i_var, var in enumerate(varname_input) 
                 if var in conf['model']['post_conf']['global_energy_fixer']['surface_geopotential_name']
             ]
-
-
+            
             TOA_rad_inds = [
                 i_var for i_var, var in enumerate(varname_output) 
                 if var in conf['model']['post_conf']['global_energy_fixer']['TOA_net_radiation_flux_name']

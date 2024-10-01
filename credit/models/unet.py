@@ -65,7 +65,7 @@ class SegmentationModel(torch.nn.Module):
         self.model = load_premade_encoder_model(conf['model']['architecture'])
         # Additional layers for testing
 
-        self.use_post_block = conf["model"]["post_conf"]["use_skebs"] # or post_conf["use_lap"] etc
+        self.use_post_block = conf["model"]["post_conf"]["activate"]
         if self.use_post_block:
             self.postblock = PostBlock(conf["model"]["post_conf"])
 

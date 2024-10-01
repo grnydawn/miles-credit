@@ -107,6 +107,7 @@ model:
         encoder_name: "resnet34"
         encoder_weights: "imagenet"
     post_conf:
+        activate: True
         use_skebs: True
         image_width: 1280
 

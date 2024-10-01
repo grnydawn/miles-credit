@@ -291,7 +291,7 @@ class Fuxi(BaseModel):
                  pad_lon=80,
                  pad_lat=80,
                  use_spectral_norm=True,
-                 post_conf={"use_skebs": False},
+                 post_conf={"activate": False},
                  **kwargs):
 
         super().__init__()
@@ -347,8 +347,7 @@ class Fuxi(BaseModel):
         if self.pad_lat > 0:
             logger.info(f"Padding each pole using a reflection with {self.pad_lat} pixels")
 
-        self.use_post_block = post_conf["use_skebs"]
-        
+        self.use_post_block = post_conf['activate']
         if self.use_post_block:
             self.postblock = PostBlock(post_conf)
     

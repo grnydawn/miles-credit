@@ -23,7 +23,7 @@ class PostBlock(nn.Module):
             self.operations.append(SKEBS(post_conf))
 
         # negative tracer fixer
-        if post_conf['tracer_fixer']['activate']:
+        if ('tracer_fixer' in post_conf) and (post_conf['tracer_fixer']['activate']):
             opt = tracer_fixer(post_conf)
             self.operations.append(opt)
 
