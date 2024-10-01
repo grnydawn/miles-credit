@@ -111,7 +111,7 @@ model:
         use_skebs: True
         image_width: 1280
         tracer_fixer:
-            activate: True
+            activate: False
 
 loss: 
     # the main training loss
