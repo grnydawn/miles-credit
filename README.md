@@ -39,7 +39,7 @@ cd miles-credit
 
 Install dependencies using environment_gpu.yml file (also compatible with CPU-only machines):
 
-Note: if you are on NCAR HPC, we recommend installing to your home directory. To do this, simply append `-p /glade/u/home/$SUER/[your_dir]/` to the `conda/mamba env create` command below:
+Note: if you are on NCAR HPC, we recommend installing to your home directory. To do this, simply append `-p /glade/u/home/$USER/[your_install_dir]/` to the `conda/mamba env create` command below:
 
 ```bash
 mamba env create -f environment_gpu.yml
