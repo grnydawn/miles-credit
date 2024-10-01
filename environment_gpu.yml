@@ -17,7 +17,7 @@ dependencies:
   - pytest
   - xarray
   - netcdf4
-  - pytorch
+  - pytorch=*=*cuda*
   - pytorch-cuda=12.1
   - torchvision
   - wandb
@@ -28,12 +28,12 @@ dependencies:
   - dask-jobqueue
   - zarr
   - jupyter
-  - pyg
+  - pyg=*=*cu*
   - xesmf
   - pip:
     - einops
     - echo-opt
-    - optuna=3.6.0
+    - optuna==3.6.0
     - bridgescaler
     - rotary-embedding-torch
     - segmentation-models-pytorch>=0.3.4

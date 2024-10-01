@@ -37,11 +37,21 @@ git clone git@github.com:NCAR/miles-credit.git
 cd miles-credit
 ```
 
-Install dependencies using environment.yml file:
+Install dependencies using environment_gpu.yml file (also compatible with CPU-only machines):
+
+Note: if you are on NCAR HPC, we recommend installing to your home directory. To do this, simply append `-p /glade/u/home/$SUER/[your_dir]/` to the `conda/mamba env create` command below:
+
 ```bash
-mamba env create -f environment.yml
+mamba env create -f environment_gpu.yml
 conda activate credit
 ```
+
+CPU-only install:
+```bash
+mamba env create -f environment_cpu.yml
+conda activate credit
+```
+
 
 Some metrics use WeatherBench2 for computation. Install with:
 ```bash
@@ -49,16 +59,6 @@ git clone git@github.com:google-research/weatherbench2.git
 cd weatherbench2
 pip install .
 ````
-
-To enable GPU support, install pytorch-cuda:
-```bash
-mamba install pytorch-cuda=12.1 -c pytorch -c nvidia
-```
-
-Install miles-credit with the following command:
-```bash
-pip install .
-```
 
 ## Train a Segmentation Model (like a U-Net)
 ```bash
