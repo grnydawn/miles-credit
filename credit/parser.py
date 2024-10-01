@@ -268,12 +268,146 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
     # --------------------------------------------------------- #
     # conf['model'] section
 
-    if 'post_conf' not in conf['model']:
-        conf['model']['post_conf'] = {'use_skebs': False}
-    elif 'use_skebs' not in conf['model']['post_conf']:
-        conf['model']['post_conf']['use_skebs'] = False
-    if 'image_width' not in conf['model']['post_conf']:
-        conf['model']['post_conf']['image_width'] = conf['model']['image_width']
+    # trun-off model physcis if post_conf does not exist
+    conf['model'].setdefault('post_conf', {'activate': False, 'use_skebs': False})
+    
+    # default to True, will turn it off if no post action is needed
+    conf['model']['post_conf'].setdefault('activate', True)
+    
+    if conf['model']['post_conf']['activate']:
+        # --------------------------------------------------------------------- #
+        # get the full list of input / output variables for post_conf
+        # the list is ordered based on the tensor channels inside credit.models
+
+        # upper air vars on all levels
+        varname_input = []
+        varname_output = []
+        for var in conf['data']['variables']:
+            for i_level in range(conf['data']['levels']):
+                varname_input.append(var)
+                varname_output.append(var)
+                
+        varname_input += conf['data']['surface_variables']
+        
+        # handle the order of input-only variables
+        if conf['data']['static_first']:
+            varname_input += conf['data']['static_variables'] + \
+                             conf['data']['dynamic_forcing_variables'] + \
+                             conf['data']['forcing_variables']
+        else:
+            varname_input += conf['data']['dynamic_forcing_variables'] + \
+                             conf['data']['forcing_variables'] + \
+                             conf['data']['static_variables']
+            
+        varname_output += conf['data']['surface_variables'] + \
+                          conf['data']['diagnostic_variables']
+
+        # # debug only
+        # conf['model']['post_conf']['varname_input'] = varname_input
+        # conf['model']['post_conf']['varname_output'] = varname_output
+        # --------------------------------------------------------------------- #
+        
+        flag_post = False
+    
+        # SKEBS
+        conf['model']['post_conf'].setdefault('use_skebs', False)
+        if conf['model']['post_conf']['use_skebs']:
+            conf['model']['post_conf'].setdefault('image_width', conf['model']['image_width'])
+            flag_post = True
+
+        # --------------------------------------------------------------------- #
+        # tracer fixer
+        conf['model']['post_conf'].setdefault('tracer_fixer', {'activate': False})
+        flag_tracer = conf['model']['post_conf']['tracer_fixer']['activate']
+        
+        if flag_tracer:
+            flag_post = True
+            # when tracer fixer is on, get tensor indices of tracers
+            # tracers must be outputs (either prognostic or output only)
+            varname_tracers = conf['model']['post_conf']['tracer_fixer']['tracer_name_upper'] + \
+                              conf['model']['post_conf']['tracer_fixer']['tracer_name_surface'] + \
+                              conf['model']['post_conf']['tracer_fixer']['tracer_name_diagnostics']
+            # get tracer inds
+            tracer_inds = [i_var for i_var, var in enumerate(varname_output) if var in varname_tracers]
+            conf['model']['post_conf']['tracer_fixer']['tracer_inds'] = tracer_inds
+
+        # --------------------------------------------------------------------- #
+        # global mass fixer
+        conf['model']['post_conf'].setdefault('global_mass_fixer', {'activate': False})
+        flag_mass = conf['model']['post_conf']['global_mass_fixer']['activate']
+        
+        if flag_mass:
+            flag_post = True
+            # when global mass fixer is on, get tensor indices of q, precip, evapor 
+            # these variables must be outputs
+            q_inds = [
+                i_var for i_var, var in enumerate(varname_output) 
+                if var in conf['model']['post_conf']['global_mass_fixer']['specific_total_water_name']
+            ]
+
+            precip_inds = [
+                i_var for i_var, var in enumerate(varname_output) 
+                if var in conf['model']['post_conf']['global_mass_fixer']['precipitation_name']
+            ]
+
+            evapor_inds = [
+                i_var for i_var, var in enumerate(varname_output) 
+                if var in conf['model']['post_conf']['global_mass_fixer']['evaporation_name']
+            ]
+            
+            conf['model']['post_conf']['global_mass_fixer']['q_inds'] = q_inds
+            conf['model']['post_conf']['global_mass_fixer']['precip_ind'] = precip_inds[0]
+            conf['model']['post_conf']['global_mass_fixer']['evapor_ind'] = evapor_inds[0]
+            
+        # --------------------------------------------------------------------- #
+        # global energy fixer
+        conf['model']['post_conf'].setdefault('global_energy_fixer', {'activate': False})
+        flag_energy = conf['model']['post_conf']['global_energy_fixer']['activate']
+        if flag_energy:
+            flag_post = True
+            # when global energy fixer is on, get tensor indices of energy components
+            # geopotential at surface is input, others are outputs
+            T_inds = [
+                i_var for i_var, var in enumerate(varname_output) 
+                if var in conf['model']['post_conf']['global_energy_fixer']['air_temperature_name']
+            ]
+
+            q_inds = [
+                i_var for i_var, var in enumerate(varname_output) 
+                if var in conf['model']['post_conf']['global_energy_fixer']['specific_total_water_name']
+            ]
+
+            Phi_inds = [
+                i_var for i_var, var in enumerate(varname_input) 
+                if var in conf['model']['post_conf']['global_energy_fixer']['surface_geopotential_name']
+            ]
+
+
+            TOA_rad_inds = [
+                i_var for i_var, var in enumerate(varname_output) 
+                if var in conf['model']['post_conf']['global_energy_fixer']['TOA_net_radiation_flux_name']
+            ]
+
+            surf_rad_inds = [
+                i_var for i_var, var in enumerate(varname_output) 
+                if var in conf['model']['post_conf']['global_energy_fixer']['surface_net_radiation_flux_name']
+            ]
+
+            surf_flux_inds = [
+                i_var for i_var, var in enumerate(varname_output) 
+                if var in conf['model']['post_conf']['global_energy_fixer']['surface_energy_flux_name']
+            ]
+
+            conf['model']['post_conf']['global_energy_fixer']['T_inds'] = T_inds
+            conf['model']['post_conf']['global_energy_fixer']['q_inds'] = q_inds
+            conf['model']['post_conf']['global_energy_fixer']['Phi_ind'] = Phi_inds[0]
+            conf['model']['post_conf']['global_energy_fixer']['TOA_rad_inds'] = TOA_rad_inds
+            conf['model']['post_conf']['global_energy_fixer']['surf_rad_inds'] = surf_rad_inds
+            conf['model']['post_conf']['global_energy_fixer']['surf_flux_inds'] = surf_flux_inds
+            
+        # deactivate post if no flags are set
+        if not flag_post:
+            conf['model']['post_conf']['activate'] = False
 
     
     # --------------------------------------------------------- #
