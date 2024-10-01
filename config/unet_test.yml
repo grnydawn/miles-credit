@@ -4,7 +4,7 @@
 # The model is trained on hourly model-level ERA5 data with top solar irradiance, geopotential, and land-sea mask
 # Output variables: model level [U, V, T, Q], single level [SP, t2m], and 500 hPa [U, V, T, Z, Q]
 # --------------------------------------------------------------------------------------------------------------------- #
-save_loc: '/glade/work/dkimpara/CREDIT_runs/unet_test/'
+save_loc: '/glade/work/dkimpara/CREDIT_runs/post_test/'
 seed: 1000
 
 data:
@@ -106,12 +106,31 @@ model:
         name: "unet"
         encoder_name: "resnet34"
         encoder_weights: "imagenet"
-    post_conf:
+    post_conf: 
         activate: True
-        use_skebs: True
-        image_width: 1280
+        skebs:
+            activate: True
+        
         tracer_fixer:
-            activate: False
+            activate: True
+            tracer_name_upper: ['specific_total_water',]
+            tracer_name_surface: []
+            tracer_name_diagnostics: ['specific_total_water_500', 'total_precipitation']
+            
+        global_mass_fixer:
+            activate: True
+            specific_total_water_name: ['specific_total_water']
+            precipitation_name: ['total_precipitation']
+            evaporation_name: ['evaporation']
+            
+        global_energy_fixer:
+            activate: True
+            air_temperature_name: ['T']
+            specific_total_water_name: ['specific_total_water']
+            surface_geopotential_name: ['z_norm']
+            TOA_net_radiation_flux_name: ['top_net_solar_radiation', 'top_net_thermal_radiation']
+            surface_net_radiation_flux_name: ['surface_net_solar_radiation', 'surface_net_thermal_radiation']
+            surface_energy_flux_name: ['surface_sensible_heat_flux', 'surface_latent_heat_flux',]
 
 loss: 
     # the main training loss

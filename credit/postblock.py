@@ -18,7 +18,7 @@ class PostBlock(nn.Module):
 
         self.operations = nn.ModuleList()
         
-        if post_conf["use_skebs"]:
+        if post_conf["skebs"]["activate"]:
             logging.info("using SKEBS")
             self.operations.append(SKEBS(post_conf))
 

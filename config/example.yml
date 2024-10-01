@@ -278,8 +278,8 @@ model:
     
     post_conf: 
         activate: True
-        use_skebs: False
-        image_width: 1280
+        skebs:
+            activate: True
         
         tracer_fixer:
             activate: True
