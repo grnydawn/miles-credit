@@ -40,7 +40,7 @@ class tracer_fixer(nn.Module):
     def __init__(self, post_conf):
         super().__init__()
         
-        self.tracer_indices = conf['model']['post_conf']['tracer_fixer']['tracer_inds']
+        self.tracer_indices = post_conf['tracer_fixer']['tracer_inds']
         
     def forward(self, x):
         # negtive tracer correction
