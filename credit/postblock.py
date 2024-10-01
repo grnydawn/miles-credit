@@ -88,7 +88,7 @@ class SKEBS(nn.Module):
     """
     def __init__(self, post_conf):
         super().__init__()
-        self.image_width = post_conf['image_width']
+        self.image_width = post_conf['model']['image_width']
         final_layer_size = self.image_width
         self.additional_layer = nn.Linear(final_layer_size, final_layer_size)#.to(self.device) # Example: another layer
     

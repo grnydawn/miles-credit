@@ -112,19 +112,19 @@ model:
             activate: True
         
         tracer_fixer:
-            activate: True
+            activate: False
             tracer_name_upper: ['specific_total_water',]
             tracer_name_surface: []
             tracer_name_diagnostics: ['specific_total_water_500', 'total_precipitation']
             
         global_mass_fixer:
-            activate: True
+            activate: False
             specific_total_water_name: ['specific_total_water']
             precipitation_name: ['total_precipitation']
             evaporation_name: ['evaporation']
             
         global_energy_fixer:
-            activate: True
+            activate: False
             air_temperature_name: ['T']
             specific_total_water_name: ['specific_total_water']
             surface_geopotential_name: ['z_norm']

@@ -322,7 +322,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             
     # SKEBS
     if conf['model']['post_conf']['skebs']['activate']:
-        conf['model']['post_conf'].setdefault('image_width', conf['model']['image_width'])
+        pass
 
     # --------------------------------------------------------------------- #
     # tracer fixer
@@ -380,15 +380,15 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             if var in conf['model']['post_conf']['global_energy_fixer']['specific_total_water_name']
         ]
 
-            Phi_inds = [
-                i_var for i_var, var in enumerate(varname_input) 
-                if var in conf['model']['post_conf']['global_energy_fixer']['surface_geopotential_name']
-            ]
-            
-            TOA_rad_inds = [
-                i_var for i_var, var in enumerate(varname_output) 
-                if var in conf['model']['post_conf']['global_energy_fixer']['TOA_net_radiation_flux_name']
-            ]
+        Phi_inds = [
+            i_var for i_var, var in enumerate(varname_input) 
+            if var in conf['model']['post_conf']['global_energy_fixer']['surface_geopotential_name']
+        ]
+        
+        TOA_rad_inds = [
+            i_var for i_var, var in enumerate(varname_output) 
+            if var in conf['model']['post_conf']['global_energy_fixer']['TOA_net_radiation_flux_name']
+        ]
 
         surf_rad_inds = [
             i_var for i_var, var in enumerate(varname_output) 

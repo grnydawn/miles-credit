@@ -6,8 +6,8 @@ from credit.postblock import tracer_fixer
 def test_SKEBS_rand():
     image_width = 100
     conf = {"post_conf": {"skebs": {'activate': True}, 
-                          "image_width": image_width,}}
-    conf['post_conf'].setdefault('tracer_fixer', {'activate': False});
+                          "model": {"image_width": image_width,}}}
+    conf['post_conf'].setdefault('tracer_fixer', {'activate': False})
 
     input_tensor = torch.randn(image_width)
     postblock = PostBlock(**conf)
@@ -21,7 +21,7 @@ def test_SKEBS_rand():
 
 def test_tracer_fixer_rand():
     # conf keywords
-    conf = {"post_conf": {"activate": True, "use_skebs": False}}
+    conf = {"post_conf": {"skebs": {'activate': False}}}
     conf['post_conf']['tracer_fixer'] = {'activate': True}
     conf['post_conf']['tracer_fixer']['tracer_inds'] = [0,]
 
