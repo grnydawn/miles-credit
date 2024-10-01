@@ -1,6 +1,7 @@
 import torch
 from credit.postblock import PostBlock
 from credit.postblock import SKEBS
+from credit.postblock import tracer_fixer
     
 def test_SKEBS_rand():
     image_width = 100
@@ -16,6 +17,28 @@ def test_SKEBS_rand():
     y_pred = postblock(input_dict)
 
     assert y_pred.shape == input_tensor.shape
+
+def test_tracer_fixer_rand():
+    # conf keywords
+    conf = {"post_conf": {"activate": True, "use_skebs": False}}
+    conf['post_conf']['tracer_fixer'] = {'activate': True}
+    conf['post_conf']['tracer_fixer']['tracer_inds'] = [0,]
+
+    # a random tensor with neg values
+    input_tensor = torch.randn((1, 1, 10, 10))
+
+    # initialize postblock for 'tracer_fixer' only
+    postblock = PostBlock(**conf)
+
+    # verify that tracer_fixer is registered in the postblock
+    assert any([isinstance(module, tracer_fixer) for module in postblock.modules()])
+
+    # that tracer_fixer run
+    input_dict = {'y_pred': input_tensor}
+    output_dict = postblock(input_dict)
+
+    # verify negative values
+    assert output_dict['y_pred'].min() >= 0
 
 def test_SKEBS_era5():
     """
