@@ -34,8 +34,10 @@ class PostBlock(nn.Module):
 
 class tracer_fixer(nn.Module):
     '''
-    This class non-negative tracers by replacing their negative values to zero.
+    This class fixes non-negative tracers by replacing their negative values to zero.
     Modification is done witohut making copies.
+
+    Note: trace_fixer does not conserve the total mass of tracer content
     '''
     def __init__(self, post_conf):
         super().__init__()
