@@ -44,7 +44,7 @@ class tracer_fixer(nn.Module):
         
     def forward(self, x):
         # negtive tracer correction
-        for i_var in self.tracer_indices
+        for i_var in self.tracer_indices:
             # y_pred is channel first: (batch, var, time, lat, lon)
             tracer_vals = x["y_pred"][:, i_var, ...]
             
