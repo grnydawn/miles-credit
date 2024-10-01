@@ -110,6 +110,8 @@ model:
         activate: True
         use_skebs: True
         image_width: 1280
+        tracer_fixer:
+            activate: True
 
 loss: 
     # the main training loss
