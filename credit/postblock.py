@@ -27,8 +27,6 @@ class PostBlock(nn.Module):
             opt = tracer_fixer(post_conf)
             self.operations.append(opt)
 
-        if post_conf["use_skebs"]:
-
     def forward(self, x):
         for op in self.operations:
             x = op(x)
