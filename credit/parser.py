@@ -330,15 +330,27 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
     if flag_tracer:
         # when tracer fixer is on, get tensor indices of tracers
         # tracers must be outputs (either prognostic or output only)
-        varname_tracers = conf['model']['post_conf']['tracer_fixer']['tracer_name_upper'] + \
-                            conf['model']['post_conf']['tracer_fixer']['tracer_name_surface'] + \
-                            conf['model']['post_conf']['tracer_fixer']['tracer_name_diagnostics']
-        # get tracer inds
-        tracer_inds = [i_var for i_var, var in enumerate(varname_output) if var in varname_tracers]
-        conf['model']['post_conf']['tracer_fixer']['tracer_inds'] = tracer_inds
+        
         # tracer fixer runs on de-normalized variables by default
-        conf['model']['post_conf']['tracer_fixer'].setdefault(post_module, {'denorm': True})
-
+        conf['model']['post_conf']['tracer_fixer'].setdefault('denorm', True)
+        conf['model']['post_conf']['tracer_fixer'].setdefault('tracer_thres', [])
+        
+        varname_tracers = conf['model']['post_conf']['tracer_fixer']['tracer_name']
+        tracers_thres_input = conf['model']['post_conf']['tracer_fixer']['tracer_thres']
+        
+        # create a mapping from tracer variable names to their thresholds
+        tracer_threshold_dict = dict(zip(varname_tracers, tracers_thres_input))
+        
+        # Iterate over varname_output to find tracer indices and thresholds
+        tracer_inds = []; tracer_thres = []
+        for i_var, var in enumerate(varname_output):
+            if var in tracer_threshold_dict:
+                tracer_inds.append(i_var)
+                tracer_thres.append(float(tracer_threshold_dict[var]))
+        
+        conf['model']['post_conf']['tracer_fixer']['tracer_inds'] = tracer_inds
+        conf['model']['post_conf']['tracer_fixer']['tracer_thres'] = tracer_thres
+        
     # --------------------------------------------------------------------- #
     # global mass fixer
     flag_mass = conf['model']['post_conf']['global_mass_fixer']['activate']
@@ -346,6 +358,10 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
     if flag_mass:
         # when global mass fixer is on, get tensor indices of q, precip, evapor 
         # these variables must be outputs
+        
+        # global mass fixer runs on de-normalized variables by default
+        conf['model']['post_conf']['global_mass_fixer'].setdefault('denorm', True)
+        
         q_inds = [
             i_var for i_var, var in enumerate(varname_output) 
             if var in conf['model']['post_conf']['global_mass_fixer']['specific_total_water_name']
@@ -364,8 +380,6 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         conf['model']['post_conf']['global_mass_fixer']['q_inds'] = q_inds
         conf['model']['post_conf']['global_mass_fixer']['precip_ind'] = precip_inds[0]
         conf['model']['post_conf']['global_mass_fixer']['evapor_ind'] = evapor_inds[0]
-        # global mass fixer runs on de-normalized variables by default
-        conf['model']['post_conf']['global_mass_fixer'].setdefault(post_module, {'denorm': True})
         
     # --------------------------------------------------------------------- #
     # global energy fixer
@@ -373,6 +387,10 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
     if flag_energy:
         # when global energy fixer is on, get tensor indices of energy components
         # geopotential at surface is input, others are outputs
+
+        # global energy fixer runs on de-normalized variables by default
+        conf['model']['post_conf']['global_energy_fixer'].setdefault('denorm', True)
+        
         T_inds = [
             i_var for i_var, var in enumerate(varname_output) 
             if var in conf['model']['post_conf']['global_energy_fixer']['air_temperature_name']
@@ -421,8 +439,6 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         conf['model']['post_conf']['global_energy_fixer']['TOA_rad_inds'] = TOA_rad_inds
         conf['model']['post_conf']['global_energy_fixer']['surf_rad_inds'] = surf_rad_inds
         conf['model']['post_conf']['global_energy_fixer']['surf_flux_inds'] = surf_flux_inds
-        # global energy fixer runs on de-normalized variables by default
-        conf['model']['post_conf']['global_energy_fixer'].setdefault(post_module, {'denorm': True})
     
     # --------------------------------------------------------- #
     # conf['trainer'] section

@@ -44,6 +44,7 @@ class tracer_fixer(nn.Module):
         super().__init__()
         
         self.tracer_indices = post_conf['tracer_fixer']['tracer_inds']
+        self.tracer_thres = post_conf['tracer_fixer']['tracer_thres']
 
         if post_conf['tracer_fixer']['denorm']:
             # setup a scaler (no ToTensor, just scaler)
@@ -57,21 +58,25 @@ class tracer_fixer(nn.Module):
         # y_pred is channel first: (batch, var, time, lat, lon)
         y_pred = x["y_pred"]
         
-        # if denorm is needed
+        # # if denorm is needed
         if self.state_trans:
-            y_pred = state_trans.inverse_transform(y_pred)
-
+            y_pred = self.state_trans.inverse_transform(y_pred)
+            
         # -------------------------------------------------------- #
         # non-neg correction
-        for i_var in self.tracer_indices:
+        for i, i_var in enumerate(self.tracer_indices):
             # get the tracers
             tracer_vals = y_pred[:, i_var, ...]
 
             # in-place modification of y_pred
-            tracer_vals[tracer_vals<0] = 0
-
+            thres = self.tracer_thres[i]
+            tracer_vals[tracer_vals < thres] = thres
+            
         if self.state_trans:
-            y_pred = state_trans.transform_array(y_pred)
+            y_pred = self.state_trans.transform_array(y_pred)
+
+        # # give it back to x
+        x["y_pred"] = y_pred
             
         return x
 
