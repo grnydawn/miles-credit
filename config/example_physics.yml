@@ -163,7 +163,9 @@ model:
 
     post_conf: 
         activate: True
-        use_skebs: False
+        
+        skebs:
+            activate: False
         
         tracer_fixer:
             activate: True

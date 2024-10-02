@@ -281,33 +281,18 @@ model:
     
     post_conf: 
         activate: True
+        
         skebs:
             activate: True
         
         tracer_fixer:
-            activate: True
-            denorm: True
-            tracer_name: ['specific_total_water', 'specific_total_water_500', 'total_precipitation']
-            tracer_thres: [0, 0, 0]
+            activate: False
             
         global_mass_fixer:
-            activate: True
-            denorm: True
-            specific_total_water_name: ['specific_total_water']
-            precipitation_name: ['total_precipitation']
-            evaporation_name: ['evaporation']
+            activate: False
             
         global_energy_fixer:
-            activate: True
-            denorm: True
-            air_temperature_name: ['T']
-            specific_total_water_name: ['specific_total_water']
-            u_wind_name: ['U']
-            v_wind_name: ['V']
-            surface_geopotential_name: ['z_norm']
-            TOA_net_radiation_flux_name: ['top_net_solar_radiation', 'top_net_thermal_radiation']
-            surface_net_radiation_flux_name: ['surface_net_solar_radiation', 'surface_net_thermal_radiation']
-            surface_energy_flux_name: ['surface_sensible_heat_flux', 'surface_latent_heat_flux',]
+            activate: False
 
 
 loss: 
