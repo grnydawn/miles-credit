@@ -111,7 +111,13 @@ data:
     # True is the same as the old 'std'
     #
     # False: input tensors will be formed under the order of [dynamic_forcing -> forcing -> static]
-    static_first: False     
+    static_first: False   
+
+    # SST forcing  
+    sst_forcing:
+        activate: False
+        varname_skt: 'SKT'
+        varname_ocean_mask: 'land_sea_CI_mask'
     
 trainer:
     # the keyword that controls GPU usage
@@ -283,20 +289,25 @@ model:
         
         tracer_fixer:
             activate: True
+            denorm: True
             tracer_name_upper: ['specific_total_water',]
             tracer_name_surface: []
             tracer_name_diagnostics: ['specific_total_water_500', 'total_precipitation']
             
         global_mass_fixer:
             activate: True
+            denorm: True
             specific_total_water_name: ['specific_total_water']
             precipitation_name: ['total_precipitation']
             evaporation_name: ['evaporation']
             
         global_energy_fixer:
             activate: True
+            denorm: True
             air_temperature_name: ['T']
             specific_total_water_name: ['specific_total_water']
+            u_wind_name: ['U']
+            v_wind_name: ['V']
             surface_geopotential_name: ['z_norm']
             TOA_net_radiation_flux_name: ['top_net_solar_radiation', 'top_net_thermal_radiation']
             surface_net_radiation_flux_name: ['surface_net_solar_radiation', 'surface_net_thermal_radiation']

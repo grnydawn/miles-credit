@@ -168,8 +168,8 @@ def load_dataset_and_sampler_zscore_only(conf,
         name = 'validation'
     
     if conf['data']['sst_forcing']['activate']:
-        sst_forcing = {'varname_skt': conf['data']['varname_skt'], 
-                       'varname_ocean_mask': conf['data']['varname_ocean_mask']}
+        sst_forcing = {'varname_skt': conf['data']['sst_forcing']['varname_skt'], 
+                       'varname_ocean_mask': conf['data']['sst_forcing']['varname_ocean_mask']}
     else:
         sst_forcing = None
     
