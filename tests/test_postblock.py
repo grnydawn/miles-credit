@@ -24,9 +24,10 @@ def test_tracer_fixer_rand():
     conf = {"post_conf": {"skebs": {'activate': False}}}
     conf['post_conf']['tracer_fixer'] = {'activate': True, 'denorm': False}
     conf['post_conf']['tracer_fixer']['tracer_inds'] = [0,]
+    conf['post_conf']['tracer_fixer']['tracer_thres'] = [0,]
 
     # a random tensor with neg values
-    input_tensor = torch.randn((1, 1, 10, 10))
+    input_tensor = -999*torch.randn((1, 1, 10, 10))
 
     # initialize postblock for 'tracer_fixer' only
     postblock = PostBlock(**conf)
