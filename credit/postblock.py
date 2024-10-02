@@ -18,14 +18,6 @@ class PostBlock(nn.Module):
         super().__init__()
 
         self.operations = nn.ModuleList()
-
-        # -------------------------------------------------------- #
-        # setup a scaler (no ToTensor, just scaler)
-        state_trans = load_transforms(post_conf, scaler_only=True)
-        # # usage:
-        # x_inverse = state_trans.inverse_transform_input(x)
-        # y_inverse = state_trans.inverse_transform(y)
-        # ------------------------------- #
         
         if post_conf["skebs"]["activate"]:
             logging.info("using SKEBS")
