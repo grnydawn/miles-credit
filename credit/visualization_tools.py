@@ -18,9 +18,6 @@ Functions:
     - draw_sigma_level(data, conf=None, times=None, forecast_count=None, save_location=None)
     - draw_diagnostics(data, conf=None, times=None, forecast_count=None, save_location=None)
     - draw_surface(data, conf=None, times=None, forecast_count=None, save_location=None)
-    
-Yingkai Sha
-ksha@ucar.edu
 '''
 
 # ---------- #

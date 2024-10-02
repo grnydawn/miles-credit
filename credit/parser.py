@@ -6,9 +6,6 @@ Content:
     - training_data_check
     - predict_data_check
     - remove_string_by_pattern
-
-Yingkai Sha
-ksha@ucar.edu
 '''
 
 import os
@@ -263,7 +260,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         conf['data']['static_first'] = True
 
     if 'sst_forcing' not in conf['data']:
-        conf['data']['sst_forcing'] = False
+        conf['data']['sst_forcing'] = {'activate': False}
 
     # --------------------------------------------------------- #
     # conf['model'] section
@@ -287,6 +284,8 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
     if conf['model']['post_conf']['activate']:
         # copy only model configs to post_conf subdictionary
         conf['model']['post_conf']['model'] = {k: v for k,v in conf['model'].items() if k != 'post_conf'}
+        # copy data configs to post_conf (for de-normalize variables)
+        conf['model']['post_conf']['data'] = {k: v for k,v in conf['data'].items()}
 
         # --------------------------------------------------------------------- #
         # get the full list of input / output variables for post_conf
@@ -337,6 +336,8 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         # get tracer inds
         tracer_inds = [i_var for i_var, var in enumerate(varname_output) if var in varname_tracers]
         conf['model']['post_conf']['tracer_fixer']['tracer_inds'] = tracer_inds
+        # tracer fixer runs on de-normalized variables by default
+        conf['model']['post_conf']['tracer_fixer'].setdefault(post_module, {'denorm': True})
 
     # --------------------------------------------------------------------- #
     # global mass fixer
@@ -363,6 +364,8 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         conf['model']['post_conf']['global_mass_fixer']['q_inds'] = q_inds
         conf['model']['post_conf']['global_mass_fixer']['precip_ind'] = precip_inds[0]
         conf['model']['post_conf']['global_mass_fixer']['evapor_ind'] = evapor_inds[0]
+        # global mass fixer runs on de-normalized variables by default
+        conf['model']['post_conf']['global_mass_fixer'].setdefault(post_module, {'denorm': True})
         
     # --------------------------------------------------------------------- #
     # global energy fixer
@@ -380,6 +383,16 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             if var in conf['model']['post_conf']['global_energy_fixer']['specific_total_water_name']
         ]
 
+        U_inds = [
+            i_var for i_var, var in enumerate(varname_output) 
+            if var in conf['model']['post_conf']['global_energy_fixer']['u_wind_name']
+        ]
+        
+        V_inds = [
+            i_var for i_var, var in enumerate(varname_output) 
+            if var in conf['model']['post_conf']['global_energy_fixer']['v_wind_name']
+        ]
+        
         Phi_inds = [
             i_var for i_var, var in enumerate(varname_input) 
             if var in conf['model']['post_conf']['global_energy_fixer']['surface_geopotential_name']
@@ -402,10 +415,14 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
 
         conf['model']['post_conf']['global_energy_fixer']['T_inds'] = T_inds
         conf['model']['post_conf']['global_energy_fixer']['q_inds'] = q_inds
+        conf['model']['post_conf']['global_energy_fixer']['U_inds'] = U_inds
+        conf['model']['post_conf']['global_energy_fixer']['V_inds'] = V_inds
         conf['model']['post_conf']['global_energy_fixer']['Phi_ind'] = Phi_inds[0]
         conf['model']['post_conf']['global_energy_fixer']['TOA_rad_inds'] = TOA_rad_inds
         conf['model']['post_conf']['global_energy_fixer']['surf_rad_inds'] = surf_rad_inds
         conf['model']['post_conf']['global_energy_fixer']['surf_flux_inds'] = surf_flux_inds
+        # global energy fixer runs on de-normalized variables by default
+        conf['model']['post_conf']['global_energy_fixer'].setdefault(post_module, {'denorm': True})
     
     # --------------------------------------------------------- #
     # conf['trainer'] section

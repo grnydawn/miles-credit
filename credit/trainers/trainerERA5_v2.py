@@ -6,9 +6,6 @@ Content:
         - train_one_epoch
         - validate
         - fit
-
-Yingkai Sha
-ksha@ucar.edu
 '''
 import os
 import gc

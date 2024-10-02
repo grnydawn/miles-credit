@@ -13,9 +13,6 @@ Content:
     - drop_var_from_dataset()
     - ERA5_and_Forcing_Dataset(torch.utils.data.Dataset)
     - Predict_Dataset(torch.utils.data.IterableDataset)
-
-Yingkai Sha
-ksha@ucar.edu
 '''
 
 # system tools
