@@ -2,7 +2,7 @@
 transforms.py 
 -------------------------------------------------------
 Content:
-    - load_transforms(conf)
+    - load_transforms
     - Normalize_ERA5_and_Forcing
     - ToTensor_ERA5_and_Forcing
 
@@ -219,8 +219,6 @@ class Normalize_ERA5_and_Forcing:
     def transform_array(self, x: torch.Tensor) -> torch.Tensor:
         '''
         this function applies to y_pred, so there won't be dynamic forcing, forcing and static variables.
-        Consider its usage (standardize y_pred as input of the next iteration), diagnostics don't need 
-        to be transformed, it is output-only.
         '''
         # get the current device
         device = x.device
@@ -257,6 +255,13 @@ class Normalize_ERA5_and_Forcing:
                 var_mean = self.mean_ds[name].values
                 var_std = self.std_ds[name].values
                 transformed_surface[:, k] = (tensor_surface[:, k] - var_mean) / var_std
+
+        # standardize diagnostic variables
+        if self.flag_diagnostic:
+            for k, name in enumerate(self.varname_diagnostic):
+                var_mean = self.mean_ds[name].values
+                var_std = self.std_ds[name].values
+                transformed_diagnostic[:, k] = (transformed_diagnostic[:, k] - var_mean) / var_std
                 
         # concat everything
         if self.flag_surface:

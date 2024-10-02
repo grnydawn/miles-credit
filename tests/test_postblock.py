@@ -22,7 +22,7 @@ def test_SKEBS_rand():
 def test_tracer_fixer_rand():
     # conf keywords
     conf = {"post_conf": {"skebs": {'activate': False}}}
-    conf['post_conf']['tracer_fixer'] = {'activate': True}
+    conf['post_conf']['tracer_fixer'] = {'activate': True, 'denorm': False}
     conf['post_conf']['tracer_fixer']['tracer_inds'] = [0,]
 
     # a random tensor with neg values

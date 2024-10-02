@@ -17,6 +17,14 @@ class PostBlock(nn.Module):
         super().__init__()
 
         self.operations = nn.ModuleList()
+
+        # -------------------------------------------------------- #
+        # setup a scaler (no ToTensor, just scaler)
+        state_trans = load_transforms(post_conf, scaler_only=True)
+        # # usage:
+        # x_inverse = state_trans.inverse_transform_input(x)
+        # y_inverse = state_trans.inverse_transform(y)
+        # ------------------------------- #
         
         if post_conf["skebs"]["activate"]:
             logging.info("using SKEBS")
@@ -43,15 +51,34 @@ class tracer_fixer(nn.Module):
         super().__init__()
         
         self.tracer_indices = post_conf['tracer_fixer']['tracer_inds']
-        
+
+        if post_conf['tracer_fixer']['denorm']:
+            # setup a scaler (no ToTensor, just scaler)
+            self.state_trans = load_transforms(post_conf, scaler_only=True)
+        else:
+            self.state_trans = None
+    
     def forward(self, x):
-        # negtive tracer correction
+        # -------------------------------------------------------- #
+        # get y_pred
+        # y_pred is channel first: (batch, var, time, lat, lon)
+        y_pred = x["y_pred"]
+        
+        # if denorm is needed
+        if self.state_trans:
+            y_pred = state_trans.inverse_transform(y_pred)
+
+        # -------------------------------------------------------- #
+        # non-neg correction
         for i_var in self.tracer_indices:
-            # y_pred is channel first: (batch, var, time, lat, lon)
-            tracer_vals = x["y_pred"][:, i_var, ...]
-            
-            # modify `x["y_pred"][:, i_var, ...]` in-place
+            # get the tracers
+            tracer_vals = y_pred[:, i_var, ...]
+
+            # in-place modification of y_pred
             tracer_vals[tracer_vals<0] = 0
+
+        if self.state_trans:
+            y_pred = state_trans.transform_array(y_pred)
             
         return x
 
