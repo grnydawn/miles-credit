@@ -1,8 +1,5 @@
 # --------------------------------------------------------------------------------------------------------------------- #
 # This is an example yaml file that explains how to define, train, and use AI weather prediciton models in CREDIT
-#
-# Yingkai Sha
-# ksha@ucar.edu
 # --------------------------------------------------------------------------------------------------------------------- #
 
 
@@ -290,9 +287,8 @@ model:
         tracer_fixer:
             activate: True
             denorm: True
-            tracer_name_upper: ['specific_total_water',]
-            tracer_name_surface: []
-            tracer_name_diagnostics: ['specific_total_water_500', 'total_precipitation']
+            tracer_name: ['specific_total_water', 'specific_total_water_500', 'total_precipitation']
+            tracer_thres: [0, 0, 0]
             
         global_mass_fixer:
             activate: True

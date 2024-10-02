@@ -1,0 +1,238 @@
+# --------------------------------------------------------------------------------------------------------------------- #
+# This yaml file implements 6 hourly FuXi on NSF NCAR HPCs (casper.ucar.edu and derecho.hpc.ucar.edu) 
+# the FuXi architecture has been modified to reduce the overall model size
+# The model is trained on hourly model-level ERA5 data with top solar irradiance, geopotential, and land-sea mask inputs
+# Output variables: model level [U, V, T, Q], single level [SP, t2m], and 500 hPa [U, V, T, Z, Q]
+# --------------------------------------------------------------------------------------------------------------------- #
+save_loc: '/glade/work/ksha/CREDIT_runs/fuxi_physics_base/'
+seed: 1000
+
+data:
+    # upper-air variables
+    variables: ['U', 'V', 'T', 'Z', 'specific_total_water']
+    save_loc: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/all_in_one/ERA5_plevel_6h_*zarr'
+    
+    # surface variables
+    surface_variables: ['MSL', 'VAR_2T', 'SKT']
+    save_loc_surface: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/all_in_one/ERA5_plevel_6h_*zarr'
+    
+    # dynamic forcing variables
+    dynamic_forcing_variables: ['toa_incident_solar_radiation', 'land_sea_CI_mask']
+    save_loc_dynamic_forcing: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/all_in_one/ERA5_plevel_6h_*zarr'
+    
+    # diagnostic variables
+    diagnostic_variables: ['U500', 'V500', 'T500', 'Z500', 'specific_total_water_500',
+                           'evaporation', 'total_precipitation',
+                           'surface_net_solar_radiation',
+                           'surface_net_thermal_radiation',
+                           'surface_sensible_heat_flux',
+                           'surface_latent_heat_flux',
+                           'top_net_solar_radiation',
+                           'top_net_thermal_radiation'] 
+    save_loc_diagnostic: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/all_in_one/ERA5_plevel_6h_*zarr'
+    
+    # static variables
+    static_variables: ['z_norm'] 
+    save_loc_static: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/static/ERA5_plevel_6h_static.zarr'
+    
+    # mean / std path
+    mean_path: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/mean_std/mean_6h_1979_2019_13lev_0.25deg.nc'
+    std_path: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/mean_std/std_residual_6h_1979_2019_13lev_0.25deg.nc'
+    
+    # train / validation split
+    train_years: [1979, 2019]
+    valid_years: [2019, 2020]
+    
+    # data workflow
+    scaler_type: 'std_new'  
+    
+    # number of input states
+    # FuXi has 2 input states
+    history_len: 2
+    valid_history_len: 2
+    
+    # number of forecast steps to compute loss
+    # 0 for single step training / validation
+    # larger than 0 for multi-step training / validation
+    forecast_len: 0
+    valid_forecast_len: 0
+    
+    # one_shot: True --> compute loss on the last forecast step only
+    # one_shot: False --> compute loss on all forecast steps
+    one_shot: False
+    
+    # 1 for hourly model
+    lead_time_periods: 6
+    
+    # do not use skip_period
+    skip_periods: null
+    
+    # compatible with the old 'std'
+    static_first: True
+    
+    sst_forcing:
+        activate: True
+        varname_skt: 'SKT'
+        varname_ocean_mask: 'land_sea_CI_mask'
+
+
+trainer:
+    type: standard # <---------- change to your type
+    
+    mode: none
+    cpu_offload: False
+    activation_checkpoint: True
+    
+    load_weights: False
+    load_optimizer: False
+    load_scaler: False
+    load_sheduler: False
+
+    skip_validation: False
+    update_learning_rate: False
+    
+    save_backup_weights: True
+    save_best_weights: True
+
+    save_metric_vars: ['Z500', 'total_precipitation', 'evaporation', 'top_net_thermal_radiation']
+    
+    learning_rate: 1.0e-03 # <-- change to your lr
+    weight_decay: 0
+    
+    train_batch_size: 1
+    valid_batch_size: 1
+    
+    batches_per_epoch: 3
+    valid_batches_per_epoch: 0
+    stopping_patience: 50
+    
+    start_epoch: 0
+    num_epoch: 2
+    reload_epoch: True
+    epochs: &epochs 70
+    
+    use_scheduler: True
+    scheduler: {'scheduler_type': 'cosine-annealing', 'T_max': *epochs,  'last_epoch': -1}
+
+    # Automatic Mixed Precision: False
+    amp: False
+    
+    # rescale loss as loss = loss / grad_accum_every
+    grad_accum_every: 1 
+    # gradient clipping
+    grad_max_norm: 1.0
+    
+    # number of workers
+    thread_workers: 4
+    valid_thread_workers: 0
+
+model:
+    # crossformer example
+    type: "crossformer"
+    frames: 1                         # number of input states (default: 1)
+    image_height: 721                 # number of latitude grids (default: 640)
+    image_width: 1440                 # number of longitude grids (default: 1280)
+    levels: 13                        # number of upper-air variable levels
+    channels: 5                       # upper-air variable channels
+    surface_channels: 3               # surface variable channels
+    input_only_channels: 3            # dynamic forcing, forcing, static channels
+    output_only_channels: 13          # diagnostic variable channels
+    
+    patch_width: 1                    # number of latitude grids in each 3D patch (default: 1)
+    patch_height: 1                   # number of longitude grids in each 3D patch (default: 1)
+    frame_patch_size: 1               # number of input states in each 3D patch (default: 1)
+    
+    dim: [128, 256, 512, 1024]        # Dimensionality of each layer
+    depth: [2, 2, 8, 2]               # Depth of each layer
+    global_window_size: [10, 5, 2, 1] # Global window size for each layer
+    local_window_size: 10             # Local window size
+    cross_embed_kernel_sizes:         # kernel sizes for cross-embedding
+    - [4, 8, 16, 32]
+    - [2, 4]
+    - [2, 4]
+    - [2, 4]
+    cross_embed_strides: [2, 2, 2, 2] # Strides for cross-embedding (default: [4, 2, 2, 2])
+    attn_dropout: 0.                  # Dropout probability for attention layers (default: 0.0)
+    ff_dropout: 0.                    # Dropout probability for feed-forward layers (default: 0.0)
+    
+    # map boundary padding
+    pad_lon: 80             # number of grids to pad on 0 and 360 deg lon
+    pad_lat: 80             # number of grids to pad on -90 and 90 deg lat
+
+    use_spectral_norm: True
+
+    post_conf: 
+        activate: True
+        use_skebs: False
+        
+        tracer_fixer:
+            activate: True
+            denorm: True
+            tracer_name: ['specific_total_water', 'specific_total_water_500', 'total_precipitation']
+            tracer_thres: [0, 0, 0]
+            
+        global_mass_fixer:
+            activate: True
+            denorm: True
+            specific_total_water_name: ['specific_total_water']
+            precipitation_name: ['total_precipitation']
+            evaporation_name: ['evaporation']
+            
+        global_energy_fixer:
+            activate: True
+            denorm: True
+            air_temperature_name: ['T']
+            specific_total_water_name: ['specific_total_water']
+            u_wind_name: ['U']
+            v_wind_name: ['V']
+            surface_geopotential_name: ['z_norm']
+            TOA_net_radiation_flux_name: ['top_net_solar_radiation', 'top_net_thermal_radiation']
+            surface_net_radiation_flux_name: ['surface_net_solar_radiation', 'surface_net_thermal_radiation']
+            surface_energy_flux_name: ['surface_sensible_heat_flux', 'surface_latent_heat_flux',]
+    
+loss: 
+    # the main training loss
+    training_loss: "mse"
+    
+    # power loss (x), spectral_loss (x)
+    use_power_loss: False 
+    use_spectral_loss: False
+    
+    # use latitude weighting
+    use_latitude_weights: True
+    latitude_weights: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/static/ERA5_plevel_6h_static.zarr'
+    
+    # turn-off variable weighting
+    use_variable_weights: False
+    
+predict:
+    forecasts:
+        type: "custom"       # keep it as "custom"
+        start_year: 2020     # year of the first initialization (where rollout will start)
+        start_month: 1       # month of the first initialization
+        start_day: 1         # day of the first initialization
+        start_hours: [0, 12] # hour-of-day for each initialization, 0 for 00Z, 12 for 12Z
+        duration: 30         # number of days to initialize, starting from the (year, mon, day) above
+                             # duration should be divisible by the number of GPUs 
+                             # (e.g., duration: 384 for 365-day rollout using 32 GPUs)
+        days: 2              # forecast lead time as days (1 means 24-hour forecast)
+        
+    save_forecast: '/glade/derecho/scratch/ksha/CREDIT/fuxi_6h/'
+    save_vars: ['SP','t2m','V500','U500','T500','Z500','Q500']
+    
+    # turn-off low-pass filter
+    use_laplace_filter: False
+    
+    # deprecated
+    # save_format: "nc"
+    
+pbs: #derecho
+    conda: "/glade/work/ksha/miniconda3/envs/credit"
+    project: "NAML0001"
+    job_name: "fuxi_6h"
+    walltime: "12:00:00"
+    nodes: 8
+    ncpus: 64
+    ngpus: 4
+    mem: '480GB'
+    queue: 'main'
