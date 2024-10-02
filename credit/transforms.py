@@ -27,7 +27,10 @@ from bridgescaler import read_scaler
 logger = logging.getLogger(__name__)
 
 
-def load_transforms(conf):
+def load_transforms(conf, scaler_only=False):
+    '''
+    scaler_only: True --> retrun scaler; False --> return scaler and ToTensor
+    '''
     # ------------------------------------------------------------------- #
     # transform class
     if conf["data"]["scaler_type"] == 'quantile':
@@ -46,6 +49,8 @@ def load_transforms(conf):
         logger.log('scaler type not supported check data: scaler_type in config file')
         raise
 
+    if scaler_only:
+        return transform_scaler
     # ------------------------------------------------------------------- #
     # ToTensor class
     if conf["data"]["scaler_type"] == 'quantile-cached':
@@ -156,13 +161,13 @@ class Normalize_ERA5_and_Forcing:
         self.std_ds = xr.open_dataset(conf['data']['std_path'])
 
         # get levels and upper air variables
-        self.levels = conf['model']['levels']
+        self.levels = conf['data']['levels'] # it was conf['model']['levels'], credit.parser should copy it to conf['data']
         self.varname_upper_air = conf['data']['variables']
         self.num_upper_air = (len(self.varname_upper_air)*self.levels)
 
         # identify the existence of other variables
         self.flag_surface = ('surface_variables' in conf['data']) and (len(conf['data']['surface_variables']) > 0)
-        # self.flag_dyn_forcing = ('dynamic_forcing_variables' in conf['data']) and (len(conf['data']['dynamic_forcing_variables']) > 0)
+        self.flag_dyn_forcing = ('dynamic_forcing_variables' in conf['data']) and (len(conf['data']['dynamic_forcing_variables']) > 0)
         self.flag_diagnostic = ('diagnostic_variables' in conf['data']) and (len(conf['data']['diagnostic_variables']) > 0)
         self.flag_forcing = ('forcing_variables' in conf['data']) and (len(conf['data']['forcing_variables']) > 0)
         self.flag_static = ('static_variables' in conf['data']) and (len(conf['data']['static_variables']) > 0)
@@ -172,13 +177,15 @@ class Normalize_ERA5_and_Forcing:
             self.varname_surface = conf["data"]["surface_variables"]
             self.num_surface = len(self.varname_surface)
 
-        # # get dynamic forcing varnames
-        # if self.flag_dyn_forcing:
-        #     self.varname_dyn_forcing = conf["data"]['dynamic_forcing_variables']
+        # get dynamic forcing varnames
+        if self.flag_dyn_forcing:
+            self.varname_dyn_forcing = conf["data"]['dynamic_forcing_variables']
+            self.num_dyn_forcing = len(self.varname_dyn_forcing)
         
         # get diagnostic varnames
         if self.flag_diagnostic:
             self.varname_diagnostic = conf["data"]["diagnostic_variables"]
+            self.num_diagnostic = len(self.varname_diagnostic)
 
         # get forcing varnames
         if self.flag_forcing:
@@ -198,7 +205,7 @@ class Normalize_ERA5_and_Forcing:
             self.num_forcing_static = len(self.varname_forcing_static)
         else:
             self.has_forcing_static = False
-        
+            
         logger.info("Loading stored mean and std data for z-score-based transform and inverse transform")
 
     def __call__(self, sample: Sample, inverse: bool = False) -> Sample:
@@ -311,7 +318,7 @@ class Normalize_ERA5_and_Forcing:
         
     def inverse_transform(self, x: torch.Tensor) -> torch.Tensor:
         '''
-        this function applies to y_pred, so there won't be dynamic forcing, forcing and static variables here 
+        this function applies to y_pred, so there won't be dynamic forcing, forcing and static vars 
         '''
         # get the current device
         device = x.device
@@ -371,6 +378,78 @@ class Normalize_ERA5_and_Forcing:
         
         return transformed_x.to(device)
 
+
+    def inverse_transform_input(self, x: torch.Tensor) -> torch.Tensor:
+        '''
+        inverse transform for input x
+        Forcing and static variables are not transformed 
+        (they were not transformed in the transform function).
+        '''
+        # get the current device
+        device = x.device
+        
+        # subset upper air variables
+        tensor_upper_air = x[:, :self.num_upper_air, :, :]
+        transformed_upper_air = tensor_upper_air.clone()
+        
+        idx = self.num_upper_air
+        
+        # surface variables
+        if self.flag_surface:
+            tensor_surface = x[:, idx:idx+self.num_surface, :, :]
+            transformed_surface = tensor_surface.clone()
+            idx += self.num_surface
+        
+        # dynamic forcing variables
+        if self.flag_dyn_forcing:
+            tensor_dyn_forcing = x[:, idx:idx+self.num_dyn_forcing, :, :]
+            transformed_dyn_forcing = tensor_dyn_forcing.clone()
+            idx += self.num_dyn_forcing
+        
+        # forcing and static variables (not transformed)
+        if self.has_forcing_static:
+            tensor_forcing_static = x[:, idx:idx+self.num_forcing_static, :, :]
+            idx += self.num_forcing_static
+            
+        # inverse transform upper air variables
+        k = 0
+        for name in self.varname_upper_air:
+            for level in range(self.levels):
+                mean = self.mean_ds[name].values[level]
+                std = self.std_ds[name].values[level]
+                transformed_upper_air[:, k] = tensor_upper_air[:, k] * std + mean
+                k += 1
+        
+        # inverse transform surface variables
+        if self.flag_surface:
+            for k, name in enumerate(self.varname_surface):
+                mean = self.mean_ds[name].values
+                std = self.std_ds[name].values
+                transformed_surface[:, k] = tensor_surface[:, k] * std + mean
+        
+        # inverse transform dynamic forcing variables
+        if self.flag_dyn_forcing:
+            for k, name in enumerate(self.varname_dyn_forcing):
+                mean = self.mean_ds[name].values
+                std = self.std_ds[name].values
+                transformed_dyn_forcing[:, k] = tensor_dyn_forcing[:, k] * std + mean
+        
+        # reconstruct input tensor
+        tensors = [transformed_upper_air]
+        
+        if self.flag_surface:
+            tensors.append(transformed_surface)
+        
+        if self.flag_dyn_forcing:
+            tensors.append(transformed_dyn_forcing)
+        
+        if self.has_forcing_static:
+            # Forcing and static variables are left unchanged
+            tensors.append(tensor_forcing_static)
+        
+        transformed_x = torch.cat(tensors, dim=1)
+        
+        return transformed_x.to(device)
 
 class BridgescalerScaleState(object):
     def __init__(self, conf):
