@@ -435,7 +435,7 @@ class CrossFormer(BaseModel):
         if self.image_width_adjust == 0:
             self.image_width_adjust = total_dsample_factor_W
 
-        print('{}, {}'.format(self.image_height_adjust, self.image_width_adjust))
+        # print('{}, {}'.format(self.image_height_adjust, self.image_width_adjust))
         
         # define embedding layer using adjusted sizes
         # if the original sizes were good, adjusted sizes should == original sizes
