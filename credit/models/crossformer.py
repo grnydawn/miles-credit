@@ -324,7 +324,7 @@ class CrossFormer(BaseModel):
         pad_lon=0,
         pad_lat=0,
         use_spectral_norm=True,
-        post_conf={"use_skebs": False},
+        post_conf={"activate": False},
         **kwargs
     ):
         super().__init__()
@@ -374,22 +374,78 @@ class CrossFormer(BaseModel):
         dims = [first_dim, *dim]
         dim_in_and_out = tuple(zip(dims[:-1], dims[1:]))
 
-        # layers
-
+        # allocate cross embed layers
         self.layers = nn.ModuleList([])
 
-        for (dim_in, dim_out), layers, global_wsz, local_wsz, cel_kernel_sizes, cel_stride in zip(dim_in_and_out, depth, global_window_size, local_window_size, cross_embed_kernel_sizes, cross_embed_strides):
-            self.layers.append(nn.ModuleList([
-                CrossEmbedLayer(dim_in, dim_out, cel_kernel_sizes, stride=cel_stride),
-                Transformer(dim_out, local_window_size=local_wsz, global_window_size=global_wsz, depth=layers, dim_head=dim_head, attn_dropout=attn_dropout, ff_dropout=ff_dropout)
-            ]))
+        # loop through hyperparameters
+        for (dim_in, dim_out), num_layers, global_wsize, local_wsize, kernel_sizes, stride in zip(
+            dim_in_and_out,
+            depth,
+            global_window_size,
+            local_window_size,
+            cross_embed_kernel_sizes,
+            cross_embed_strides
+        ):
+            # create CrossEmbedLayer
+            cross_embed_layer = CrossEmbedLayer(
+                dim_in=dim_in,
+                dim_out=dim_out,
+                kernel_sizes=kernel_sizes,
+                stride=stride
+            )
+            
+            # create Transformer
+            transformer_layer = Transformer(
+                dim=dim_out,
+                local_window_size=local_wsize,
+                global_window_size=global_wsize,
+                depth=num_layers,
+                dim_head=dim_head,
+                attn_dropout=attn_dropout,
+                ff_dropout=ff_dropout
+            )
+            
+            # append everything
+            self.layers.append(
+                nn.ModuleList([
+                    cross_embed_layer,
+                    transformer_layer
+                ])
+            )
 
+        # =================================================================================== #
+        # This block handles I/O sizes that cannot be divcided by cross_embed_strides
+        
+        # total downsampling factors
+        total_dsample_factor_H = patch_height
+        total_dsample_factor_W = patch_width
+        
+        for s in cross_embed_strides:
+            total_dsample_factor_H *= s
+            total_dsample_factor_W *= s
+        
+        # compute I/O sizes that can be accepted
+        self.image_height_adjust = (image_height // total_dsample_factor_H) * total_dsample_factor_H
+        self.image_width_adjust = (image_width // total_dsample_factor_W) * total_dsample_factor_W
+
+        # acceptable sizes are at least the size of the total factor
+        if self.image_height_adjust == 0:
+            self.image_height_adjust = total_dsample_factor_H
+
+        if self.image_width_adjust == 0:
+            self.image_width_adjust = total_dsample_factor_W
+
+        print('{}, {}'.format(self.image_height_adjust, self.image_width_adjust))
+        
+        # define embedding layer using adjusted sizes
+        # if the original sizes were good, adjusted sizes should == original sizes
         self.cube_embedding = CubeEmbedding(
-            (frames, image_height, image_width),
+            (frames, self.image_height_adjust, self.image_width_adjust),
             (frames, patch_height, patch_width),
             input_channels,
             dim[0]
         )
+        # =================================================================================== #
 
         self.up_block1 = UpBlock(1 * last_dim, last_dim // 2, dim[0])
         self.up_block2 = UpBlock(2 * (last_dim // 2), last_dim // 4, dim[0])
@@ -406,14 +462,40 @@ class CrossFormer(BaseModel):
             logger.info(f"Padding each pole using a reflection with {self.pad_lat} pixels")
         
         
-        self.use_post_block = post_conf["use_skebs"] # or post_conf["use_lap"] etc
+        self.use_post_block = post_conf['activate']
         if self.use_post_block:
             self.postblock = PostBlock(post_conf)
 
     def forward(self, x):
-        if self.use_post_block:  # copy tensor to feed into postBlock later
+        
+        # copy before tensor values are modified
+        if self.use_post_block:  
             x_copy = x.clone().detach()
+        
+        
 
+        # ===================================================================== #
+        # this block does the input interpolation, if adjusted sizes are needed
+
+        # get the current size
+        B, C, T, H_in, W_in = x.shape
+
+        # if current size needs to be adjusted
+        if H_in != self.image_height_adjust or W_in != self.image_width_adjust:
+            
+            # merge batch and time becuase F.interpolate works for 4D tensor
+            x = x.permute(0, 2, 1, 3, 4).reshape(B * T, C, H_in, W_in)
+            
+            # F.interpolate to the adjusted sizes
+            x = F.interpolate(x, 
+                              size=(self.image_height_adjust, self.image_width_adjust), 
+                              mode='bilinear', 
+                              align_corners=False)
+            
+            # reshape back
+            x = x.reshape(B, T, C, self.image_height_adjust, self.image_width_adjust).permute(0, 2, 1, 3, 4)
+        # ===================================================================== #
+        
         if self.pad_lon > 0:
             x = circular_pad1d(x, pad=self.pad_lon)
 
@@ -457,16 +539,19 @@ class CrossFormer(BaseModel):
         if self.pad_lat > 0:
             # Slice to original size
             x = x[..., self.pad_lat:-self.pad_lat, :]
-
+            
         x = F.interpolate(x, size=(self.image_height, self.image_width), mode="bilinear")
         x = x.unsqueeze(2)
 
+        # ------------------------------ #
+        # postblock scope
         if self.use_post_block:
             x = {
                 "y_pred": x,
                 "x": x_copy,
             }
             x = self.postblock(x)
+        # ------------------------------ #
         return x
 
     def rk4(self, x):
@@ -486,42 +571,7 @@ class CrossFormer(BaseModel):
 
 
 if __name__ == "__main__":
-    # image_height = 192  # 640, 192
-    # image_width = 288  # 1280, 288
-    # levels = 15
-    # frames = 2
-    # channels = 4
-    # surface_channels = 7
-    # patch_height = 1
-    # patch_width = 1
-    # frame_patch_size = 2
-    # pad_lon=48
-    # pad_lat=48
-
-    # input_tensor = torch.randn(1, channels * levels + surface_channels, frames, image_height, image_width).to("cuda")
-
-    # model = CrossFormer(
-    #     image_height=image_height,
-    #     patch_height=patch_height,
-    #     image_width=image_width,
-    #     patch_width=patch_width,
-    #     frames=frames,
-    #     frame_patch_size=frame_patch_size,
-    #     channels=channels,
-    #     surface_channels=surface_channels,
-    #     levels=levels,
-    #     dim=(64, 128, 256, 512),
-    #     depth=(2, 2, 8, 2),
-    #     global_window_size=(4, 4, 2, 1),
-    #     local_window_size=3,
-    #     cross_embed_kernel_sizes=((4, 8, 16, 32), (2, 4), (2, 4), (2, 4)),
-    #     cross_embed_strides=(2, 2, 2, 2),
-    #     attn_dropout=0.,
-    #     ff_dropout=0.,
-    #     pad_lon=pad_lon,
-    #     pad_lat=pad_lat
-    # ).to("cuda")
-
+    
     image_height = 640  # 640, 192
     image_width = 1280  # 1280, 288
     levels = 15
@@ -533,7 +583,11 @@ if __name__ == "__main__":
     pad_lon = 80
     pad_lat = 80
 
-    input_tensor = torch.randn(1, channels * levels + surface_channels + input_only_channels, frames, image_height, image_width).to("cuda")
+    input_tensor = torch.randn(1, 
+                               channels * levels + surface_channels + input_only_channels, 
+                               frames, 
+                               image_height, 
+                               image_width).to("cuda")
 
     model = CrossFormer(
         image_height=image_height,
@@ -544,12 +598,12 @@ if __name__ == "__main__":
         surface_channels=surface_channels,
         input_only_channels=input_only_channels,
         levels=levels,
-        dim=(128, 256, 512, 1024),
-        depth=(2, 2, 18, 2),
-        global_window_size=(8, 4, 2, 1),
+        dim=(32, 64, 128, 256),
+        depth=(2, 2, 8, 2),
+        global_window_size=(10, 5, 2, 1),
         local_window_size=5,
         cross_embed_kernel_sizes=((4, 8, 16, 32), (2, 4), (2, 4), (2, 4)),
-        cross_embed_strides=(4, 2, 2, 2),
+        cross_embed_strides=(2, 2, 2, 2),
         attn_dropout=0.,
         ff_dropout=0.,
         pad_lon=pad_lon,
