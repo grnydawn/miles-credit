@@ -776,6 +776,14 @@ class ToTensor:
 class ToTensor_ERA5_and_Forcing:
     def __init__(self, conf):
         self.conf = conf
+        
+        if conf['data']['dtype'] == 'float32':
+            self.output_dtype = torch.float32
+        elif conf['data']['dtype'] == 'float16':
+            self.output_dtype = torch.float16
+        elif conf['data']['dtype'] == 'float64':
+            self.output_dtype = torch.float64
+        
         self.hist_len = int(conf["data"]["history_len"])
         self.for_len = int(conf["data"]["forecast_len"])
         
@@ -988,13 +996,13 @@ class ToTensor_ERA5_and_Forcing:
                         x_static = x_static.unsqueeze(0).unsqueeze(0)                   
                         # x_static = x_static.unsqueeze(1)
                         
-                    return_dict['x_forcing_static'] = x_static.float() # <--- convert float64 to float
+                    return_dict['x_forcing_static'] = x_static.type(self.output_dtype)
                         
                 
                 if self.flag_surface:
-                    return_dict['x_surf'] = x_surf
+                    return_dict['x_surf'] = x_surf.type(self.output_dtype)
                     
-                return_dict['x'] = x_upper_air
+                return_dict['x'] = x_upper_air.type(self.output_dtype)
                 
             elif key == 'target_ERA5_images' or key == 'y':
 
@@ -1023,12 +1031,12 @@ class ToTensor_ERA5_and_Forcing:
                         # num_var=1, time=1, only has lat, lon
                         y_diag = y_diag.unsqueeze(0).unsqueeze(0)
                 
-                    return_dict['y_diag'] = y_diag
+                    return_dict['y_diag'] = y_diag.type(self.output_dtype)
                     
                 if self.flag_surface:    
-                    return_dict['y_surf'] = x_surf
+                    return_dict['y_surf'] = x_surf.type(self.output_dtype)
                     
-                return_dict['y'] = x_upper_air  
+                return_dict['y'] = x_upper_air.type(self.output_dtype) 
         return return_dict
 
 

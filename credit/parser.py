@@ -100,6 +100,8 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             print("number of upper-air levels ('levels') is missing from both conf['data'] and conf['model']")
             raise
 
+    if 'dtype' not in conf['data']:
+        conf['data']['dtype'] = 'float16'
     # ========================================================================================= #
     # Check other input / output variable types
     # if varname is provided, its corresponding save_loc should exist
