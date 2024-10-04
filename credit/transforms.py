@@ -776,13 +776,10 @@ class ToTensor:
 class ToTensor_ERA5_and_Forcing:
     def __init__(self, conf):
         self.conf = conf
-        
-        if conf['data']['dtype'] == 'float32':
-            self.output_dtype = torch.float32
-        elif conf['data']['dtype'] == 'float16':
-            self.output_dtype = torch.float16
-        elif conf['data']['dtype'] == 'float64':
-            self.output_dtype = torch.float64
+
+        # =============================================== #
+        self.output_dtype = torch.float32
+        # ============================================== #
         
         self.hist_len = int(conf["data"]["history_len"])
         self.for_len = int(conf["data"]["forecast_len"])
