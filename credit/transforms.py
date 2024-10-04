@@ -5,9 +5,6 @@ Content:
     - load_transforms
     - Normalize_ERA5_and_Forcing
     - ToTensor_ERA5_and_Forcing
-
-Yingkai Sha
-ksha@ucar.edu
 '''
 
 import logging
@@ -796,8 +793,11 @@ class ToTensor_ERA5_and_Forcing:
             self.varname_surface = conf["data"]["surface_variables"]
 
         # get dynamic forcing varnames
+        self.num_forcing_static = 0
+        
         if self.flag_dyn_forcing:
             self.varname_dyn_forcing = conf["data"]['dynamic_forcing_variables']
+            self.num_forcing_static += len(self.varname_dyn_forcing)
         else:
             self.varname_dyn_forcing = []
         
@@ -808,16 +808,17 @@ class ToTensor_ERA5_and_Forcing:
         # get forcing varnames
         if self.flag_forcing:
             self.varname_forcing = conf["data"]["forcing_variables"]
+            self.num_forcing_static += len(self.varname_forcing)
         else:
             self.varname_forcing = []
 
         # get static varnames:
         if self.flag_static:
             self.varname_static = conf["data"]["static_variables"]
+            self.num_forcing_static += len(self.varname_static)
         else:
             self.varname_static = []
             
-        
         if self.flag_forcing or self.flag_static:
             self.has_forcing_static = True
             # ======================================================================================== #
@@ -976,7 +977,7 @@ class ToTensor_ERA5_and_Forcing:
                         x_static = x_static.permute(1, 0, 2, 3)
                         
                     elif len(x_static.shape) == 3:
-                        if len(self.varname_forcing)+len(self.varname_static) > 1:
+                        if self.num_forcing_static > 1:
                             # single time, multi-vars
                             x_static = x_static.unsqueeze(0)
                         else:

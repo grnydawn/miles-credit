@@ -210,7 +210,10 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
     assert len(duplicates) == 0, (
         "Duplicated variable names: [{}] found. No duplicates allowed, stop.".format(duplicates))
 
-    conf['data']['all_varnames'] = all_varnames
+    conf['data']['all_varnames'] = conf['data']['variables'] + \
+                                   conf['data']['surface_variables'] + \
+                                   conf['data']['dynamic_forcing_variables'] + \
+                                   conf['data']['diagnostic_variables']
     
     ## I/O data sizes
     if parse_training:
