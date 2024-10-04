@@ -9,11 +9,11 @@ seed: 1000
 
 data:
     # upper-air variables
-    variables: ['U', 'V', 'T', 'Z', 'specific_total_water']
+    variables: ['Z', 'specific_total_water']
     save_loc: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/all_in_one/ERA5_plevel_6h_*zarr'
     
     # surface variables
-    surface_variables: ['MSL', 'VAR_2T', 'SKT']
+    surface_variables: ['SKT']
     save_loc_surface: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/all_in_one/ERA5_plevel_6h_*zarr'
     
     # dynamic forcing variables
@@ -21,14 +21,7 @@ data:
     save_loc_dynamic_forcing: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/all_in_one/ERA5_plevel_6h_*zarr'
     
     # diagnostic variables
-    diagnostic_variables: ['U500', 'V500', 'T500', 'Z500', 'specific_total_water_500',
-                           'evaporation', 'total_precipitation',
-                           'surface_net_solar_radiation',
-                           'surface_net_thermal_radiation',
-                           'surface_sensible_heat_flux',
-                           'surface_latent_heat_flux',
-                           'top_net_solar_radiation',
-                           'top_net_thermal_radiation'] 
+    diagnostic_variables: ['Z500', 'specific_total_water_500', 'evaporation', 'total_precipitation'] 
     save_loc_diagnostic: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/all_in_one/ERA5_plevel_6h_*zarr'
     
     # static variables
@@ -75,7 +68,6 @@ data:
         varname_skt: 'SKT'
         varname_ocean_mask: 'land_sea_CI_mask'
 
-
 trainer:
     type: standard # <---------- change to your type
     
@@ -94,7 +86,7 @@ trainer:
     save_backup_weights: True
     save_best_weights: True
 
-    save_metric_vars: ['Z500', 'total_precipitation', 'evaporation', 'top_net_thermal_radiation']
+    save_metric_vars: ['Z500', 'total_precipitation']
     
     learning_rate: 1.0e-03 # <-- change to your lr
     weight_decay: 0
@@ -133,10 +125,10 @@ model:
     image_height: 721        # number of latitude grids
     image_width: 1440        # number of longitude grids
     levels: 13               # number of upper-air variable levels
-    channels: 5              # upper-air variable channels
-    surface_channels: 3      # surface variable channels
+    channels: 2              # upper-air variable channels
+    surface_channels: 1      # surface variable channels
     input_only_channels: 3   # dynamic forcing, forcing, static channels
-    output_only_channels: 13 # diagnostic variable channels
+    output_only_channels: 4  # diagnostic variable channels
     
     # patchify layer
     patch_height: 16         # number of latitude grids in each 3D patch
