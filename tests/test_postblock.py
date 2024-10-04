@@ -37,10 +37,10 @@ def test_tracer_fixer_rand():
 
     # that tracer_fixer run
     input_dict = {'y_pred': input_tensor}
-    output_dict = postblock(input_dict)
+    output_tensor = postblock(input_dict)
 
     # verify negative values
-    assert output_dict['y_pred'].min() >= 0
+    assert output_tensor.min() >= 0
 
 def test_SKEBS_era5():
     """
