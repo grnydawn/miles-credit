@@ -101,7 +101,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             raise
 
     if 'dtype' not in conf['data']:
-        conf['data']['dtype'] = 'float16'
+        conf['data']['dtype'] = 'float32'
     # ========================================================================================= #
     # Check other input / output variable types
     # if varname is provided, its corresponding save_loc should exist

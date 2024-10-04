@@ -100,17 +100,17 @@ class Trainer(BaseTrainer):
                     # combine x and x_surf
                     # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon)
                     # output: (batch_num, var, time, lat, lon), 'x' first and then 'x_surf'
-                    x = concat_and_reshape(batch["x"], batch["x_surf"]).to(self.device).float()
+                    x = concat_and_reshape(batch["x"], batch["x_surf"]).to(self.device) #.float()
                 else:
                     # no x_surf
-                    x = reshape_only(batch["x"]).to(self.device).float()
+                    x = reshape_only(batch["x"]).to(self.device) #.float()
 
                 # --------------------------------------------------------------------------------- #
                 # add forcing and static variables
                 if 'x_forcing_static' in batch:
 
                     # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
-                    x_forcing_batch = batch['x_forcing_static'].to(self.device).permute(0, 2, 1, 3, 4).float()
+                    x_forcing_batch = batch['x_forcing_static'].to(self.device).permute(0, 2, 1, 3, 4) #.float()
 
                     # concat on var dimension
                     x = torch.cat((x, x_forcing_batch), dim=1)
@@ -125,7 +125,7 @@ class Trainer(BaseTrainer):
                 if 'y_diag' in batch:
 
                     # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
-                    y_diag_batch = batch['y_diag'].to(self.device).permute(0, 2, 1, 3, 4).float()
+                    y_diag_batch = batch['y_diag'].to(self.device).permute(0, 2, 1, 3, 4) #.float()
 
                     # concat on var dimension
                     y = torch.cat((y, y_diag_batch), dim=1)
@@ -185,7 +185,8 @@ class Trainer(BaseTrainer):
                 loss = criterion(y, y_pred)
 
                 # Metrics
-                metrics_dict = metrics(y_pred.float(), y.float())
+                # metrics_dict = metrics(y_pred.float(), y.float())
+                metrics_dict = metrics(y_pred, y)
 
                 for name, value in metrics_dict.items():
                     value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
@@ -307,17 +308,17 @@ class Trainer(BaseTrainer):
                     # combine x and x_surf
                     # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon)
                     # output: (batch_num, var, time, lat, lon), 'x' first and then 'x_surf'
-                    x = concat_and_reshape(batch["x"], batch["x_surf"]).to(self.device).float()
+                    x = concat_and_reshape(batch["x"], batch["x_surf"]).to(self.device) #.float()
                 else:
                     # no x_surf
-                    x = reshape_only(batch["x"]).to(self.device).float()
+                    x = reshape_only(batch["x"]).to(self.device) #.float()
 
                 # --------------------------------------------------------------------------------- #
                 # add forcing and static variables
                 if 'x_forcing_static' in batch:
 
                     # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
-                    x_forcing_batch = batch['x_forcing_static'].to(self.device).permute(0, 2, 1, 3, 4).float()
+                    x_forcing_batch = batch['x_forcing_static'].to(self.device).permute(0, 2, 1, 3, 4) #.float()
 
                     # concat on var dimension
                     x = torch.cat((x, x_forcing_batch), dim=1)
@@ -332,7 +333,7 @@ class Trainer(BaseTrainer):
                 if 'y_diag' in batch:
 
                     # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
-                    y_diag_batch = batch['y_diag'].to(self.device).permute(0, 2, 1, 3, 4).float()
+                    y_diag_batch = batch['y_diag'].to(self.device).permute(0, 2, 1, 3, 4) #.float()
 
                     # concat on var dimension
                     y = torch.cat((y, y_diag_batch), dim=1)
@@ -385,7 +386,8 @@ class Trainer(BaseTrainer):
                 loss = criterion(y.to(y_pred.dtype), y_pred)
 
                 # Metrics
-                metrics_dict = metrics(y_pred.float(), y.float())
+                # metrics_dict = metrics(y_pred.float(), y.float())
+                metrics_dict = metrics(y_pred, y)
 
                 for name, value in metrics_dict.items():
                     value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
