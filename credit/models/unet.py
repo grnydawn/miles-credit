@@ -97,7 +97,6 @@ class SegmentationModel(torch.nn.Module):
                 "x": x_copy,
             }
             x = self.postblock(x)
-            x = x['y_pred']
         return x
 
     def rk4(self, x):

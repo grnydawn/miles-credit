@@ -76,9 +76,9 @@ class tracer_fixer(nn.Module):
             y_pred = self.state_trans.transform_array(y_pred)
 
         # # give it back to x
-        x["y_pred"] = y_pred
+        # x["y_pred"] = y_pred
             
-        return x
+        return y_pred
 
 # class global_mass_fixer(nn.Module):
 #     '''

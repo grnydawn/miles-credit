@@ -420,7 +420,6 @@ class Fuxi(BaseModel):
                 "x": x_copy,
             }
             x = self.postblock(x)
-            x = x['y_pred']
         return x
         
         # unfold the time dimension
