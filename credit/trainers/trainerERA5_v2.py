@@ -58,15 +58,16 @@ class Trainer(BaseTrainer):
         forecast_len = conf["data"]["forecast_len"]
         amp = conf['trainer']['amp']
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
-
+        
+        # forecast step
         if "total_time_steps" in conf["data"]:
             total_time_steps = conf["data"]["total_time_steps"]
         else:
             total_time_steps = forecast_len
 
-        if 'diagnostic_variables' in conf["data"]:
-            varnum_diag = len(conf["data"]['diagnostic_variables'])
-
+        assert total_time_steps == 0, (
+            'Single-step trainer "trainerERA5_v2" is used. This trainer supports `forecast_len=0` only')
+        
         # update the learning rate if epoch-by-epoch updates that dont depend on a metric
         if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "lambda":
             scheduler.step()
@@ -93,9 +94,8 @@ class Trainer(BaseTrainer):
             commit_loss = 0.0
 
             with autocast(enabled=amp):
-
+                
                 # --------------------------------------------------------------------------------- #
-
                 if "x_surf" in batch:
                     # combine x and x_surf
                     # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon)
@@ -130,59 +130,57 @@ class Trainer(BaseTrainer):
                     # concat on var dimension
                     y = torch.cat((y, y_diag_batch), dim=1)
 
-                k = 0
-                while True:
-
-                    with torch.no_grad() if k != total_time_steps else torch.enable_grad():
-
-                        self.model.eval() if k != total_time_steps else self.model.train()
-
-                        if getattr(self.model, 'use_codebook', False):
-                            y_pred, cm_loss = self.model(x)
-                            commit_loss += cm_loss
-                        else:
-                            y_pred = self.model(x)
-
-                        if k == total_time_steps:
-                            break
-
-                        k += 1
-
-                        if history_len > 1:
-
-                            # detach and throw away the oldest time dim
-                            x_detach = x.detach()[:, :, 1:, ...]
-
-                            # use y_pred as the next-hour input
-                            if 'y_diag' in batch:
-                                # drop diagnostic variables
-                                y_pred = y_pred.detach()[:, :-varnum_diag, ...]
-
-                            # add forcing and static vars to y_pred
-                            if 'x_forcing_static' in batch:
-
-                                # detach and throw away the oldest time dim (same idea as x_detach)
-                                x_forcing_detach = x_forcing_batch.detach()[:, :, 1:, ...]
-
-                                # concat forcing and static to y_pred, y_pred will be the next input
-                                y_pred = torch.cat((y_pred, x_forcing_detach), dim=1)
-
-                            x = torch.cat([x_detach, y_pred], dim=2).detach()
-
-                        else:
-                            # use y_pred as the next-hour inputs
-                            x = y_pred.detach()
-
-                            if 'y_diag' in batch:
-                                x = x[:, :-varnum_diag, ...]
-
-                            # add forcing and static vars to y_pred
-                            if 'x_forcing_static' in batch:
-                                x = torch.cat((x, x_forcing_batch), dim=1)
+                # single step predict
+                y_pred = self.model(x)
 
                 y = y.to(device=self.device, dtype=y_pred.dtype)
-
+                
                 loss = criterion(y, y_pred)
+                
+                # # ============================================================================== #
+                # # This block works for forecacst_len > 0 (multistep) with one_shot=True
+                # # It is deprecated becuase of a more dedicated multi-step trainer
+                # # ============================================================================== #
+                # varnum_diag = len(conf["data"]['diagnostic_variables'])
+                # # number of dynamic forcing + forcing + static
+                # static_dim_size = len(conf['data']['dynamic_forcing_variables']) + \
+                #                   len(conf['data']['forcing_variables']) + \
+                #                   len(conf['data']['static_variables'])
+                # k = 0
+                # while True:
+                #     if getattr(self.model, 'use_codebook', False):
+                #         y_pred, cm_loss = self.model(x)
+                #         commit_loss += cm_loss
+                #     else:
+                #         y_pred = self.model(x)
+                #     if k == total_time_steps:
+                #         break
+                #     k += 1
+                #     if history_len > 1:
+                #         # detach and throw away the oldest time dim
+                #         x_detach = x.detach()[:, :, 1:, ...]
+                #         # use y_pred as the next-hour input
+                #         if 'y_diag' in batch:
+                #             # drop diagnostic variables
+                #             y_pred = y_pred.detach()[:, :-varnum_diag, ...]
+                #         # add forcing and static vars to y_pred
+                #         if 'x_forcing_static' in batch:
+                #             # detach and throw away the oldest time dim (same idea as x_detach)
+                #             x_forcing_detach = x_forcing_batch.detach()[:, :, 1:, ...]
+                #             # concat forcing and static to y_pred, y_pred will be the next input
+                #             y_pred = torch.cat((y_pred, x_forcing_detach), dim=1)
+                #         x = torch.cat([x_detach, y_pred], dim=2).detach()
+                #     else:
+                #         # use y_pred as the next-hour inputs
+                #         x = y_pred.detach()
+                #         if 'y_diag' in batch:
+                #             x = x[:, :-varnum_diag, ...]
+                #         # add forcing and static vars to y_pred
+                #         if 'x_forcing_static' in batch:
+                #             x = torch.cat((x, x_forcing_batch), dim=1)
+                # y = y.to(device=self.device, dtype=y_pred.dtype)
+                # loss = criterion(y, y_pred)
+                # # ============================================================================== #
 
                 # Metrics
                 # metrics_dict = metrics(y_pred.float(), y.float())
@@ -276,11 +274,12 @@ class Trainer(BaseTrainer):
         history_len = conf["data"]["valid_history_len"] if "valid_history_len" in conf["data"] else conf["history_len"]
         forecast_len = conf["data"]["valid_forecast_len"] if "valid_forecast_len" in conf["data"] else conf["forecast_len"]
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
+        
         total_time_steps = conf["data"]["total_time_steps"] if "total_time_steps" in conf["data"] else forecast_len
-
-        if 'diagnostic_variables' in conf["data"]:
-            varnum_diag = len(conf["data"]['diagnostic_variables'])
-
+        
+        assert total_time_steps == 0, (
+            'Single-step trainer "trainerERA5_v2" is used. This trainer supports `forecast_len=0` only')
+        
         results_dict = defaultdict(list)
 
         # set up a custom tqdm
@@ -338,57 +337,69 @@ class Trainer(BaseTrainer):
                     # concat on var dimension
                     y = torch.cat((y, y_diag_batch), dim=1)
 
-                k = 0
-                while True:
-                    if getattr(self.model, 'use_codebook', False):
-                        y_pred, cm_loss = self.model(x)
-                        commit_loss += cm_loss
-                    else:
-                        y_pred = self.model(x)
-
-                    if k == total_time_steps:
-                        break
-
-                    k += 1
-
-                    if history_len > 1:
-
-                        # detach and throw away the oldest time dim
-                        x_detach = x.detach()[:, :, 1:, ...]
-
-                        # use y_pred as the next-hour input
-                        if 'y_diag' in batch:
-                            # drop diagnostic variables
-                            y_pred = y_pred.detach()[:, :-varnum_diag, ...]
-
-                        # add forcing and static vars to y_pred
-                        if 'x_forcing_static' in batch:
-
-                            # detach and throw away the oldest time dim (same idea as x_detach)
-                            x_forcing_detach = x_forcing_batch.detach()[:, :, 1:, ...]
-
-                            # concat forcing and static to y_pred, y_pred will be the next input
-                            y_pred = torch.cat((y_pred, x_forcing_detach), dim=1)
-
-                        x = torch.cat([x_detach, y_pred], dim=2).detach()
-
-                    else:
-                        # use y_pred as the next-hour inputs
-                        x = y_pred.detach()
-
-                        if 'y_diag' in batch:
-                            x = x[:, :-varnum_diag, ...]
-
-                        # add forcing and static vars to y_pred
-                        if 'x_forcing_static' in batch:
-                            x = torch.cat((x, x_forcing_batch), dim=1)
-
+                y_pred = self.model(x)
+                
                 loss = criterion(y.to(y_pred.dtype), y_pred)
 
                 # Metrics
-                # metrics_dict = metrics(y_pred.float(), y.float())
-                metrics_dict = metrics(y_pred, y)
+                # metrics_dict = metrics(y_pred, y)
+                metrics_dict = metrics(y_pred.float(), y.float())
+                
+                # # ============================================================================== #
+                # # This block works for forecacst_len > 0 (multistep) with one_shot=True
+                # # It is deprecated becuase of a more dedicated multi-step trainer
+                # # ============================================================================== #
+                # varnum_diag = len(conf["data"]['diagnostic_variables'])
+                # # number of dynamic forcing + forcing + static
+                # static_dim_size = len(conf['data']['dynamic_forcing_variables']) + \
+                #                   len(conf['data']['forcing_variables']) + \
+                #                   len(conf['data']['static_variables'])
+                # k = 0
+                # while True:
+                #     if getattr(self.model, 'use_codebook', False):
+                #         y_pred, cm_loss = self.model(x)
+                #         commit_loss += cm_loss
+                #     else:
+                #         y_pred = self.model(x)
 
+                #     if k == total_time_steps:
+                #         break
+
+                #     k += 1
+
+                #     if history_len > 1:
+
+                #         # detach and throw away the oldest time dim
+                #         x_detach = x.detach()[:, :, 1:, ...]
+
+                #         # use y_pred as the next-hour input
+                #         if 'y_diag' in batch:
+                #             # drop diagnostic variables
+                #             y_pred = y_pred.detach()[:, :-varnum_diag, ...]
+
+                #         # add forcing and static vars to y_pred
+                #         if 'x_forcing_static' in batch:
+
+                #             # detach and throw away the oldest time dim (same idea as x_detach)
+                #             x_forcing_detach = x_forcing_batch.detach()[:, :, 1:, ...]
+
+                #             # concat forcing and static to y_pred, y_pred will be the next input
+                #             y_pred = torch.cat((y_pred, x_forcing_detach), dim=1)
+
+                #         x = torch.cat([x_detach, y_pred], dim=2).detach()
+
+                #     else:
+                #         # use y_pred as the next-hour inputs
+                #         x = y_pred.detach()
+
+                #         if 'y_diag' in batch:
+                #             x = x[:, :-varnum_diag, ...]
+
+                #         # add forcing and static vars to y_pred
+                #         if 'x_forcing_static' in batch:
+                #             x = torch.cat((x, x_forcing_batch), dim=1)
+                # # ============================================================================== #
+                
                 for name, value in metrics_dict.items():
                     value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
 
