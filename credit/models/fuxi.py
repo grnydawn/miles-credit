@@ -419,9 +419,7 @@ class Fuxi(BaseModel):
                 "y_pred": x,
                 "x": x_copy,
             }
-            x = self.postblock(x)
-        return x
-        
+            x = self.postblock(x)        
         # unfold the time dimension
         return x.unsqueeze(2)
 
