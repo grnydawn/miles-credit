@@ -13,9 +13,6 @@ Reference:
     - https://journals.ametsoc.org/view/journals/clim/34/10/JCLI-D-20-0676.1.xml
     - https://doi.org/10.1175/JCLI-D-13-00018.1
     - https://github.com/ai2cm/ace/tree/main/fme/fme/core
-
-Yingkai Sha
-ksha@ucar.edu
 '''
 
 import torch
@@ -87,8 +84,10 @@ class physics_pressure_level:
         # vertical integration method
         if midpoint:
             self.integral = self.pressure_integral_midpoint
+            self.integral_sliced = self.pressure_integral_midpoint_sliced
         else:
             self.integral = self.pressure_integral_trapz
+            self.integral_sliced = self.pressure_integral_trapz_sliced
             
     def pressure_integral_midpoint(self, q_mid: torch.Tensor) -> torch.Tensor:
         '''
@@ -103,18 +102,53 @@ class physics_pressure_level:
         '''
         num_dims = len(q_mid.shape)
         
-        if num_dims == 5:  # (batch_size, time, level, latitude, longitude)
+        if num_dims == 5:  # (batch_size, level, time, latitude, longitude)
             delta_p = self.pressure_thickness.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
             q_area = q_mid * delta_p
             q_trapz = torch.sum(q_area, dim=1)
         
         elif num_dims == 4:  # (batch_size, level, latitude, longitude) or (time, level, latitude, longitude)
             delta_p = self.pressure_thickness.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
-            q_area = q_mid * delta_p  # Trapezoidal rule
+            q_area = q_mid * delta_p
             q_trapz = torch.sum(q_area, dim=1)
         
         elif num_dims == 3:  # (level, latitude, longitude)
             delta_p = self.pressure_thickness.unsqueeze(-1).unsqueeze(-1)  # Expand for broadcasting
+            q_area = q_mid * delta_p
+            q_trapz = torch.sum(q_area, dim=0)
+        
+        else:
+            raise ValueError(f"Unsupported tensor dimensions: {q.shape}")
+        
+        return q_trapz
+
+    def pressure_integral_midpoint_sliced(self, 
+                                          q_mid: torch.Tensor,                                        
+                                          ind_start: int,
+                                          ind_end: int) -> torch.Tensor:
+        '''
+        As in `pressure_integral_midpoint`, but supports pressure level indexing,
+        so it can calculate integrals of a subset of levels
+        '''
+        num_dims = len(q_mid.shape)
+
+        delta_p = self.pressure_thickness[ind_start:ind_end]
+        
+        if num_dims == 5:  # (batch_size, time, level, latitude, longitude)
+            delta_p = delta_p.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+            q_mid = q_mid[:, ind_start:ind_end, ...]
+            q_area = q_mid * delta_p
+            q_trapz = torch.sum(q_area, dim=1)
+        
+        elif num_dims == 4:  # (batch_size, level, latitude, longitude) or (time, level, latitude, longitude)
+            delta_p = delta_p.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+            q_mid = q_mid[:, ind_start:ind_end, ...]
+            q_area = q_mid * delta_p  # Trapezoidal rule
+            q_trapz = torch.sum(q_area, dim=1)
+        
+        elif num_dims == 3:  # (level, latitude, longitude)
+            delta_p = delta_p.unsqueeze(-1).unsqueeze(-1)  # Expand for broadcasting
+            q_mid = q_mid[ind_start:ind_end, ...]
             q_area = q_mid * delta_p
             q_trapz = torch.sum(q_area, dim=0)
         
@@ -155,6 +189,42 @@ class physics_pressure_level:
         
         return q_trapz
 
+    def pressure_integral_trapz_sliced(self, 
+                                       q: torch.Tensor,
+                                       ind_start: int,
+                                       ind_end: int) -> torch.Tensor:
+        '''
+        As in `pressure_integral_trapz`, but supports pressure level indexing,
+        so it can calculate integrals of a subset of levels
+        '''
+        num_dims = len(q.shape)
+
+        delta_p = self.upper_air_pressure[ind_start:ind_end].diff(dim=-1)
+        
+        if num_dims == 5:  # (batch_size, level, time, latitude, longitude)
+            delta_p = delta_p.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+            q_slice = q[:, ind_start:ind_end, ...]
+            q_area = 0.5 * (q_slice[:, :-1, :, :, :] + q_slice[:, 1:, :, :, :]) * delta_p
+            q_trapz = torch.sum(q_area, dim=1)
+        
+        elif num_dims == 4:  # (batch_size, level, latitude, longitude) or (time, level, latitude, longitude)
+            delta_p = delta_p.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+            q_slice = q[:, ind_start:ind_end, ...]
+            q_area = 0.5 * (q_slice[:, :-1, :, :] + q_slice[:, 1:, :, :]) * delta_p  # Trapezoidal rule
+            q_trapz = torch.sum(q_area, dim=1)
+        
+        elif num_dims == 3:  # (level, latitude, longitude)
+            delta_p = delta_p.unsqueeze(-1).unsqueeze(-1)  # Expand for broadcasting
+            q_slice = q[ind_start:ind_end, ...]
+            q_area = 0.5 * (q_slice[:-1, :, :] + q_slice[1:, :, :]) * delta_p
+            q_trapz = torch.sum(q_area, dim=0)
+        
+        else:
+            raise ValueError(f"Unsupported tensor dimensions: {q.shape}")
+        
+        return q_trapz
+    
+
     def weighted_sum(self,
                      q: torch.Tensor, 
                      axis: Dict[tuple, None] = None, 
@@ -174,7 +244,8 @@ class physics_pressure_level:
         q_sum = torch.sum(q_w, dim=axis, keepdim=keepdims)
         return q_sum
 
-    def total_dry_air_mass(self, q: torch.Tensor) -> torch.Tensor:
+    def total_dry_air_mass(self, 
+                           q: torch.Tensor) -> torch.Tensor:
         '''
         Compute the total mass of dry air over the entire globe [kg]
         '''
@@ -184,7 +255,8 @@ class physics_pressure_level:
         
         return mass_dry_sum
 
-    def total_column_water(self, q: torch.Tensor) -> torch.Tensor:
+    def total_column_water(self, 
+                           q: torch.Tensor) -> torch.Tensor:
         '''
         Compute total column water (TCW) per air column [kg/m2]
         '''
