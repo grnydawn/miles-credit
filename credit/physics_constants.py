@@ -16,3 +16,9 @@ RHO_WATER = 1000.0 # kg/m^3
 
 # latent heat caused by the phase change of water
 LH_WATER = 2.26e6  # J/kg
+
+# heat capacity on constant pressure for dry air
+CP_DRY = 1005 # J/kg K
+
+# heat capacity on constant pressure for water vapor
+CP_VAPOR = 1846 # J/kg K
