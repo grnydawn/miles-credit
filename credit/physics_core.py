@@ -118,7 +118,7 @@ class physics_pressure_level:
             q_trapz = torch.sum(q_area, dim=0)
         
         else:
-            raise ValueError(f"Unsupported tensor dimensions: {q.shape}")
+            raise ValueError(f"Unsupported tensor dimensions: {q_mid.shape}")
         
         return q_trapz
 
@@ -153,7 +153,7 @@ class physics_pressure_level:
             q_trapz = torch.sum(q_area, dim=0)
         
         else:
-            raise ValueError(f"Unsupported tensor dimensions: {q.shape}")
+            raise ValueError(f"Unsupported tensor dimensions: {q_mid.shape}")
         
         return q_trapz
         
