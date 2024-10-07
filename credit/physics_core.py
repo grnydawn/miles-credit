@@ -18,10 +18,10 @@ Yingkai Sha
 ksha@ucar.edu
 '''
 
-
-
 import torch
-from credit.physics_constants import *
+from typing import Dict, Any, Optional
+from credit.physics_constants import RAD_EARTH, RVGAS, RDGAS, GRAVITY, RHO_WATER, LH_WATER
+
 
 class physics_pressure_level:
     '''
@@ -104,9 +104,9 @@ class physics_pressure_level:
         num_dims = len(q_mid.shape)
         
         if num_dims == 5:  # (batch_size, time, level, latitude, longitude)
-            delta_p = self.pressure_thickness.unsqueeze(0).unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+            delta_p = self.pressure_thickness.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
             q_area = q_mid * delta_p
-            q_trapz = torch.sum(q_area, dim=2)
+            q_trapz = torch.sum(q_area, dim=1)
         
         elif num_dims == 4:  # (batch_size, level, latitude, longitude) or (time, level, latitude, longitude)
             delta_p = self.pressure_thickness.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
@@ -135,10 +135,10 @@ class physics_pressure_level:
         '''
         num_dims = len(q.shape)
         
-        if num_dims == 5:  # (batch_size, time, level, latitude, longitude)
-            delta_p = self.pressure_thickness.unsqueeze(0).unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
-            q_area = 0.5 * (q[:, :, :-1, :, :] + q[:, :, 1:, :, :]) * delta_p
-            q_trapz = torch.sum(q_area, dim=2)
+        if num_dims == 5:  # (batch_size, level, time, latitude, longitude)
+            delta_p = self.pressure_thickness.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+            q_area = 0.5 * (q[:, :-1, :, :, :] + q[:, 1:, :, :, :]) * delta_p
+            q_trapz = torch.sum(q_area, dim=1)
         
         elif num_dims == 4:  # (batch_size, level, latitude, longitude) or (time, level, latitude, longitude)
             delta_p = self.pressure_thickness.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
