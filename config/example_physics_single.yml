@@ -4,7 +4,7 @@
 # The model is trained on hourly model-level ERA5 data with top solar irradiance, geopotential, and land-sea mask inputs
 # Output variables: model level [U, V, T, Q], single level [SP, t2m], and 500 hPa [U, V, T, Z, Q]
 # --------------------------------------------------------------------------------------------------------------------- #
-save_loc: '/glade/work/ksha/CREDIT_runs/fuxi_physics_base/'
+save_loc: '/glade/work/$USER/CREDIT_runs/fuxi_physics_base/'
 seed: 1000
 
 data:
@@ -71,7 +71,7 @@ data:
 trainer:
     type: standard # <---------- change to your type
     
-    mode: fsdp
+    mode: none
     cpu_offload: False
     activation_checkpoint: True
     
