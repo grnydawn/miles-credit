@@ -1,8 +1,5 @@
 # --------------------------------------------------------------------------------------------------------------------- #
 # This is an example yaml file that explains how to define, train, and use AI weather prediciton models in CREDIT
-#
-# Yingkai Sha
-# ksha@ucar.edu
 # --------------------------------------------------------------------------------------------------------------------- #
 
 
@@ -111,7 +108,13 @@ data:
     # True is the same as the old 'std'
     #
     # False: input tensors will be formed under the order of [dynamic_forcing -> forcing -> static]
-    static_first: False     
+    static_first: False   
+
+    # SST forcing  
+    sst_forcing:
+        activate: False
+        varname_skt: 'SKT'
+        varname_ocean_mask: 'land_sea_CI_mask'
     
 trainer:
     # the keyword that controls GPU usage
@@ -275,9 +278,22 @@ model:
 
     # use spectral norm
     use_spectral_norm: True
+    
     post_conf: 
-        use_skebs: False
-        image_width: 1280
+        activate: True
+        
+        skebs:
+            activate: True
+        
+        tracer_fixer:
+            activate: False
+            
+        global_mass_fixer:
+            activate: False
+            
+        global_energy_fixer:
+            activate: False
+
 
 loss: 
     # the main training loss
@@ -307,20 +323,20 @@ loss:
 
     # variable weighting
     # if True, specify your weights
-    use_variable_weights: True
-    # an example
-    variable_weights:
-        U: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
-        V: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
-        T: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
-        Q: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
-        SP: 0.1
-        t2m: 1.0
-        V500: 0.1
-        U500: 0.1
-        T500: 0.1
-        Z500: 0.1
-        Q500: 0.1
+    use_variable_weights: False
+    # # an example
+    # variable_weights:
+    #     U: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
+    #     V: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
+    #     T: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
+    #     Q: [0.132, 0.123, 0.113, 0.104, 0.095, 0.085, 0.076, 0.067, 0.057, 0.048, 0.039, 0.029, 0.02 , 0.011, 0.005]
+    #     SP: 0.1
+    #     t2m: 1.0
+    #     V500: 0.1
+    #     U500: 0.1
+    #     T500: 0.1
+    #     Z500: 0.1
+    #     Q500: 0.1
     
 predict:
     forecasts:

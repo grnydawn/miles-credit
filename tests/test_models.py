@@ -6,6 +6,7 @@ import torch
 from credit.models import load_model
 from credit.models.unet import SegmentationModel
 from credit.models.crossformer import CrossFormer
+from credit.parser import CREDIT_main_parser
 
 TEST_FILE_DIR = "/".join(os.path.abspath(__file__).split("/")[:-1])
 CONFIG_FILE_DIR = os.path.join("/".join(os.path.abspath(__file__).split("/")[:-2]),
@@ -17,6 +18,7 @@ def test_unet():
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
     
+    conf = CREDIT_main_parser(conf)
     model = load_model(conf)
 
     assert isinstance(model, SegmentationModel)

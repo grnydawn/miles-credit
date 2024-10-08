@@ -155,7 +155,7 @@ def load_dataset_and_sampler_zscore_only(conf,
     Returns:
         tuple: A tuple containing the dataset and the distributed sampler.
     """
-
+    
     # --------------------------------------------------- #
     # separate training set and validation set cases
     if is_train:
@@ -166,10 +166,16 @@ def load_dataset_and_sampler_zscore_only(conf,
         history_len = conf["data"]["valid_history_len"]
         forecast_len = conf["data"]["valid_forecast_len"]
         name = 'validation'
-        
+    
+    if conf['data']['sst_forcing']['activate']:
+        sst_forcing = {'varname_skt': conf['data']['sst_forcing']['varname_skt'], 
+                       'varname_ocean_mask': conf['data']['sst_forcing']['varname_ocean_mask']}
+    else:
+        sst_forcing = None
+    
     # transforms
     transforms = load_transforms(conf)
-
+    
     # Z-score
     dataset = ERA5_and_Forcing_Dataset(
         varname_upper_air=conf['data']['variables'],
@@ -190,6 +196,7 @@ def load_dataset_and_sampler_zscore_only(conf,
         one_shot=conf['data']['one_shot'],
         max_forecast_len=conf["data"]["max_forecast_len"],
         transform=transforms,
+        sst_forcing=sst_forcing
     )
     
     # sampler
