@@ -2,12 +2,13 @@ import torch
 from credit.postblock import PostBlock
 from credit.postblock import SKEBS, tracer_fixer, global_mass_fixer, global_energy_fixer
 
-
 def test_SKEBS_rand():
     image_width = 100
     conf = {"post_conf": {"skebs": {'activate': True}, 
                           "model": {"image_width": image_width,}}}
-    conf['post_conf'].setdefault('tracer_fixer', {'activate': False})
+    conf['post_conf']['tracer_fixer'] = {'activate': False}
+    conf['post_conf']['global_mass_fixer'] = {'activate': False}
+    conf['post_conf']['global_energy_fixer'] = {'activate': False}
 
     input_tensor = torch.randn(image_width)
     postblock = PostBlock(**conf)
@@ -28,6 +29,7 @@ def test_tracer_fixer_rand():
     # initialize post_conf, turn-off other blocks
     conf = {"post_conf": {"skebs": {'activate': False}}}
     conf['post_conf']['global_mass_fixer'] = {'activate': False}
+    conf['post_conf']['global_energy_fixer'] = {'activate': False}
 
     # tracer fixer specs
     conf['post_conf']['tracer_fixer'] = {'activate': True, 'denorm': False}
