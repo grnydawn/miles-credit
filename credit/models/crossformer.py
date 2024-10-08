@@ -434,8 +434,19 @@ class CrossFormer(BaseModel):
 
         if self.image_width_adjust == 0:
             self.image_width_adjust = total_dsample_factor_W
+            
+        if (
+            self.image_height != self.image_height_adjust or 
+            self.image_width != self.image_width_adjust
+        ):
+            logger.info(
+                'Configured input sizes before padding: ({}, {}); acceptable input sizes before padding: ({}, {}). '
+                'Bilinear interpolation will be used to handle the size differences'.format(
+                    self.image_height, self.image_width, 
+                    self.image_height_adjust, self.image_width_adjust
+                )
+            )
 
-        # print('{}, {}'.format(self.image_height_adjust, self.image_width_adjust))
         
         # define embedding layer using adjusted sizes
         # if the original sizes were good, adjusted sizes should == original sizes
