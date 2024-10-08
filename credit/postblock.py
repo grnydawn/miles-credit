@@ -57,13 +57,17 @@ class PostBlock(nn.Module):
             
         # global mass fixer
         if post_conf['global_mass_fixer']['activate']:
-            opt = global_mass_fixer(post_conf)
-            self.operations.append(opt)
+            # activate inside model (here) vs. outside model (in trainer)
+            if post_conf['global_mass_fixer']['activate_outside_model'] is False:
+                opt = global_mass_fixer(post_conf)
+                self.operations.append(opt)
 
         # global energy fixer
         if post_conf['global_energy_fixer']['activate']:
-            opt = global_energy_fixer(post_conf)
-            self.operations.append(opt)
+            # activate inside model (here) vs. outside model (in trainer)
+            if post_conf['global_energy_fixer']['activate_outside_model'] is False:
+                opt = global_energy_fixer(post_conf)
+                self.operations.append(opt)
 
     def forward(self, x):
         for op in self.operations:
