@@ -367,7 +367,6 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         conf['model']['post_conf']['global_mass_fixer'].setdefault('denorm', True)
         conf['model']['post_conf']['global_mass_fixer'].setdefault('simple_demo', False)
         conf['model']['post_conf']['global_mass_fixer'].setdefault('midpoint', False)
-        conf['model']['post_conf']['global_mass_fixer'].setdefault('activate_outside_model', False)
 
         assert 'fix_level_num' in conf['model']['post_conf']['global_mass_fixer'], (
             'Must specifiy what level to fix on specific total water')
@@ -407,7 +406,6 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         conf['model']['post_conf']['global_energy_fixer'].setdefault('denorm', True)
         conf['model']['post_conf']['global_energy_fixer'].setdefault('simple_demo', False)
         conf['model']['post_conf']['global_energy_fixer'].setdefault('midpoint', False)
-        conf['model']['post_conf']['global_energy_fixer'].setdefault('activate_outside_model', False)
         
         if conf['model']['post_conf']['global_mass_fixer']['simple_demo'] is False:
             assert 'lon_lat_level_name' in conf['model']['post_conf']['global_energy_fixer'], (
@@ -1204,7 +1202,3 @@ def predict_data_check(conf, print_summary=False):
         print("All input files, zscore files, and the lat/lon file share the same lat, lon, level coordinate name and values")
         
     return True
-
-
-
-
