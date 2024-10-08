@@ -269,6 +269,19 @@ class Trainer(BaseTrainer):
         
         results_dict = defaultdict(list)
 
+        # ============================================================================== #
+        # postblock initialization
+        post_conf = conf['model']['post_conf']
+        self.flag_mass_conserve = post_conf['global_mass_fixer']['activate_outside_model']
+        self.flag_energy_conserve = post_conf['global_energy_fixer']['activate_outside_model']
+
+        if self.flag_mass_conserve:
+            self.mass_fixer = global_mass_fixer(post_conf)
+        if self.flag_energy_conserve:
+            self.energy_fixer = global_energy_fixer(post_conf)
+        # ============================================================================== #
+
+        
         # set up a custom tqdm
         if isinstance(valid_loader.dataset, IterableDataset):
             valid_batches_per_epoch = valid_batches_per_epoch
@@ -325,6 +338,22 @@ class Trainer(BaseTrainer):
                     y = torch.cat((y, y_diag_batch), dim=1)
 
                 y_pred = self.model(x)
+
+                # ============================================================================== #
+                # postblock operations
+
+                # prepare input package
+                input_dict = {'y_pred': y, 'x': x}
+                
+                if self.flag_mass_conserve:
+                    input_dict = self.mass_fixer(input_dict)
+                    
+                if self.flag_energy_conserve:
+                    input_dict = self.energy_fixer(input_dict)
+
+                y_pred = input_dict['y_pred']
+                
+                # ============================================================================== #
                 
                 loss = criterion(y.to(y_pred.dtype), y_pred)
 
