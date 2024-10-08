@@ -6,9 +6,6 @@ Content:
     - training_data_check
     - predict_data_check
     - remove_string_by_pattern
-
-Yingkai Sha
-ksha@ucar.edu
 '''
 
 import os
@@ -17,6 +14,8 @@ import warnings
 from glob import glob
 from collections import Counter
 
+import numpy as np
+import xarray as xr
 
 from credit.data import get_forward_data
 
@@ -100,7 +99,6 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         else:
             print("number of upper-air levels ('levels') is missing from both conf['data'] and conf['model']")
             raise
-
     # ========================================================================================= #
     # Check other input / output variable types
     # if varname is provided, its corresponding save_loc should exist
@@ -210,6 +208,11 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
 
     assert len(duplicates) == 0, (
         "Duplicated variable names: [{}] found. No duplicates allowed, stop.".format(duplicates))
+
+    conf['data']['all_varnames'] = conf['data']['variables'] + \
+                                   conf['data']['surface_variables'] + \
+                                   conf['data']['dynamic_forcing_variables'] + \
+                                   conf['data']['diagnostic_variables']
     
     ## I/O data sizes
     if parse_training:
@@ -259,16 +262,187 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         
     if 'static_first' not in conf['data']:
         conf['data']['static_first'] = True
-    
+
+    if 'sst_forcing' not in conf['data']:
+        conf['data']['sst_forcing'] = {'activate': False}
+
     # --------------------------------------------------------- #
     # conf['model'] section
 
-    if 'post_conf' not in conf['model']:
-        conf['model']['post_conf'] = {'use_skebs': False}
-    elif 'use_skebs' not in conf['model']['post_conf']:
-        conf['model']['post_conf']['use_skebs'] = False
-    if 'image_width' not in conf['model']['post_conf']:
-        conf['model']['post_conf']['image_width'] = conf['model']['image_width']
+    # turn-off post if post_conf does not exist
+    conf['model'].setdefault('post_conf', {'activate': False})
+
+    # set defaults for post modules
+    post_list = ['skebs', 'tracer_fixer', 'global_mass_fixer', 'global_energy_fixer']
+    for post_module in post_list:
+        conf['model']['post_conf'].setdefault(post_module, {'activate': False})
+
+    # see if any of the postconfs want to be activated
+    post_conf = conf['model']['post_conf']
+    activate_any = any([post_conf[post_module]['activate'] 
+                        for post_module in post_list])
+    if post_conf['activate'] and not activate_any:
+        raise("post_conf is set activate, but no post modules specified")
+    
+    
+    if conf['model']['post_conf']['activate']:
+        # copy only model configs to post_conf subdictionary
+        conf['model']['post_conf']['model'] = {k: v for k,v in conf['model'].items() if k != 'post_conf'}
+        # copy data configs to post_conf (for de-normalize variables)
+        conf['model']['post_conf']['data'] = {k: v for k,v in conf['data'].items()}
+
+        # --------------------------------------------------------------------- #
+        # get the full list of input / output variables for post_conf
+        # the list is ordered based on the tensor channels inside credit.models
+
+        # upper air vars on all levels
+        varname_input = []
+        varname_output = []
+        for var in conf['data']['variables']:
+            for i_level in range(conf['data']['levels']):
+                varname_input.append(var)
+                varname_output.append(var)
+                
+        varname_input += conf['data']['surface_variables']
+        
+        # handle the order of input-only variables
+        if conf['data']['static_first']:
+            varname_input += conf['data']['static_variables'] + \
+                             conf['data']['dynamic_forcing_variables'] + \
+                             conf['data']['forcing_variables']
+        else:
+            varname_input += conf['data']['dynamic_forcing_variables'] + \
+                             conf['data']['forcing_variables'] + \
+                             conf['data']['static_variables']
+            
+        varname_output += conf['data']['surface_variables'] + \
+                          conf['data']['diagnostic_variables']
+
+        # # debug only
+        # conf['model']['post_conf']['varname_input'] = varname_input
+        # conf['model']['post_conf']['varname_output'] = varname_output
+        # --------------------------------------------------------------------- #
+            
+    # SKEBS
+    if conf['model']['post_conf']['skebs']['activate']:
+        pass
+
+    # --------------------------------------------------------------------- #
+    # tracer fixer
+    flag_tracer = conf['model']['post_conf']['tracer_fixer']['activate']
+    
+    if flag_tracer:
+        # when tracer fixer is on, get tensor indices of tracers
+        # tracers must be outputs (either prognostic or output only)
+        
+        # tracer fixer runs on de-normalized variables by default
+        conf['model']['post_conf']['tracer_fixer'].setdefault('denorm', True)
+        conf['model']['post_conf']['tracer_fixer'].setdefault('tracer_thres', [])
+        
+        varname_tracers = conf['model']['post_conf']['tracer_fixer']['tracer_name']
+        tracers_thres_input = conf['model']['post_conf']['tracer_fixer']['tracer_thres']
+        
+        # create a mapping from tracer variable names to their thresholds
+        tracer_threshold_dict = dict(zip(varname_tracers, tracers_thres_input))
+        
+        # Iterate over varname_output to find tracer indices and thresholds
+        tracer_inds = []; tracer_thres = []
+        for i_var, var in enumerate(varname_output):
+            if var in tracer_threshold_dict:
+                tracer_inds.append(i_var)
+                tracer_thres.append(float(tracer_threshold_dict[var]))
+        
+        conf['model']['post_conf']['tracer_fixer']['tracer_inds'] = tracer_inds
+        conf['model']['post_conf']['tracer_fixer']['tracer_thres'] = tracer_thres
+        
+    # --------------------------------------------------------------------- #
+    # global mass fixer
+    flag_mass = conf['model']['post_conf']['global_mass_fixer']['activate']
+    
+    if flag_mass:
+        # when global mass fixer is on, get tensor indices of q, precip, evapor 
+        # these variables must be outputs
+        
+        # global mass fixer runs on de-normalized variables by default
+        conf['model']['post_conf']['global_mass_fixer'].setdefault('denorm', True)
+        
+        q_inds = [
+            i_var for i_var, var in enumerate(varname_output) 
+            if var in conf['model']['post_conf']['global_mass_fixer']['specific_total_water_name']
+        ]
+
+        precip_inds = [
+            i_var for i_var, var in enumerate(varname_output) 
+            if var in conf['model']['post_conf']['global_mass_fixer']['precipitation_name']
+        ]
+
+        evapor_inds = [
+            i_var for i_var, var in enumerate(varname_output) 
+            if var in conf['model']['post_conf']['global_mass_fixer']['evaporation_name']
+        ]
+        
+        conf['model']['post_conf']['global_mass_fixer']['q_inds'] = q_inds
+        conf['model']['post_conf']['global_mass_fixer']['precip_ind'] = precip_inds[0]
+        conf['model']['post_conf']['global_mass_fixer']['evapor_ind'] = evapor_inds[0]
+        
+    # --------------------------------------------------------------------- #
+    # global energy fixer
+    flag_energy = conf['model']['post_conf']['global_energy_fixer']['activate']
+    if flag_energy:
+        # when global energy fixer is on, get tensor indices of energy components
+        # geopotential at surface is input, others are outputs
+
+        # global energy fixer runs on de-normalized variables by default
+        conf['model']['post_conf']['global_energy_fixer'].setdefault('denorm', True)
+        
+        T_inds = [
+            i_var for i_var, var in enumerate(varname_output) 
+            if var in conf['model']['post_conf']['global_energy_fixer']['air_temperature_name']
+        ]
+
+        q_inds = [
+            i_var for i_var, var in enumerate(varname_output) 
+            if var in conf['model']['post_conf']['global_energy_fixer']['specific_total_water_name']
+        ]
+
+        U_inds = [
+            i_var for i_var, var in enumerate(varname_output) 
+            if var in conf['model']['post_conf']['global_energy_fixer']['u_wind_name']
+        ]
+        
+        V_inds = [
+            i_var for i_var, var in enumerate(varname_output) 
+            if var in conf['model']['post_conf']['global_energy_fixer']['v_wind_name']
+        ]
+        
+        Phi_inds = [
+            i_var for i_var, var in enumerate(varname_input) 
+            if var in conf['model']['post_conf']['global_energy_fixer']['surface_geopotential_name']
+        ]
+        
+        TOA_rad_inds = [
+            i_var for i_var, var in enumerate(varname_output) 
+            if var in conf['model']['post_conf']['global_energy_fixer']['TOA_net_radiation_flux_name']
+        ]
+
+        surf_rad_inds = [
+            i_var for i_var, var in enumerate(varname_output) 
+            if var in conf['model']['post_conf']['global_energy_fixer']['surface_net_radiation_flux_name']
+        ]
+
+        surf_flux_inds = [
+            i_var for i_var, var in enumerate(varname_output) 
+            if var in conf['model']['post_conf']['global_energy_fixer']['surface_energy_flux_name']
+        ]
+
+        conf['model']['post_conf']['global_energy_fixer']['T_inds'] = T_inds
+        conf['model']['post_conf']['global_energy_fixer']['q_inds'] = q_inds
+        conf['model']['post_conf']['global_energy_fixer']['U_inds'] = U_inds
+        conf['model']['post_conf']['global_energy_fixer']['V_inds'] = V_inds
+        conf['model']['post_conf']['global_energy_fixer']['Phi_ind'] = Phi_inds[0]
+        conf['model']['post_conf']['global_energy_fixer']['TOA_rad_inds'] = TOA_rad_inds
+        conf['model']['post_conf']['global_energy_fixer']['surf_rad_inds'] = surf_rad_inds
+        conf['model']['post_conf']['global_energy_fixer']['surf_flux_inds'] = surf_flux_inds
     
     # --------------------------------------------------------- #
     # conf['trainer'] section
@@ -314,42 +488,44 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         if conf['trainer']['skip_validation'] is False:
             # do not skip validaiton
             assert 'valid_batch_size'  in conf['trainer'], (
-                "Validation set batch size ('valid_batch_size') is missing from onf['trainer']")
+                "Validation set batch size ('valid_batch_size') is missing from conf['trainer']")
             
             assert 'valid_batches_per_epoch'  in conf['trainer'], (
-                "Number of validation batches per epoch ('valid_batches_per_epoch') is missing from onf['trainer']")
+                "Number of validation batches per epoch ('valid_batches_per_epoch') is missing from conf['trainer']")
             
         if 'save_metric_vars' not in conf['trainer']:
-            conf['trainer']['save_metric_vars'] = []
+            conf['trainer']['save_metric_vars'] = [] # averaged metrics only
         
         if 'use_scheduler' in conf['trainer']:
-            # lr will be controlled by scheduler
-            conf['trainer']['update_learning_rate'] = False
-            
-            assert 'scheduler' in conf['trainer'], (
-                "must specify 'scheduler' in conf['trainer'] if a scheduler is used")
-            
-            assert 'reload_epoch' in conf['trainer'], (
-                "must specify 'reload_epoch' in conf['trainer'] if a scheduler is used")
-            
-            assert 'load_optimizer' in conf['trainer'], (
-                "must specify 'load_optimizer' in conf['trainer'] if a scheduler is used")
-
-            assert 'load_scheduler' in conf['trainer'], (
-                "must specify 'load_scheduler' in conf['trainer'] if a scheduler is used")
-
-            assert 'load_scaler' in conf['trainer'], (
-                "must specify 'load_scaler' in conf['trainer'] if a scheduler is used")
+            # ------------------------------------------------------------------------------ #
+            # if use scheduler
+            if conf['trainer']['use_scheduler']:
+                
+                # lr will be controlled by scheduler
+                conf['trainer']['update_learning_rate'] = False
+                
+                assert 'scheduler' in conf['trainer'], (
+                    "must specify 'scheduler' in conf['trainer'] when a scheduler is used")
+                
+                assert 'reload_epoch' in conf['trainer'], (
+                    "must specify 'reload_epoch' in conf['trainer'] when a scheduler is used")
+                
+                assert 'load_optimizer' in conf['trainer'], (
+                    "must specify 'load_optimizer' in conf['trainer'] when a scheduler is used")
+    
+                assert 'load_scheduler' in conf['trainer'], (
+                    "must specify 'load_scheduler' in conf['trainer'] when a scheduler is used")
+                
+            # ------------------------------------------------------------------------------ #
+            else:
+                if 'load_scaler' not in conf['trainer']:
+                    conf['trainer']['load_scaler'] = False
         
-        else:
-            if 'load_scaler' not in conf['trainer']:
-                conf['trainer']['load_scaler'] = False
-    
-            if 'load_scheduler' not in conf['trainer']:
-                conf['trainer']['load_scheduler'] = False
-    
-            if 'load_optimizer' not in conf['trainer']:
-                conf['trainer']['load_optimizer'] = False
+                if 'load_scheduler' not in conf['trainer']:
+                    conf['trainer']['load_scheduler'] = False
+        
+                if 'load_optimizer' not in conf['trainer']:
+                    conf['trainer']['load_optimizer'] = False
                 
         
         if 'update_learning_rate' not in conf['trainer']:
@@ -369,6 +545,10 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             
         if 'amp' not in conf['trainer']:
             conf['trainer']['amp'] = False
+        
+        if conf['trainer']['amp']:            
+            assert 'load_scaler' in conf['trainer'], (
+                "must specify 'load_scaler' in conf['trainer'] if AMP is used")
             
         if 'weight_decay' not in conf['trainer']:
             conf['trainer']['weight_decay'] = 0

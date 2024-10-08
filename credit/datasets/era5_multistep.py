@@ -402,8 +402,6 @@ class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
         self.filename_forcing = filename_forcing
 
         if self.filename_forcing is not None:
-            assert os.path.isfile(filename_forcing), 'Cannot find forcing file [{}]'.format(filename_forcing)
-
             # drop variables if they are not in the config
             xarray_dataset = get_forward_data(filename_forcing)
             xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_forcing)
@@ -417,8 +415,6 @@ class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
         self.filename_static = filename_static
 
         if self.filename_static is not None:
-            assert os.path.isfile(filename_static), 'Cannot find static file [{}]'.format(filename_static)
-
             # drop variables if they are not in the config
             xarray_dataset = get_forward_data(filename_static)
             xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_static)
@@ -676,8 +672,6 @@ class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
 #         self.filename_forcing = filename_forcing
 
 #         if self.filename_forcing is not None:
-#             assert os.path.isfile(filename_forcing), 'Cannot find forcing file [{}]'.format(filename_forcing)
-
 #             # drop variables if they are not in the config
 #             xarray_dataset = get_forward_data(filename_forcing)
 #             xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_forcing)
@@ -691,8 +685,6 @@ class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
 #         self.filename_static = filename_static
 
 #         if self.filename_static is not None:
-#             assert os.path.isfile(filename_static), 'Cannot find static file [{}]'.format(filename_static)
-
 #             # drop variables if they are not in the config
 #             xarray_dataset = get_forward_data(filename_static)
 #             xarray_dataset = drop_var_from_dataset(xarray_dataset, varname_static)

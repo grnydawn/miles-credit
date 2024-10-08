@@ -4,7 +4,7 @@
 # The model is trained on hourly model-level ERA5 data with top solar irradiance, geopotential, and land-sea mask
 # Output variables: model level [U, V, T, Q], single level [SP, t2m], and 500 hPa [U, V, T, Z, Q]
 # --------------------------------------------------------------------------------------------------------------------- #
-save_loc: '/glade/work/dkimpara/CREDIT_runs/unet_test/'
+save_loc: '/glade/work/$USER/CREDIT_runs/post_test/'
 seed: 1000
 
 data:
@@ -50,6 +50,9 @@ data:
     
     # compatible with the old 'std'
     static_first: True
+
+    sst_forcing:
+        activate: False
     
 trainer:
     type: standard # <---------- change to your type
@@ -106,9 +109,19 @@ model:
         name: "unet"
         encoder_name: "resnet34"
         encoder_weights: "imagenet"
-    post_conf:
-        use_skebs: True
-        image_width: 1280
+    post_conf: 
+        activate: True
+        skebs:
+            activate: True
+        
+        tracer_fixer:
+            activate: False
+            
+        global_mass_fixer:
+            activate: False
+            
+        global_energy_fixer:
+            activate: False
 
 loss: 
     # the main training loss
