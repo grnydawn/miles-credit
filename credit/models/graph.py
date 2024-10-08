@@ -11,7 +11,6 @@ from torch_geometric.utils import softmax
 from typing import Optional, Tuple, Union
 from torch_geometric.typing import (
     Adj,
-    NoneType,
     OptTensor,
     PairTensor,
     SparseTensor,
@@ -419,7 +418,7 @@ if __name__ == "__main__":
     
     # edge_index = torch.randint(image_height * image_width, size=(2, image_width * image_width * 4))
     input_tensor = torch.randn(4, n_variables * levels + n_surface_variables + n_static_variables,  history_len, image_height, image_width).to("cpu")
-    print(f'Loading the model input size', input_tensor.shape)
+    print('Loading the model input size', input_tensor.shape)
     model_class = GraphResTransfGRU
     print(f'Using the class {model_class} with edges={use_edge_attr}')
     model =  model_class( 

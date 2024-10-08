@@ -97,7 +97,8 @@ class Trainer(BaseTrainer):
             backprop_on_timestep = conf['data']['backprop_on_timestep']
         else:
             # If not specified in config, use the range 1 to forecast_len
-            backprop_on_timestep = list(range(1, conf['data']['forecast_len']+1))
+            backprop_on_timestep = list(range(0, conf['data']['forecast_len']+1+1))
+            
         assert forecast_length <= backprop_on_timestep[-1], (
             f"forecast_length ({forecast_length + 1}) must not exceed the max value in backprop_on_timestep {backprop_on_timestep}"
         )
@@ -136,7 +137,8 @@ class Trainer(BaseTrainer):
                     batch = next(dl)
 
                     for i, forecast_step in enumerate(batch["forecast_step"]):
-
+                        # if self.rank == 0:
+                        #     logger.info(f"i: {i}, forecast_step: {forecast_step}")                        
                         if forecast_step == 1:
                             # Initialize x and x_surf with the first time step
                             if "x_surf" in batch:

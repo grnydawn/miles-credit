@@ -21,7 +21,6 @@ import numpy as np
 
 # ---------- #
 import torch
-import torch.distributed as dist
 
 # ---------- #
 # credit
@@ -33,7 +32,7 @@ from credit.pbs import launch_script, launch_script_mpi
 from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
 from credit.metrics import LatWeightedMetrics
 from credit.forecast import load_forecasts
-from credit.distributed import distributed_model_wrapper
+from credit.distributed import distributed_model_wrapper, setup, get_rank_info
 from credit.models.checkpoint import load_model_state
 from torch.utils.data import get_worker_info
 from torch.utils.data.distributed import DistributedSampler
@@ -65,46 +64,53 @@ class Predict_Dataset_Metrics(Predict_Dataset):
         self.init_datetime[index] = generate_datetime(self.init_datetime[index][0], self.init_datetime[index][1], self.lead_time_periods)
         # convert datetime obj to nanosecondes
         init_time_list_dt = [np.datetime64(date.strftime('%Y-%m-%d %H:%M:%S')) for date in self.init_datetime[index]]
+        
+        # init_time_list_np: a list of python datetime objects, each is a forecast step
+        # init_time_list_np[0]: the first initialization time
+        # init_time_list_np[t]: the forcasted time of the (t-1)th step; the initialization time of the t-th step
         self.init_time_list_np = [np.datetime64(str(dt_obj) + '.000000000').astype(datetime) for dt_obj in init_time_list_dt]
 
-        for i_file, ds in enumerate(self.all_files):
-            # get the year of the current file
-            ds_year = int(np.datetime_as_string(ds['time'][0].values, unit='Y'))
-
-            # get the first and last years of init times
-            init_year0 = nanoseconds_to_year(self.init_time_list_np[0])
-
-            # found the right yearly file
-            if init_year0 == ds_year:
-
-                # convert ds['time'] to a list of nanosecondes
-                ds_time_list = [np.datetime64(ds_time.values).astype(datetime) for ds_time in ds['time']]
-                ds_start_time = ds_time_list[0]
-                ds_end_time = ds_time_list[-1]
-
-                init_time_start = self.init_time_list_np[0]
-                # if initalization time is within this (yearly) xr.Dataset
-                if ds_start_time <= init_time_start <= ds_end_time:
-
-                    # try getting the index of the first initalization time
-                    i_init_start = ds_time_list.index(init_time_start)
-
-                    # for multiple init time inputs (history_len > 1), init_end is different for init_start
-                    init_time_end = init_time_start + hour_to_nanoseconds(shifted_hours)
-
-                    # see if init_time_end is alos in this file
-                    if ds_start_time <= init_time_end <= ds_end_time:
-
-                        # try getting the index
-                        i_init_end = ds_time_list.index(init_time_end)
-                    else:
-                        # this set of initalizations have crossed years
-                        # get the last element of the current file
-                        # we have anthoer section that checks additional input data
-                        i_init_end = len(ds_time_list) - 1
-
-                    info = [i_file, i_init_start, i_init_end]
-                    return info
+        info = []
+        for init_time in self.init_time_list_np:
+            for i_file, ds in enumerate(self.all_files):
+                # get the year of the current file
+                ds_year = int(np.datetime_as_string(ds['time'][0].values, unit='Y'))
+    
+                # get the first and last years of init times
+                init_year0 = nanoseconds_to_year(init_time)
+    
+                # found the right yearly file
+                if init_year0 == ds_year:
+                    
+                    N_times = len(ds['time'])
+                    # convert ds['time'] to a list of nanosecondes
+                    ds_time_list = [np.datetime64(ds_time.values).astype(datetime) for ds_time in ds['time']]
+                    ds_start_time = ds_time_list[0]
+                    ds_end_time = ds_time_list[-1]
+    
+                    init_time_start = init_time
+                    # if initalization time is within this (yearly) xr.Dataset
+                    if ds_start_time <= init_time_start <= ds_end_time:
+    
+                        # try getting the index of the first initalization time
+                        i_init_start = ds_time_list.index(init_time_start)
+    
+                        # for multiple init time inputs (history_len > 1), init_end is different for init_start
+                        init_time_end = init_time_start + hour_to_nanoseconds(shifted_hours)
+    
+                        # see if init_time_end is alos in this file
+                        if ds_start_time <= init_time_end <= ds_end_time:
+    
+                            # try getting the index
+                            i_init_end = ds_time_list.index(init_time_end)
+                        else:
+                            # this set of initalizations have crossed years
+                            # get the last element of the current file
+                            # we have anthoer section that checks additional input data
+                            i_init_end = len(ds_time_list) - 1
+    
+                        info.append([i_file, i_init_start, i_init_end, N_times])
+        return info
 
     def __iter__(self):
         worker_info = get_worker_info()
@@ -121,16 +127,18 @@ class Predict_Dataset_Metrics(Predict_Dataset):
             for k, _ in enumerate(self.init_time_list_np):
 
                 # the first initialization time: get initalization from data
-                i_file, i_init_start, i_init_end = data_lookup
+                i_file, i_init_start, i_init_end, N_times = data_lookup[k]
 
                 # allocate output dict
                 output_dict = {}
 
                 # get all inputs in one xr.Dataset
-                sliced_x = self.load_zarr_as_input(i_file, i_init_start + k, i_init_end + k)
-
+                sliced_x = self.load_zarr_as_input(i_file, i_init_start, i_init_end)
+                #print(i_file, i_init_start, i_init_end, N_times)
+                #print(sliced_x['time'])
+                
                 # Check if additional data from the next file is needed
-                if len(sliced_x['time']) < self.history_len:
+                if (len(sliced_x['time']) < self.history_len) or (i_init_end+1 >= N_times):
 
                     # Load excess data from the next file
                     next_file_idx = self.filenames.index(self.filenames[i_file]) + 1
@@ -144,14 +152,19 @@ class Predict_Dataset_Metrics(Predict_Dataset):
                         sliced_x_next = self.load_zarr_as_input(next_file_idx, 0, self.history_len)
 
                         # Concatenate excess data from the next file with the current data
-                        sliced_x = xr.concat([sliced_x, sliced_x_next], dim='time')
-                        sliced_x = sliced_x.isel(time=slice(0, self.history_len))
-                        sliced_y = self.load_zarr_as_input(next_file_idx, self.history_len, self.history_len + 1)
+                        sliced_xy = xr.concat([sliced_x, sliced_x_next], dim='time')
+                        sliced_x = sliced_xy.isel(time=slice(0, self.history_len))
+                        
+                        sliced_y = sliced_xy.isel(time=slice(self.history_len, self.history_len+1))
+                        #self.load_zarr_as_input(next_file_idx, self.history_len, self.history_len+1)
 
                 else:
-                    sliced_y = self.load_zarr_as_input(i_file, i_init_end + k + 1, i_init_end + k + 1)
+                    sliced_y = self.load_zarr_as_input(i_file, i_init_end+1, i_init_end+1)
 
                 # Prepare data for transform application
+                # print(sliced_x['time'])
+                # print(sliced_y['time'])
+                
                 sample_x = {'historical_ERA5_images': sliced_x, 'target_ERA5_images': sliced_y}
 
                 if self.transform:
@@ -165,9 +178,7 @@ class Predict_Dataset_Metrics(Predict_Dataset):
                 # Adjust stopping condition
                 output_dict['stop_forecast'] = k == (len(self.init_time_list_np) - 1)
                 output_dict['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[-1]
-
-                print(output_dict["datetime"])
-
+                
                 # return output_dict
                 yield output_dict
 
@@ -175,16 +186,11 @@ class Predict_Dataset_Metrics(Predict_Dataset):
                     break
 
 
-def setup(rank, world_size, mode):
-    logging.info(f"Running {mode.upper()} on rank {rank} with world_size {world_size}.")
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-
-
-def predict(rank, world_size, conf, p):
+def predict(rank, world_size, conf, backend, p):
 
     # setup rank and world size for GPU-based rollout
-    if conf["predict"]["mode"] in ["fsdp", "ddp"]:
-        setup(rank, world_size, conf["predict"]["mode"])
+    if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
+        setup(rank, world_size, conf["trainer"]["mode"], backend)
 
     # infer device id from rank
     if torch.cuda.is_available():
@@ -489,6 +495,13 @@ if __name__ == "__main__":
         default=8,
         help="Number of CPU workers to use per GPU",
     )
+    parser.add_argument(
+        "--backend",
+        type=str,
+        help="Backend for distribted training.",
+        default="nccl",
+        choices=["nccl", "gloo", "mpi"],
+    )
 
     # parse
     args = parser.parse_args()
@@ -500,6 +513,7 @@ if __name__ == "__main__":
     subset = int(args_dict.pop("subset"))
     number_of_subsets = int(args_dict.pop("no_subset"))
     num_cpus = int(args_dict.pop("num_cpus"))
+    backend = args_dict.pop("backend")
 
     # Set up logger to print stuff
     root = logging.getLogger()
@@ -570,11 +584,17 @@ if __name__ == "__main__":
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
 
+    local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])
+
     with mp.Pool(num_cpus) as p:
-        if conf["predict"]["mode"] in ["fsdp", "ddp"]:  # multi-gpu inference
-            _ = predict(int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf, p=p)
-        else:  # single device inference
-            _ = predict(0, 1, conf, p=p)
+        _ = predict(world_rank, world_size, conf, backend, p=p)
+
+        # main(world_rank, world_size, conf, backend)
+
+        # if conf["predict"]["mode"] in ["fsdp", "ddp"]:  # multi-gpu inference
+        #     _ = predict(int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf, p=p)
+        # else:  # single device inference
+        #     _ = predict(0, 1, conf, p=p)
 
     # Ensure all processes are finished
     p.close()
