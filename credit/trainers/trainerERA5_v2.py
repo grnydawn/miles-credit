@@ -28,10 +28,6 @@ from credit.scheduler import update_on_batch, update_on_epoch
 from credit.trainers.utils import cleanup, accum_log
 from credit.trainers.base_trainer import BaseTrainer
 
-from credit.postblock import (
-    global_mass_fixer,
-    global_energy_fixer
-)
 
 logger = logging.getLogger(__name__)
 
@@ -76,18 +72,6 @@ class Trainer(BaseTrainer):
         if conf['trainer']['use_scheduler'] and conf['trainer']['scheduler']['scheduler_type'] == "lambda":
             scheduler.step()
 
-        # ============================================================================== #
-        # postblock initialization
-        post_conf = conf['model']['post_conf']
-        self.flag_mass_conserve = post_conf['global_mass_fixer']['activate_outside_model']
-        self.flag_energy_conserve = post_conf['global_energy_fixer']['activate_outside_model']
-
-        if self.flag_mass_conserve:
-            self.mass_fixer = global_mass_fixer(post_conf)
-        if self.flag_energy_conserve:
-            self.energy_fixer = global_energy_fixer(post_conf)
-        # ============================================================================== #
-        
         # set up a custom tqdm
         if not isinstance(trainloader.dataset, IterableDataset):
             batches_per_epoch = (
@@ -149,26 +133,55 @@ class Trainer(BaseTrainer):
                 # single step predict
                 y_pred = self.model(x)
 
-                # ============================================================================== #
-                # postblock operations
-
-                # prepare input package
-                input_dict = {'y_pred': y, 'x': x}
-                
-                if self.flag_mass_conserve:
-                    input_dict = self.mass_fixer(input_dict)
-                    
-                if self.flag_energy_conserve:
-                    input_dict = self.energy_fixer(input_dict)
-
-                y_pred = input_dict['y_pred']
-                
-                # ============================================================================== #
-                
                 y = y.to(device=self.device, dtype=y_pred.dtype)
                 
                 loss = criterion(y, y_pred)
                 
+                # # ============================================================================== #
+                # # This block works for forecacst_len > 0 (multistep) with one_shot=True
+                # # It is deprecated becuase of a more dedicated multi-step trainer
+                # # ============================================================================== #
+                # varnum_diag = len(conf["data"]['diagnostic_variables'])
+                # # number of dynamic forcing + forcing + static
+                # static_dim_size = len(conf['data']['dynamic_forcing_variables']) + \
+                #                   len(conf['data']['forcing_variables']) + \
+                #                   len(conf['data']['static_variables'])
+                # k = 0
+                # while True:
+                #     if getattr(self.model, 'use_codebook', False):
+                #         y_pred, cm_loss = self.model(x)
+                #         commit_loss += cm_loss
+                #     else:
+                #         y_pred = self.model(x)
+                #     if k == total_time_steps:
+                #         break
+                #     k += 1
+                #     if history_len > 1:
+                #         # detach and throw away the oldest time dim
+                #         x_detach = x.detach()[:, :, 1:, ...]
+                #         # use y_pred as the next-hour input
+                #         if 'y_diag' in batch:
+                #             # drop diagnostic variables
+                #             y_pred = y_pred.detach()[:, :-varnum_diag, ...]
+                #         # add forcing and static vars to y_pred
+                #         if 'x_forcing_static' in batch:
+                #             # detach and throw away the oldest time dim (same idea as x_detach)
+                #             x_forcing_detach = x_forcing_batch.detach()[:, :, 1:, ...]
+                #             # concat forcing and static to y_pred, y_pred will be the next input
+                #             y_pred = torch.cat((y_pred, x_forcing_detach), dim=1)
+                #         x = torch.cat([x_detach, y_pred], dim=2).detach()
+                #     else:
+                #         # use y_pred as the next-hour inputs
+                #         x = y_pred.detach()
+                #         if 'y_diag' in batch:
+                #             x = x[:, :-varnum_diag, ...]
+                #         # add forcing and static vars to y_pred
+                #         if 'x_forcing_static' in batch:
+                #             x = torch.cat((x, x_forcing_batch), dim=1)
+                # y = y.to(device=self.device, dtype=y_pred.dtype)
+                # loss = criterion(y, y_pred)
+                # # ============================================================================== #
+
                 # Metrics
                 # metrics_dict = metrics(y_pred.float(), y.float())
                 metrics_dict = metrics(y_pred, y)
@@ -269,19 +282,6 @@ class Trainer(BaseTrainer):
         
         results_dict = defaultdict(list)
 
-        # ============================================================================== #
-        # postblock initialization
-        post_conf = conf['model']['post_conf']
-        self.flag_mass_conserve = post_conf['global_mass_fixer']['activate_outside_model']
-        self.flag_energy_conserve = post_conf['global_energy_fixer']['activate_outside_model']
-
-        if self.flag_mass_conserve:
-            self.mass_fixer = global_mass_fixer(post_conf)
-        if self.flag_energy_conserve:
-            self.energy_fixer = global_energy_fixer(post_conf)
-        # ============================================================================== #
-
-        
         # set up a custom tqdm
         if isinstance(valid_loader.dataset, IterableDataset):
             valid_batches_per_epoch = valid_batches_per_epoch
@@ -338,28 +338,67 @@ class Trainer(BaseTrainer):
                     y = torch.cat((y, y_diag_batch), dim=1)
 
                 y_pred = self.model(x)
-
-                # ============================================================================== #
-                # postblock operations
-
-                # prepare input package
-                input_dict = {'y_pred': y, 'x': x}
-                
-                if self.flag_mass_conserve:
-                    input_dict = self.mass_fixer(input_dict)
-                    
-                if self.flag_energy_conserve:
-                    input_dict = self.energy_fixer(input_dict)
-
-                y_pred = input_dict['y_pred']
-                
-                # ============================================================================== #
                 
                 loss = criterion(y.to(y_pred.dtype), y_pred)
 
                 # Metrics
                 # metrics_dict = metrics(y_pred, y)
                 metrics_dict = metrics(y_pred.float(), y.float())
+                
+                # # ============================================================================== #
+                # # This block works for forecacst_len > 0 (multistep) with one_shot=True
+                # # It is deprecated becuase of a more dedicated multi-step trainer
+                # # ============================================================================== #
+                # varnum_diag = len(conf["data"]['diagnostic_variables'])
+                # # number of dynamic forcing + forcing + static
+                # static_dim_size = len(conf['data']['dynamic_forcing_variables']) + \
+                #                   len(conf['data']['forcing_variables']) + \
+                #                   len(conf['data']['static_variables'])
+                # k = 0
+                # while True:
+                #     if getattr(self.model, 'use_codebook', False):
+                #         y_pred, cm_loss = self.model(x)
+                #         commit_loss += cm_loss
+                #     else:
+                #         y_pred = self.model(x)
+
+                #     if k == total_time_steps:
+                #         break
+
+                #     k += 1
+
+                #     if history_len > 1:
+
+                #         # detach and throw away the oldest time dim
+                #         x_detach = x.detach()[:, :, 1:, ...]
+
+                #         # use y_pred as the next-hour input
+                #         if 'y_diag' in batch:
+                #             # drop diagnostic variables
+                #             y_pred = y_pred.detach()[:, :-varnum_diag, ...]
+
+                #         # add forcing and static vars to y_pred
+                #         if 'x_forcing_static' in batch:
+
+                #             # detach and throw away the oldest time dim (same idea as x_detach)
+                #             x_forcing_detach = x_forcing_batch.detach()[:, :, 1:, ...]
+
+                #             # concat forcing and static to y_pred, y_pred will be the next input
+                #             y_pred = torch.cat((y_pred, x_forcing_detach), dim=1)
+
+                #         x = torch.cat([x_detach, y_pred], dim=2).detach()
+
+                #     else:
+                #         # use y_pred as the next-hour inputs
+                #         x = y_pred.detach()
+
+                #         if 'y_diag' in batch:
+                #             x = x[:, :-varnum_diag, ...]
+
+                #         # add forcing and static vars to y_pred
+                #         if 'x_forcing_static' in batch:
+                #             x = torch.cat((x, x_forcing_batch), dim=1)
+                # # ============================================================================== #
                 
                 for name, value in metrics_dict.items():
                     value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
