@@ -1,8 +1,7 @@
 import torch
 from credit.postblock import PostBlock
-from credit.postblock import SKEBS
-from credit.postblock import tracer_fixer
-from credit.postblock import global_mass_fixer
+from credit.postblock import SKEBS, tracer_fixer, global_mass_fixer, global_energy_fixer
+
 
 def test_SKEBS_rand():
     image_width = 100
