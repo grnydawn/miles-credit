@@ -494,9 +494,12 @@ def concat_fix(y_pred, q_pred_correct, q_ind_start, q_ind_end, N_vars):
     '''
     this function use torch.concat to replace a specific subset of variable channels in `y_pred`.
     
-    Given `q_pred = y_pred[:, 0:10, ...]`, and `q_pred_correct` this function 
-    does: `y_pred[:, 0:10, ...] = q_pred_correct`, but without using in-place 
-    modifications, so the graph of y_pred is maintained
+    Given `q_pred = y_pred[:, ind_start:ind_end, ...]`, and `q_pred_correct` this function 
+    does: `y_pred[:, ind_start:ind_end, ...] = q_pred_correct`, but without using in-place 
+    modifications, so the graph of y_pred is maintained. It also handles 
+    `q_ind_start == q_ind_end cases`.
+
+    All input tensors must have 5 dims of `batch, level-or-var, time, lat, lon`
 
     Args:
         y_pred (torch.Tensor): Original y_pred tensor of shape (batch, var, time, lat, lon).
@@ -508,21 +511,23 @@ def concat_fix(y_pred, q_pred_correct, q_ind_start, q_ind_end, N_vars):
     Returns:
         torch.Tensor: Concatenated y_pred with corrected q_pred.
     '''
-    # Initialize a list to collect slices of tensors for concatenation
+    # define a list that collects tensors
     var_list = []
     
-    # Add variables before q_pred
+    # vars before q_pred
     if q_ind_start > 0:
         var_list.append(y_pred[:, :q_ind_start, ...])
 
-    # Add corrected q_pred
+    # q_pred
     var_list.append(q_pred_correct)
 
-    # Add variables after q_pred
+    # vars after q_pred
     if q_ind_end < N_vars - 1:
-        var_list.append(y_pred[:, q_ind_end:, ...])
-
-    # Concatenate all parts along the variable dimension (dim=1)
+        if q_ind_start == q_ind_end:
+            var_list.append(y_pred[:, q_ind_end+1:, ...])
+        else:
+            var_list.append(y_pred[:, q_ind_end:, ...])
+            
     return torch.cat(var_list, dim=1)
 
 class SKEBS(nn.Module):
