@@ -4,25 +4,25 @@
 # The model is trained on hourly model-level ERA5 data with top solar irradiance, geopotential, and land-sea mask
 # Output variables: model level [U, V, T, Q], single level [SP, t2m], and 500 hPa [U, V, T, Z, Q]
 # --------------------------------------------------------------------------------------------------------------------- #
-save_loc: '/glade/work/ksha/CREDIT_runs/wxformer_1h/'
+save_loc: '/glade/work/$USER/CREDIT_runs/wxformer_1h_physics_test/'
 seed: 1000
 
 data:
     # upper-air variables
     variables: ['U','V','T','Q']
-    save_loc: '/glade/derecho/scratch/wchapman/y_ONEdeg*.zarr'
+    save_loc: '/glade/derecho/scratch/dkimpara/y_ONEdeg*.zarr'
     
     # surface variables
     surface_variables: ['SP','t2m', 'V500','U500','T500','Z500','Q500']
-    save_loc_surface: '/glade/derecho/scratch/wchapman/y_ONEdeg*.zarr'
+    save_loc_surface: '/glade/derecho/scratch/dkimpara/y_ONEdeg*.zarr'
     
     # dynamic forcing variables
     dynamic_forcing_variables: ['tsi']
-    save_loc_dynamic_forcing: '/glade/derecho/scratch/wchapman/credit_solar_1h_1deg/*.nc'
+    save_loc_dynamic_forcing: '/glade/derecho/scratch/dkimpara/credit_solar_1h_1deg/*.nc'
     
     # static variables
     static_variables: ['Z_GDS4_SFC','LSM'] 
-    save_loc_static: '/glade/u/home/akn7/credit/data/LSM_static_variables_ERA5_zhght_onedeg.nc'
+    save_loc_static: '/glade/derecho/scratch/dkimpara/LSM_static_variables_ERA5_zhght_onedeg.nc'
     
     # mean / std path
     mean_path: '/glade/derecho/scratch/ksha/CREDIT_data/mean_1h_1979_2018_16lev_0.25deg.nc'
@@ -55,14 +55,14 @@ data:
 trainer:
     type: standard # <---------- change to your type
     
-    mode: fsdp
+    mode: none
     cpu_offload: False
     activation_checkpoint: True
     
-    load_weights: True
-    load_optimizer: True
-    load_scaler: True
-    load_sheduler: True
+    load_weights: False
+    load_optimizer: False
+    load_scaler: False
+    load_sheduler: False
 
     skip_validation: False
     update_learning_rate: False
@@ -76,14 +76,14 @@ trainer:
     train_batch_size: 1
     valid_batch_size: 1
     
-    batches_per_epoch: 4000
-    valid_batches_per_epoch: 0
+    batches_per_epoch: 1
+    valid_batches_per_epoch: 1
     stopping_patience: 999
     
     start_epoch: 0
     num_epoch: 1
     reload_epoch: True
-    epochs: &epochs 30
+    epochs: &epochs 1
      
     use_scheduler: True
     scheduler: {'scheduler_type': 'cosine-annealing', 'T_max': *epochs,  'last_epoch': -1}
@@ -139,7 +139,7 @@ loss:
     
     # use latitude weighting
     use_latitude_weights: True
-    latitude_weights: "/glade/u/home/wchapman/MLWPS/DataLoader/LSM_static_variables_ERA5_zhght.nc"
+    latitude_weights: '/glade/derecho/scratch/dkimpara/LSM_static_variables_ERA5_zhght_onedeg.nc'
     
     # turn-off variable weighting
     use_variable_weights: False

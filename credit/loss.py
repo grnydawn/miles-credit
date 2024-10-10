@@ -452,14 +452,16 @@ class VariableTotalLoss2D(torch.nn.Module):
 
         self.conf = conf
         self.training_loss = conf["loss"]["training_loss"]
-
-        # lat_file = conf['loss']['latitude_weights']
+        
         atmos_vars = conf['data']['variables']
         surface_vars = conf['data']['surface_variables']
+        diag_vars = conf['data']['diagnostic_variables']
+        
         levels = conf['model']['levels'] if 'levels' in conf['model'] else conf['model']['frames']
 
         self.vars = [f"{v}_{k}" for v in atmos_vars for k in range(levels)]
         self.vars += surface_vars
+        self.vars += diag_vars
 
         self.lat_weights = None
         if conf["loss"]["use_latitude_weights"]:

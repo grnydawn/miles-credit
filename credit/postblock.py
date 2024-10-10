@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from credit.transforms import load_transforms
 
 import logging
 
@@ -17,15 +18,91 @@ class PostBlock(nn.Module):
         super().__init__()
 
         self.operations = nn.ModuleList()
-        if post_conf["use_skebs"]:
+        
+        if post_conf["skebs"]["activate"]:
             logging.info("using SKEBS")
             self.operations.append(SKEBS(post_conf))
+
+        # negative tracer fixer
+        if post_conf['tracer_fixer']['activate']:
+            opt = tracer_fixer(post_conf)
+            self.operations.append(opt)
 
     def forward(self, x):
         for op in self.operations:
             x = op(x)
         return x
+
+class tracer_fixer(nn.Module):
+    '''
+    This class fixes non-negative tracers by replacing their negative values to zero.
+    Modification is done witohut making copies.
+
+    Note: trace_fixer does not conserve the total mass of tracer content
+    '''
+    def __init__(self, post_conf):
+        super().__init__()
+        
+        self.tracer_indices = post_conf['tracer_fixer']['tracer_inds']
+        self.tracer_thres = post_conf['tracer_fixer']['tracer_thres']
+
+        if post_conf['tracer_fixer']['denorm']:
+            # setup a scaler (no ToTensor, just scaler)
+            self.state_trans = load_transforms(post_conf, scaler_only=True)
+        else:
+            self.state_trans = None
     
+    def forward(self, x):
+        # -------------------------------------------------------- #
+        # get y_pred
+        # y_pred is channel first: (batch, var, time, lat, lon)
+        y_pred = x["y_pred"]
+        
+        # # if denorm is needed
+        if self.state_trans:
+            y_pred = self.state_trans.inverse_transform(y_pred)
+            
+        # -------------------------------------------------------- #
+        # non-neg correction
+        for i, i_var in enumerate(self.tracer_indices):
+            # get the tracers
+            tracer_vals = y_pred[:, i_var, ...]
+
+            # in-place modification of y_pred
+            thres = self.tracer_thres[i]
+            tracer_vals[tracer_vals < thres] = thres
+            
+        if self.state_trans:
+            y_pred = self.state_trans.transform_array(y_pred)
+
+        # # give it back to x
+        # x["y_pred"] = y_pred
+            
+        return y_pred
+
+# class global_mass_fixer(nn.Module):
+#     '''
+#     '''
+#     def __init__(self, post_conf):
+#         super().__init__()
+
+#     def forward(self, x):
+#         x_input = x['x']
+#         y_pred = x["y_pred"]
+#         ##
+
+# class global_energy_fixer(nn.Module):
+#     '''
+#     '''
+#     def __init__(self, post_conf):
+#         super().__init__()
+
+#     def forward(self, x):
+#         x_input = x['x']
+#         y_pred = x["y_pred"]
+#         ##
+
+        
 class SKEBS(nn.Module):
     """
         post_conf: dictionary with config options for PostBlock.
@@ -36,7 +113,7 @@ class SKEBS(nn.Module):
     """
     def __init__(self, post_conf):
         super().__init__()
-        self.image_width = post_conf['image_width']
+        self.image_width = post_conf['model']['image_width']
         final_layer_size = self.image_width
         self.additional_layer = nn.Linear(final_layer_size, final_layer_size)#.to(self.device) # Example: another layer
     
