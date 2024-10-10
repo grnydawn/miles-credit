@@ -187,7 +187,6 @@ class global_mass_fixer(nn.Module):
         self.q_ind_end = int(post_conf['global_mass_fixer']['q_inds'][-1]) + 1
         self.precip_ind = int(post_conf['global_mass_fixer']['precip_ind'])
         self.evapor_ind = int(post_conf['global_mass_fixer']['evapor_ind'])
-        
         # ------------------------------------------------------------------------------------ #
         # setup a scaler
         if post_conf['global_mass_fixer']['denorm']:
@@ -203,6 +202,8 @@ class global_mass_fixer(nn.Module):
         # x_input does not have precip and evapor
         x_input = x['x']
         y_pred = x["y_pred"]
+
+        N_vars = y_pred.shape[1]
         
         # if denorm is needed
         if self.state_trans:
@@ -239,15 +240,16 @@ class global_mass_fixer(nn.Module):
         q_correct_ratio = q_correct_ratio.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
 
         # ===================================================================== #
-        # Compute the corrected part of q_pred without in-place modifications
-        q_pred_to_correct = q_pred[:, self.ind_fix-1:, ...]
-        q_pred_corrected_part = 1 - (1 - q_pred_to_correct) * q_correct_ratio
-    
-        # Extract the unmodified part of q_pred
-        q_pred_unchanged_part = q_pred[:, :self.ind_fix-1, ...]
-    
-        # Concatenate the unmodified and corrected parts
-        q_pred_corrected = torch.cat([q_pred_unchanged_part, q_pred_corrected_part], dim=1)  # Along levels dimension
+        # q fixes based on the ratio
+        # fix lower atmosphere
+        q_pred_fix = 1 - (1 - q_pred[:, self.ind_fix-1:, ...]) * q_correct_ratio
+        # extract unmodified part from q_pred
+        q_pred_hold = q_pred[:, :self.ind_fix-1, ...]
+        
+        # concat upper and lower q vals
+        # (batch, level, lat, lon)
+        q_pred = torch.cat([q_pred_hold, q_pred_fix], dim=1)
+        # ===================================================================== #
 
         # ------------------------------------------------------------------------------ #
         # global water balance
@@ -256,7 +258,7 @@ class global_mass_fixer(nn.Module):
         
         # total water content (batch, var, time, lat, lon)
         TWC_input = self.core_compute.total_column_water(q_input)
-        TWC_pred = self.core_compute.total_column_water(q_pred_corrected)  # Use corrected q_pred
+        TWC_pred = self.core_compute.total_column_water(q_pred)  # Use corrected q_pred
         
         dTWC_dt = (TWC_pred - TWC_input) / self.N_seconds
         
@@ -279,48 +281,23 @@ class global_mass_fixer(nn.Module):
         P_correct_ratio = P_correct_ratio.unsqueeze(-1).unsqueeze(-1)
         
         # apply correction on precip
-        precip_corrected = precip * P_correct_ratio  # Apply correction to precip
+        precip = precip * P_correct_ratio
 
-        # --------------------------------------------------------------------------------------------- #
-        # return corrected values back
-        q_pred_corrected = q_pred_corrected.unsqueeze(2)
-        
-        # precip has shape (batch, lat, lon)
-        # We need to expand it to (batch, 1, 1, lat, lon)
-        precip_corrected = precip_corrected.unsqueeze(1).unsqueeze(2)  # Insert variable and time dimensions
+        # ===================================================================== #
+        # return fixed q and precip back to y_pred
 
-        # Initialize a list to collect slices and corrected variables
-        variables_list = []
+        # expand fixed vars to (batch level, time, lat, lon)
+        q_pred = q_pred.unsqueeze(2)
+        precip = precip.unsqueeze(1).unsqueeze(2)
         
-        # Variables before q_pred indices
-        if self.q_ind_start > 0:
-            variables_before_q = y_pred[:, :self.q_ind_start, :, :, :]
-            variables_list.append(variables_before_q)
-        
-        # Append corrected q_pred
-        variables_list.append(q_pred_corrected)
-        
-        # Variables between q_pred and precip indices
-        if self.q_ind_end < self.precip_ind:
-            variables_between_q_and_precip = y_pred[:, self.q_ind_end:self.precip_ind, :, :, :]
-            variables_list.append(variables_between_q_and_precip)
-        
-        # Append corrected precip
-        variables_list.append(precip_corrected)
-        
-        # Variables after precip index
-        if self.precip_ind + 1 < y_pred.size(1):
-            variables_after_precip = y_pred[:, self.precip_ind + 1:, :, :, :]
-            variables_list.append(variables_after_precip)
-        
-        # Concatenate all parts along the variable dimension (dim=1)
-        y_pred_corrected = torch.cat(variables_list, dim=1)
+        y_pred = concat_fix(y_pred, q_pred, self.q_ind_start, self.q_ind_end, N_vars)
+        y_pred = concat_fix(y_pred, precip, self.precip_ind, self.precip_ind, N_vars)
         
         if self.state_trans:
-            y_pred_corrected = self.state_trans.transform_array(y_pred_corrected)
+            y_pred = self.state_trans.transform_array(y_pred)
         
         # give it back to x
-        x["y_pred"] = y_pred_corrected
+        x["y_pred"] = y_pred
 
         # return dict, 'x' is not touched
         return x
@@ -414,6 +391,9 @@ class global_energy_fixer(nn.Module):
         # x_input does not have precip and evapor
         x_input = x['x']
         y_pred = x["y_pred"]
+
+        GPH_surf = self.GPH_surf.to(y_pred.device)
+        N_vars = y_pred.shape[1]
         
         # if denorm is needed
         if self.state_trans:
@@ -452,8 +432,8 @@ class global_energy_fixer(nn.Module):
         ken_t1 = 0.5 * (U_pred ** 2 + V_pred ** 2)
 
         # packing latent heat + potential energy + kinetic energy
-        E_qgk_t0 = LH_WATER * q_input + self.GPH_surf + ken_t0
-        E_qgk_t1 = LH_WATER * q_input + self.GPH_surf + ken_t1
+        E_qgk_t0 = LH_WATER * q_input + GPH_surf + ken_t0
+        E_qgk_t1 = LH_WATER * q_input + GPH_surf + ken_t1
 
         # ------------------------------------------------------------------------------ #
         # energy source and sinks
@@ -493,38 +473,58 @@ class global_energy_fixer(nn.Module):
         # let thermal energy carry the corrected total energy amount
         T_pred = (E_t1_correct - E_qgk_t1) / CP_t1
         
-        # Give T_pred back to y_pred
-        # (batch, levels, 1, lat, lon)
-        T_pred_correct = T_pred.unsqueeze(2)  
-    
-        # Initialize a list to collect slices and corrected variables
-        variables_list = []
-    
-        # Variables before T_pred indices
-        if self.T_ind_start > 0:
-            variables_before_T = y_pred[:, :self.T_ind_start, :, :, :]
-            variables_list.append(variables_before_T)
-    
-        # Append corrected T_pred
-        variables_list.append(T_pred_correct)
-    
-        # Variables after T_pred indices
-        if self.T_ind_end < y_pred.size(1):
-            variables_after_T = y_pred[:, self.T_ind_end:, :, :, :]
-            variables_list.append(variables_after_T)
-    
-        # Concatenate all parts along the variable dimension (dim=1)
-        y_pred_correct = torch.cat(variables_list, dim=1)
+        # ===================================================================== #
+        # return fixed q and precip back to y_pred
+        
+        # expand fixed vars to (batch level, time, lat, lon)
+        T_pred = T_pred.unsqueeze(2)
+        
+        y_pred = concat_fix(y_pred, T_pred, self.T_ind_start, self.T_ind_end, N_vars)
         
         if self.state_trans:
-            y_pred_correct = self.state_trans.transform_array(y_pred_correct)
+            y_pred = self.state_trans.transform_array(y_pred)
         
         # give it back to x
-        x["y_pred"] = y_pred_correct
+        x["y_pred"] = y_pred
 
         # return dict, 'x' is not touched
         return x
-        
+
+def concat_fix(y_pred, q_pred_correct, q_ind_start, q_ind_end, N_vars):
+    '''
+    this function use torch.concat to replace a specific subset of variable channels in `y_pred`.
+    
+    Given `q_pred = y_pred[:, 0:10, ...]`, and `q_pred_correct` this function 
+    does: `y_pred[:, 0:10, ...] = q_pred_correct`, but without using in-place 
+    modifications, so the graph of y_pred is maintained
+
+    Args:
+        y_pred (torch.Tensor): Original y_pred tensor of shape (batch, var, time, lat, lon).
+        q_pred_correct (torch.Tensor): Corrected q_pred tensor.
+        q_ind_start (int): Index where q_pred starts in y_pred.
+        q_ind_end (int): Index where q_pred ends in y_pred.
+        N_vars (int): Total number of variables in y_pred (i.e., y_pred.shape[1]).
+
+    Returns:
+        torch.Tensor: Concatenated y_pred with corrected q_pred.
+    '''
+    # Initialize a list to collect slices of tensors for concatenation
+    var_list = []
+    
+    # Add variables before q_pred
+    if q_ind_start > 0:
+        var_list.append(y_pred[:, :q_ind_start, ...])
+
+    # Add corrected q_pred
+    var_list.append(q_pred_correct)
+
+    # Add variables after q_pred
+    if q_ind_end < N_vars - 1:
+        var_list.append(y_pred[:, q_ind_end:, ...])
+
+    # Concatenate all parts along the variable dimension (dim=1)
+    return torch.cat(var_list, dim=1)
+
 class SKEBS(nn.Module):
     """
         post_conf: dictionary with config options for PostBlock.
@@ -542,7 +542,9 @@ class SKEBS(nn.Module):
     def forward(self, x):
         x = x["y_pred"]
         return self.additional_layer(x)
-    
+
+
+
 if __name__ == "__main__":
     image_width = 100
     conf = {"post_conf": {"use_skebs": True, "image_width": image_width}}
