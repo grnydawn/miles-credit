@@ -98,7 +98,7 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
     destination_path = config_save_path
 
     # Only delete the original if the source and destination paths are different
-    if os.path.exists(destination_path) and os.path.abspath(source_path) != os.path.abspath(destination_path):
+    if os.path.exists(destination_path) and os.path.realpath(source_path) != os.path.realpath(destination_path):
         os.remove(destination_path)
         logger.info(f'Removed the old model.yml at {destination_path}')
 
@@ -189,7 +189,7 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
         destination_path = os.path.join(save_loc, "launch.sh")
 
         # Only delete the original if the source and destination paths are different
-        if os.path.exists(destination_path) and os.path.abspath(source_path) != os.path.abspath(destination_path):
+        if os.path.exists(destination_path) and os.path.realpath(source_path) != os.path.realpath(destination_path):
             os.remove(destination_path)
             logger.info(f'Removed the old launch.sh at {destination_path}')
 
