@@ -1,6 +1,6 @@
 import torch
 from credit.postblock import PostBlock
-from credit.postblock import SKEBS, tracer_fixer, global_mass_fixer, global_energy_fixer
+from credit.postblock import SKEBS, tracer_fixer, GlobalMassFixer, GlobalEnergyFixer
 
 def test_SKEBS_rand():
     image_width = 100
@@ -52,10 +52,10 @@ def test_tracer_fixer_rand():
     # verify negative values
     assert output_tensor.min() >= 0
 
-def test_global_mass_fixer_rand():
+def test_GlobalMassFixer_rand():
     '''
     This function provides a I/O size test on 
-    global_mass_fixer at credit.postblock
+    GlobalMassFixer at credit.postblock
     '''
     # initialize post_conf, turn-off other blocks
     conf = {'post_conf': {'skebs': {'activate': False}}}
@@ -80,8 +80,8 @@ def test_global_mass_fixer_rand():
     # initialize postblock
     postblock = PostBlock(**conf)
 
-    # verify that global_mass_fixer is registered in the postblock
-    assert any([isinstance(module, global_mass_fixer) for module in postblock.modules()])
+    # verify that GlobalMassFixer is registered in the postblock
+    assert any([isinstance(module, GlobalMassFixer) for module in postblock.modules()])
     
     # input tensor
     x = torch.randn((1, 7, 2, 10, 18))
@@ -97,10 +97,10 @@ def test_global_mass_fixer_rand():
     assert y_pred_fix.shape == y_pred.shape
 
 
-def test_global_energy_fixer_rand():
+def test_GlobalEnergyFixer_rand():
     '''
     This function provides a I/O size test on 
-    global_energy_fixer at credit.postblock
+    GlobalEnergyFixer at credit.postblock
     '''
     # turn-off other blocks
     conf = {'post_conf': {'skebs': {'activate': False}}}
@@ -126,8 +126,8 @@ def test_global_energy_fixer_rand():
     # initialize postblock
     postblock = PostBlock(**conf)
 
-    # verify that global_energy_fixer is registered in the postblock
-    assert any([isinstance(module, global_energy_fixer) for module in postblock.modules()])
+    # verify that GlobalEnergyFixer is registered in the postblock
+    assert any([isinstance(module, GlobalEnergyFixer) for module in postblock.modules()])
     
     # input tensor
     x = torch.randn((1, 7, 2, 10, 18))

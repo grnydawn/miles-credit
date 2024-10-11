@@ -4,8 +4,8 @@ postblock.py
 Content:
     - PostBlock
     - tracer_fixer
-    - global_mass_fixer
-    - global_energy_fixer
+    - GlobalMassFixer
+    - GlobalEnergyFixer
     - SKEBS
     
 '''
@@ -37,7 +37,7 @@ class PostBlock(nn.Module):
             Registered modules:
                 - SKEBS
                 - tracer_fixer
-                - global_mass_fixer
+                - GlobalMassFixer
                 
         """
         super().__init__()
@@ -59,12 +59,12 @@ class PostBlock(nn.Module):
             
         # global mass fixer
         if post_conf['global_mass_fixer']['activate']:
-            opt = global_mass_fixer(post_conf)
+            opt = GlobalMassFixer(post_conf)
             self.operations.append(opt)
 
         # global energy fixer
         if post_conf['global_energy_fixer']['activate']:
-            opt = global_energy_fixer(post_conf)
+            opt = GlobalEnergyFixer(post_conf)
             self.operations.append(opt)
 
     def forward(self, x):
@@ -131,7 +131,7 @@ class tracer_fixer(nn.Module):
         # return dict, 'x' is not touched
         return x
 
-class global_mass_fixer(nn.Module):
+class GlobalMassFixer(nn.Module):
     '''
     This module applies global mass conservation fixes for both dry air and water budget.
     The output ensures that the global dry air mass and global water budgets are conserved 
@@ -302,7 +302,7 @@ class global_mass_fixer(nn.Module):
         # return dict, 'x' is not touched
         return x
 
-class global_energy_fixer(nn.Module):
+class GlobalEnergyFixer(nn.Module):
     '''
     This module applys global energy conservation fixes. The output ensures that the global sum
     of total energy in the atmosphere is balanced by radiantion and energy fluxes at the top of 
