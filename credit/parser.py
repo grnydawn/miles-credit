@@ -329,7 +329,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
 
     # --------------------------------------------------------------------- #
     # tracer fixer
-    flag_tracer = conf['model']['post_conf']['tracer_fixer']['activate']
+    flag_tracer = conf['model']['post_conf']['activate'] and conf['model']['post_conf']['tracer_fixer']['activate']
     
     if flag_tracer:
         # when tracer fixer is on, get tensor indices of tracers
@@ -357,7 +357,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         
     # --------------------------------------------------------------------- #
     # global mass fixer
-    flag_mass = conf['model']['post_conf']['global_mass_fixer']['activate']
+    flag_mass = conf['model']['post_conf']['activate'] and conf['model']['post_conf']['global_mass_fixer']['activate']
     
     if flag_mass:
         # when global mass fixer is on, get tensor indices of q, precip, evapor 
@@ -396,7 +396,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         
     # --------------------------------------------------------------------- #
     # global energy fixer
-    flag_energy = conf['model']['post_conf']['global_energy_fixer']['activate']
+    flag_energy = conf['model']['post_conf']['activate'] and conf['model']['post_conf']['global_energy_fixer']['activate']
     
     if flag_energy:
         # when global energy fixer is on, get tensor indices of energy components
