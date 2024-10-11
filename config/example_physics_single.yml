@@ -13,7 +13,7 @@ data:
     save_loc: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_1deg/all_in_one/ERA5_plevel_1deg_6h_*_conserve.zarr'
     
     # surface variables
-    surface_variables: ['MSL', 'VAR_2T']
+    surface_variables: ['MSL', 'VAR_2T', 'SKT']
     save_loc_surface: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_1deg/all_in_one/ERA5_plevel_1deg_6h_*_conserve.zarr'
     
     # dynamic forcing variables
@@ -73,7 +73,9 @@ data:
     static_first: True
     
     sst_forcing:
-        activate: False
+        activate: True
+        varname_skt: 'SKT'
+        varname_ocean_mask: 'land_sea_CI_mask'
 
 trainer:
     type: standard # <---------- change to your type
@@ -133,7 +135,7 @@ model:
     image_width: 360        # number of longitude grids
     levels: 37               # number of upper-air variable levels
     channels: 5              # upper-air variable channels
-    surface_channels: 2      # surface variable channels
+    surface_channels: 3      # surface variable channels
     input_only_channels: 4   # dynamic forcing, forcing, static channels
     output_only_channels: 9  # diagnostic variable channels
     
