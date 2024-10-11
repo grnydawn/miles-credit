@@ -3,7 +3,7 @@ postblock.py
 -------------------------------------------------------
 Content:
     - PostBlock
-    - tracer_fixer
+    - TracerFixer
     - GlobalMassFixer
     - GlobalEnergyFixer
     - SKEBS
@@ -36,8 +36,9 @@ class PostBlock(nn.Module):
             This class is a wrapper for all post-model operations.
             Registered modules:
                 - SKEBS
-                - tracer_fixer
+                - TracerFixer
                 - GlobalMassFixer
+                - GlobalEnergyFixer
                 
         """
         super().__init__()
@@ -49,7 +50,7 @@ class PostBlock(nn.Module):
         
         # negative tracer fixer
         if post_conf['tracer_fixer']['activate']:
-            opt = tracer_fixer(post_conf)
+            opt = TracerFixer(post_conf)
             self.operations.append(opt)
             
         # stochastic kinetic energy backscattering (SKEB)
@@ -78,7 +79,7 @@ class PostBlock(nn.Module):
             # if output is not a dict (assuming tensor), return x
             return x
 
-class tracer_fixer(nn.Module):
+class TracerFixer(nn.Module):
     '''
     This module fixes tracer values by replacing their values to a given threshold 
     (e.g., `tracer[tracer<thres] = thres`).
