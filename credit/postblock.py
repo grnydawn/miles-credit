@@ -204,6 +204,10 @@ class GlobalMassFixer(nn.Module):
         x_input = x['x']
         y_pred = x["y_pred"]
 
+        # detach x_input
+        x_input = x_input.detach().to(y_pred.device)
+
+        # other needed inputs
         N_vars = y_pred.shape[1]
         
         # if denorm is needed
@@ -259,7 +263,7 @@ class GlobalMassFixer(nn.Module):
         
         # total water content (batch, var, time, lat, lon)
         TWC_input = self.core_compute.total_column_water(q_input)
-        TWC_pred = self.core_compute.total_column_water(q_pred)  # Use corrected q_pred
+        TWC_pred = self.core_compute.total_column_water(q_pred)
         
         dTWC_dt = (TWC_pred - TWC_input) / self.N_seconds
         
@@ -393,6 +397,10 @@ class GlobalEnergyFixer(nn.Module):
         x_input = x['x']
         y_pred = x["y_pred"]
 
+        # detach x_input
+        x_input = x_input.detach().to(y_pred.device)
+
+        # other needed inputs
         GPH_surf = self.GPH_surf.to(y_pred.device)
         N_vars = y_pred.shape[1]
         
