@@ -1,6 +1,6 @@
 import torch
 from credit.postblock import PostBlock
-from credit.postblock import SKEBS, tracer_fixer, GlobalMassFixer, GlobalEnergyFixer
+from credit.postblock import SKEBS, TracerFixer, GlobalMassFixer, GlobalEnergyFixer
 
 def test_SKEBS_rand():
     image_width = 100
@@ -20,10 +20,10 @@ def test_SKEBS_rand():
 
     assert y_pred.shape == input_tensor.shape
 
-def test_tracer_fixer_rand():
+def test_TracerFixer_rand():
     '''
     This function provides a functionality test on 
-    tracer_fixer at credit.postblock
+    TracerFixer at credit.postblock
     '''
     
     # initialize post_conf, turn-off other blocks
@@ -39,13 +39,12 @@ def test_tracer_fixer_rand():
     # a random tensor with neg values
     input_tensor = -999*torch.randn((1, 1, 10, 10))
 
-    # initialize postblock for 'tracer_fixer' only
+    # initialize postblock for 'TracerFixer' only
     postblock = PostBlock(**conf)
 
-    # verify that tracer_fixer is registered in the postblock
-    assert any([isinstance(module, tracer_fixer) for module in postblock.modules()])
-
-    # that tracer_fixer run
+    # verify that TracerFixer is registered in the postblock
+    assert any([isinstance(module, TracerFixer) for module in postblock.modules()])
+    
     input_dict = {'y_pred': input_tensor}
     output_tensor = postblock(input_dict)
 
