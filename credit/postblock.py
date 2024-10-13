@@ -50,6 +50,7 @@ class PostBlock(nn.Module):
         
         # negative tracer fixer
         if post_conf['tracer_fixer']['activate']:
+            logger.info('TracerFixer registered')
             opt = TracerFixer(post_conf)
             self.operations.append(opt)
             
@@ -60,11 +61,13 @@ class PostBlock(nn.Module):
             
         # global mass fixer
         if post_conf['global_mass_fixer']['activate']:
+            logger.info('GlobalMassFixer registered')
             opt = GlobalMassFixer(post_conf)
             self.operations.append(opt)
 
         # global energy fixer
         if post_conf['global_energy_fixer']['activate']:
+            logger.info('GlobalEnergyFixer registered')
             opt = GlobalEnergyFixer(post_conf)
             self.operations.append(opt)
 
