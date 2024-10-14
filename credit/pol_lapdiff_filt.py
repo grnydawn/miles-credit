@@ -1,5 +1,7 @@
 import numpy as np
 import torch
+import torch.nn as nn
+import torch.fft as fft
 # from scipy.ndimage import convolve
 #import windspharm
 #from windspharm.standard import VectorWind
@@ -372,27 +374,29 @@ class Diffusion_and_Pole_Filter:
         BBfix = BB2_tensor.clone().to(self.device)  # Ensure it's on the same device as needed
     
         # Apply filters directly on slices of 'BBfix' without additional unnecessary cloning.
-        BBfix[:15], BBfix[15:30] = self.polefilt_lap2d_V2(BBfix[:15], BBfix[15:30], substeps=6)
-        BBfix[30:45] = self.polefilt_lap2d_V1(BBfix[30:45], substeps=5)
-        BBfix[45:60] = self.polefilt_lap2d_QV1(BBfix[45:60], substeps=8)
+        BBfix[:16], BBfix[16:32] = self.polefilt_lap2d_V2(BBfix[:16], BBfix[16:32], substeps=6)
+        BBfix[32:48] = self.polefilt_lap2d_V1(BBfix[32:48], substeps=5)
+        BBfix[48:64] = self.polefilt_lap2d_QV1(BBfix[48:64], substeps=8)
         
         # Since BB2_tensor[61], BB2_tensor[63], and BB2_tensor[62] are mentioned,
         # it seems there might have been a typo in the original indices given.
         # Adjusting indices based on the sequence and assuming BB2_tensor should not skip indices
         # Also, correcting indices based on the order and avoiding overwriting without reading first
-        T2m = self.polefilt_lap2d_V1(BB2_tensor[61].clone().to(self.device), substeps=5)
-        U500, V500 = self.polefilt_lap2d_V2(BB2_tensor[63].clone().to(self.device), BB2_tensor[62].clone().to(self.device), substeps=6)
-        T500 = self.polefilt_lap2d_V1(BB2_tensor[64].clone().to(self.device), substeps=5)
+        SP = self.polefilt_lap2d_V1(BB2_tensor[64].clone().to(self.device), substeps=5)
+        T2m = self.polefilt_lap2d_V1(BB2_tensor[65].clone().to(self.device), substeps=5)
+        U500, V500 = self.polefilt_lap2d_V2(BB2_tensor[67].clone().to(self.device), BB2_tensor[66].clone().to(self.device), substeps=6)
+        T500 = self.polefilt_lap2d_V1(BB2_tensor[68].clone().to(self.device), substeps=5)
         # Assuming Q500 should use BB2_tensor[64] if we're following sequential order
-        Q500 = self.polefilt_lap2d_QV1(BB2_tensor[66].clone().to(self.device), substeps=4)
+        Q500 = self.polefilt_lap2d_QV1(BB2_tensor[69].clone().to(self.device), substeps=4)
     
         # Update BBfix with the results of filtering operations
-        BBfix[61] = T2m
+        BBfix[64] = SP
+        BBfix[65] = T2m
         # Ensure the order of assignment does not overwrite any needed value
-        BBfix[63] = U500
-        BBfix[62] = V500
-        BBfix[64] = T500
-        BBfix[66] = Q500  # Assuming the corrected index is 64 for Q500
+        BBfix[67] = U500
+        BBfix[66] = V500
+        BBfix[68] = T500
+        BBfix[69] = Q500  # Assuming the corrected index is 64 for Q500
     
         return BBfix
 
