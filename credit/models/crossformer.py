@@ -317,7 +317,7 @@ class CrossFormer(BaseModel):
         attn_dropout=0.,
         ff_dropout=0.,
         use_spectral_norm=True,
-        boundary_padding={'activate': False}
+        boundary_padding={'activate': False},
         post_conf={"use_skebs": False},
         **kwargs
     ):
