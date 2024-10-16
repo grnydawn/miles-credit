@@ -280,8 +280,6 @@ class Fuxi(BaseModel):
                  num_heads=8,
                  depth=48,
                  window_size=7,
-                 pad_lon=80,
-                 pad_lat=80,
                  use_spectral_norm=True,
                  interp=True,
                  padding_conf={'activate': False},
@@ -289,8 +287,23 @@ class Fuxi(BaseModel):
                  **kwargs):
 
         super().__init__()
+
+        self.use_interp = interp
+        self.use_spectral_norm = use_spectral_norm
+        self.use_padding =  padding_conf['activate']
+        self.use_post_block = post_conf['activate']
+        
         # input tensor size (time, lat, lon)
-        img_size = (frames, image_height + 2 * pad_lat, image_width + 2 * pad_lon)
+        if self.use_padding:
+            pad_lat = padding_conf['pad_lat']
+            pad_lon = padding_conf['pad_lon']
+            image_height_pad = image_height + pad_lat[0] + pad_lat[1]
+            image_width_pad = image_width + pad_lon[0] + pad_lon[1]
+            img_size = (frames, image_height_pad, image_width_pad)
+            self.img_size_original = (frames, image_height, image_width)
+        else:
+            img_size = (frames, image_height, image_width)
+            self.img_size_original = img_size
 
         # the size of embedded patches
         patch_size = (frame_patch_size, patch_height, patch_width)
@@ -303,6 +316,7 @@ class Fuxi(BaseModel):
         
         # input resolution = number of embedded patches / 2
         # divide by two because "u_trasnformer" has a down-sampling block
+        
         input_resolution = round(img_size[1] / patch_size[1] / 2), round(img_size[2] / patch_size[2] / 2)
         # FuXi cube embedding layer
         self.cube_embedding = CubeEmbedding(img_size, patch_size, in_chans, dim)
@@ -324,13 +338,6 @@ class Fuxi(BaseModel):
         self.surface_channels = surface_channels
         self.levels = levels
 
-        self.pad_lon = pad_lon
-        self.pad_lat = pad_lat
-        self.use_interp = interp
-        self.use_spectral_norm = use_spectral_norm
-        self.use_padding =  padding_conf['activate']
-        self.use_post_block = post_conf['activate']
-
         if self.use_padding:
             self.padding_opt = TensorPadding(padding_conf)
         
@@ -348,10 +355,10 @@ class Fuxi(BaseModel):
         # copy tensor to feed into postblock later
         if self.use_post_block:  
             x_copy = x.clone().detach()
-
+        print(x.shape)
         if self.use_padding:
             x = self.padding_opt.pad(x)
-            
+        print(x.shape)
         # Tensor dims: Batch, Variables, Time, Lat grids, Lon grids
         B, _, _, _, _ = x.shape
 
@@ -383,6 +390,7 @@ class Fuxi(BaseModel):
             x = self.padding_opt.unpad(x)
             
         if self.use_interp:
+            img_size = list(self.img_size_original)
             x = F.interpolate(x, size=img_size[1:], mode="bilinear")
             
         x = x.unsqueeze(2)
