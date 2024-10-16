@@ -413,15 +413,16 @@ class Fuxi(BaseModel):
         # if lat/lon grids (i.e., img_size) cannot be divided by the patche size completely
         # this will preserve the output size
         x = F.interpolate(x, size=img_size[1:], mode="bilinear")
-
+        # unfold the time dimension
+        x = x.unsqueeze(2)
+        
         if self.use_post_block:
             x = {
                 "y_pred": x,
                 "x": x_copy,
             }
-            x = self.postblock(x)        
-        # unfold the time dimension
-        return x.unsqueeze(2)
+            x = self.postblock(x)
+        return x
 
 
 if __name__ == "__main__":

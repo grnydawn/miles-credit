@@ -101,19 +101,20 @@ class physics_pressure_level:
             Pressure level integrals of q
         '''
         num_dims = len(q_mid.shape)
+        delta_p = self.pressure_thickness.to(q_mid.device)
         
         if num_dims == 5:  # (batch_size, level, time, latitude, longitude)
-            delta_p = self.pressure_thickness.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+            delta_p = delta_p.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
             q_area = q_mid * delta_p
             q_trapz = torch.sum(q_area, dim=1)
         
         elif num_dims == 4:  # (batch_size, level, latitude, longitude) or (time, level, latitude, longitude)
-            delta_p = self.pressure_thickness.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+            delta_p = delta_p.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
             q_area = q_mid * delta_p
             q_trapz = torch.sum(q_area, dim=1)
         
         elif num_dims == 3:  # (level, latitude, longitude)
-            delta_p = self.pressure_thickness.unsqueeze(-1).unsqueeze(-1)  # Expand for broadcasting
+            delta_p = delta_p.unsqueeze(-1).unsqueeze(-1)  # Expand for broadcasting
             q_area = q_mid * delta_p
             q_trapz = torch.sum(q_area, dim=0)
         
@@ -131,8 +132,7 @@ class physics_pressure_level:
         so it can calculate integrals of a subset of levels
         '''
         num_dims = len(q_mid.shape)
-
-        delta_p = self.pressure_thickness[ind_start:ind_end]
+        delta_p = self.pressure_thickness[ind_start:ind_end].to(q_mid.device)
         
         if num_dims == 5:  # (batch_size, time, level, latitude, longitude)
             delta_p = delta_p.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
@@ -168,19 +168,20 @@ class physics_pressure_level:
             Pressure level integrals of q
         '''
         num_dims = len(q.shape)
+        delta_p = self.pressure_thickness.to(q.device)
         
         if num_dims == 5:  # (batch_size, level, time, latitude, longitude)
-            delta_p = self.pressure_thickness.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+            delta_p = delta_p.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
             q_area = 0.5 * (q[:, :-1, :, :, :] + q[:, 1:, :, :, :]) * delta_p
             q_trapz = torch.sum(q_area, dim=1)
         
         elif num_dims == 4:  # (batch_size, level, latitude, longitude) or (time, level, latitude, longitude)
-            delta_p = self.pressure_thickness.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
+            delta_p = delta_p.unsqueeze(0).unsqueeze(-1).unsqueeze(-1)
             q_area = 0.5 * (q[:, :-1, :, :] + q[:, 1:, :, :]) * delta_p  # Trapezoidal rule
             q_trapz = torch.sum(q_area, dim=1)
         
         elif num_dims == 3:  # (level, latitude, longitude)
-            delta_p = self.pressure_thickness.unsqueeze(-1).unsqueeze(-1)  # Expand for broadcasting
+            delta_p = delta_p.unsqueeze(-1).unsqueeze(-1)  # Expand for broadcasting
             q_area = 0.5 * (q[:-1, :, :] + q[1:, :, :]) * delta_p
             q_trapz = torch.sum(q_area, dim=0)
         
@@ -198,8 +199,7 @@ class physics_pressure_level:
         so it can calculate integrals of a subset of levels
         '''
         num_dims = len(q.shape)
-
-        delta_p = self.upper_air_pressure[ind_start:ind_end].diff(dim=-1)
+        delta_p = self.upper_air_pressure[ind_start:ind_end].diff(dim=-1).to(q.device)
         
         if num_dims == 5:  # (batch_size, level, time, latitude, longitude)
             delta_p = delta_p.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
@@ -240,7 +240,7 @@ class physics_pressure_level:
         Returns:
             Weighted sum (PyTorch tensor)
         '''
-        q_w = q * self.area
+        q_w = q * self.area.to(q.device)
         q_sum = torch.sum(q_w, dim=axis, keepdim=keepdims)
         return q_sum
 

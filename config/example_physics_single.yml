@@ -4,33 +4,42 @@
 # The model is trained on hourly model-level ERA5 data with top solar irradiance, geopotential, and land-sea mask inputs
 # Output variables: model level [U, V, T, Q], single level [SP, t2m], and 500 hPa [U, V, T, Z, Q]
 # --------------------------------------------------------------------------------------------------------------------- #
-save_loc: '/glade/work/$USER/CREDIT_runs/fuxi_physics_base/'
+save_loc: '/glade/work/$USER/CREDIT_runs/fuxi_conserve/'
 seed: 1000
 
 data:
     # upper-air variables
-    variables: ['specific_total_water']
-    save_loc: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/all_in_one/ERA5_plevel_6h_*zarr'
+    variables: ['U', 'V', 'T', 'Z', 'specific_total_water']
+    save_loc: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_1deg/all_in_one/ERA5_plevel_1deg_6h_*_conserve.zarr'
     
     # surface variables
-    surface_variables: ['SKT']
-    save_loc_surface: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/all_in_one/ERA5_plevel_6h_*zarr'
+    surface_variables: ['MSL', 'VAR_2T', 'SKT']
+    save_loc_surface: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_1deg/all_in_one/ERA5_plevel_1deg_6h_*_conserve.zarr'
     
     # dynamic forcing variables
     dynamic_forcing_variables: ['toa_incident_solar_radiation', 'land_sea_CI_mask']
-    save_loc_dynamic_forcing: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/all_in_one/ERA5_plevel_6h_*zarr'
+    save_loc_dynamic_forcing: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_1deg/all_in_one/ERA5_plevel_1deg_6h_*_conserve.zarr'
     
     # diagnostic variables
-    diagnostic_variables: ['total_precipitation'] 
-    save_loc_diagnostic: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/all_in_one/ERA5_plevel_6h_*zarr'
+    diagnostic_variables: ['evaporation', 'total_precipitation', 'TCC',
+                           'surface_net_solar_radiation',
+                           'surface_net_thermal_radiation',
+                           'surface_sensible_heat_flux',
+                           'surface_latent_heat_flux',
+                           'top_net_solar_radiation',
+                           'top_net_thermal_radiation']
+    save_loc_diagnostic: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_1deg/all_in_one/ERA5_plevel_1deg_6h_*_conserve.zarr'
     
     # static variables
-    static_variables: ['z_norm'] 
-    save_loc_static: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/static/ERA5_plevel_6h_static.zarr'
+    static_variables: ['z_norm', 'soil_type'] 
+    save_loc_static: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_1deg/static/ERA5_plevel_1deg_6h_conserve_static.zarr'
+
+    # physics file
+    save_loc_physics: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_1deg/static/ERA5_plevel_1deg_6h_conserve_static.zarr'
     
     # mean / std path
-    mean_path: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/mean_std/mean_6h_1979_2019_13lev_0.25deg.nc'
-    std_path: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/mean_std/std_residual_6h_1979_2019_13lev_0.25deg.nc'
+    mean_path: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_1deg/mean_std/mean_6h_1979_2019_conserve_1deg.nc'
+    std_path: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_1deg/mean_std/std_residual_6h_1979_2019_conserve_1deg.nc'
     
     # train / validation split
     train_years: [1979, 2019]
@@ -79,14 +88,14 @@ trainer:
     load_optimizer: False
     load_scaler: False
     load_sheduler: False
-
+    num_epoch: 2
+    
     skip_validation: False
     update_learning_rate: False
     
     save_backup_weights: True
     save_best_weights: True
-
-    save_metric_vars: ['Z500', 'total_precipitation']
+    save_metric_vars: ['Z_21', 'specific_total_water_30', 'total_precipitation']
     
     learning_rate: 1.0e-03 # <-- change to your lr
     weight_decay: 0
@@ -94,14 +103,14 @@ trainer:
     train_batch_size: 1
     valid_batch_size: 1
     
-    batches_per_epoch: 3
-    valid_batches_per_epoch: 3
+    batches_per_epoch: 2
+    valid_batches_per_epoch: 1
     stopping_patience: 50
     
     start_epoch: 0
-    num_epoch: 2
+
     reload_epoch: True
-    epochs: &epochs 70
+    epochs: &epochs 100
     
     use_scheduler: True
     scheduler: {'scheduler_type': 'cosine-annealing', 'T_max': *epochs,  'last_epoch': -1}
@@ -122,29 +131,29 @@ model:
     type: "fuxi"
     
     frames: 2                # number of input states
-    image_height: 721        # number of latitude grids
-    image_width: 1440        # number of longitude grids
-    levels: 13               # number of upper-air variable levels
-    channels: 1              # upper-air variable channels
-    surface_channels: 1      # surface variable channels
-    input_only_channels: 3   # dynamic forcing, forcing, static channels
-    output_only_channels: 1  # diagnostic variable channels
+    image_height: 181        # number of latitude grids
+    image_width: 360        # number of longitude grids
+    levels: 37               # number of upper-air variable levels
+    channels: 5              # upper-air variable channels
+    surface_channels: 3      # surface variable channels
+    input_only_channels: 4   # dynamic forcing, forcing, static channels
+    output_only_channels: 9  # diagnostic variable channels
     
     # patchify layer
-    patch_height: 16         # number of latitude grids in each 3D patch
-    patch_width: 16          # number of longitude grids in each 3D patch
+    patch_height: 32         # number of latitude grids in each 3D patch
+    patch_width: 32          # number of longitude grids in each 3D patch
     frame_patch_size: 2     # number of input states in each 3D patch
     
     # hidden layers
-    dim: 64                 # dimension (default: 1536)
-    num_groups: 2           # number of groups (default: 32)
-    num_heads: 2            # number of heads (default: 8)
+    dim: 128               # dimension (default: 1536)
+    num_groups: 2          # number of groups (default: 32)
+    num_heads: 8            # number of heads (default: 8)
     window_size: 7          # window size (default: 7)
-    depth: 4                # number of swin transformers (default: 48)
+    depth: 2               # number of swin transformers (default: 48)
     
     # map boundary padding
-    pad_lon: 80             # number of grids to pad on 0 and 360 deg lon
-    pad_lat: 80             # number of grids to pad on -90 and 90 deg lat
+    pad_lon: 40             # number of grids to pad on 0 and 360 deg lon
+    pad_lat: 40             # number of grids to pad on -90 and 90 deg lat
     
     # use spectral norm
     use_spectral_norm: True
@@ -158,24 +167,32 @@ model:
         tracer_fixer:
             activate: True
             denorm: True
-            tracer_name: ['specific_total_water', 'total_precipitation']
+            tracer_name: ['specific_total_water', 'total_precipitation', 'TCC']
             tracer_thres: [0, 0, 0]
             
         global_mass_fixer:
-            activate: False
+            activate: True
+            simple_demo: False
             denorm: True
+            midpoint: False
+            fix_level_num: 14
+            lon_lat_level_name: ['lon2d', 'lat2d', 'p_level']
             specific_total_water_name: ['specific_total_water']
             precipitation_name: ['total_precipitation']
             evaporation_name: ['evaporation']
             
         global_energy_fixer:
-            activate: False
+            activate: True
+            simple_demo: False
             denorm: True
+            midpoint: False
+            lon_lat_level_name: ['lon2d', 'lat2d', 'p_level']
             air_temperature_name: ['T']
             specific_total_water_name: ['specific_total_water']
             u_wind_name: ['U']
             v_wind_name: ['V']
-            surface_geopotential_name: ['z_norm']
+            lon_lat_level_name: ['lon2d', 'lat2d', 'p_level']
+            surface_geopotential_name: ['geopotential_at_surface']
             TOA_net_radiation_flux_name: ['top_net_solar_radiation', 'top_net_thermal_radiation']
             surface_net_radiation_flux_name: ['surface_net_solar_radiation', 'surface_net_thermal_radiation']
             surface_energy_flux_name: ['surface_sensible_heat_flux', 'surface_latent_heat_flux',]
@@ -190,7 +207,7 @@ loss:
     
     # use latitude weighting
     use_latitude_weights: True
-    latitude_weights: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_base/static/ERA5_plevel_6h_static.zarr'
+    latitude_weights: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_plevel_1deg/static/ERA5_plevel_1deg_6h_conserve_static.zarr'
     
     # turn-off variable weighting
     use_variable_weights: False

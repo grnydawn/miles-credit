@@ -329,7 +329,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
 
     # --------------------------------------------------------------------- #
     # tracer fixer
-    flag_tracer = conf['model']['post_conf']['tracer_fixer']['activate']
+    flag_tracer = conf['model']['post_conf']['activate'] and conf['model']['post_conf']['tracer_fixer']['activate']
     
     if flag_tracer:
         # when tracer fixer is on, get tensor indices of tracers
@@ -357,14 +357,23 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         
     # --------------------------------------------------------------------- #
     # global mass fixer
-    flag_mass = conf['model']['post_conf']['global_mass_fixer']['activate']
+    flag_mass = conf['model']['post_conf']['activate'] and conf['model']['post_conf']['global_mass_fixer']['activate']
     
     if flag_mass:
         # when global mass fixer is on, get tensor indices of q, precip, evapor 
         # these variables must be outputs
         
-        # global mass fixer runs on de-normalized variables by default
+        # global mass fixer defaults
         conf['model']['post_conf']['global_mass_fixer'].setdefault('denorm', True)
+        conf['model']['post_conf']['global_mass_fixer'].setdefault('simple_demo', False)
+        conf['model']['post_conf']['global_mass_fixer'].setdefault('midpoint', False)
+
+        assert 'fix_level_num' in conf['model']['post_conf']['global_mass_fixer'], (
+            'Must specifiy what level to fix on specific total water')
+
+        if conf['model']['post_conf']['global_mass_fixer']['simple_demo'] is False:
+            assert 'lon_lat_level_name' in conf['model']['post_conf']['global_mass_fixer'], (
+                'Must specifiy var names for lat/lon/level in physics reference file')
         
         q_inds = [
             i_var for i_var, var in enumerate(varname_output) 
@@ -387,13 +396,20 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         
     # --------------------------------------------------------------------- #
     # global energy fixer
-    flag_energy = conf['model']['post_conf']['global_energy_fixer']['activate']
+    flag_energy = conf['model']['post_conf']['activate'] and conf['model']['post_conf']['global_energy_fixer']['activate']
+    
     if flag_energy:
         # when global energy fixer is on, get tensor indices of energy components
         # geopotential at surface is input, others are outputs
-
-        # global energy fixer runs on de-normalized variables by default
+        
+        # global energy fixer defaults
         conf['model']['post_conf']['global_energy_fixer'].setdefault('denorm', True)
+        conf['model']['post_conf']['global_energy_fixer'].setdefault('simple_demo', False)
+        conf['model']['post_conf']['global_energy_fixer'].setdefault('midpoint', False)
+        
+        if conf['model']['post_conf']['global_mass_fixer']['simple_demo'] is False:
+            assert 'lon_lat_level_name' in conf['model']['post_conf']['global_energy_fixer'], (
+                'Must specifiy var names for lat/lon/level in physics reference file')
         
         T_inds = [
             i_var for i_var, var in enumerate(varname_output) 
@@ -415,10 +431,10 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             if var in conf['model']['post_conf']['global_energy_fixer']['v_wind_name']
         ]
         
-        Phi_inds = [
-            i_var for i_var, var in enumerate(varname_input) 
-            if var in conf['model']['post_conf']['global_energy_fixer']['surface_geopotential_name']
-        ]
+        # Phi_inds = [
+        #     i_var for i_var, var in enumerate(varname_input) 
+        #     if var in conf['model']['post_conf']['global_energy_fixer']['surface_geopotential_name']
+        # ]
         
         TOA_rad_inds = [
             i_var for i_var, var in enumerate(varname_output) 
@@ -439,7 +455,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         conf['model']['post_conf']['global_energy_fixer']['q_inds'] = q_inds
         conf['model']['post_conf']['global_energy_fixer']['U_inds'] = U_inds
         conf['model']['post_conf']['global_energy_fixer']['V_inds'] = V_inds
-        conf['model']['post_conf']['global_energy_fixer']['Phi_ind'] = Phi_inds[0]
+        #conf['model']['post_conf']['global_energy_fixer']['Phi_ind'] = Phi_inds[0]
         conf['model']['post_conf']['global_energy_fixer']['TOA_rad_inds'] = TOA_rad_inds
         conf['model']['post_conf']['global_energy_fixer']['surf_rad_inds'] = surf_rad_inds
         conf['model']['post_conf']['global_energy_fixer']['surf_flux_inds'] = surf_flux_inds
@@ -1186,7 +1202,3 @@ def predict_data_check(conf, print_summary=False):
         print("All input files, zscore files, and the lat/lon file share the same lat, lon, level coordinate name and values")
         
     return True
-
-
-
-
