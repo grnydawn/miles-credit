@@ -109,17 +109,12 @@ class TensorPadding:
         # pad along longitude (west-east)
         if any(p > 0 for p in self.pad_WE):
             pad_lon_left, pad_lon_right = self.pad_WE
-            x = F.pad(x, pad=(pad_lon_left, pad_lon_right, 0, 0, 0, 0), mode='circular')
+            x = F.pad(x, pad=(self.pad_WE[0], self.pad_WE[1], 0, 0, 0, 0), mode='circular')
 
         # pad along latitude (north-south)
         if any(p > 0 for p in self.pad_NS):
-            x_shape = x.shape  # (batch, var, time, lat, lon)
-            x = x.reshape(x_shape[0], x_shape[1] * x_shape[2], x_shape[3], x_shape[4])
-            pad_lat_top, pad_lat_bottom = self.pad_NS
-            x = F.pad(x, pad=(0, 0, pad_lat_top, pad_lat_bottom, 0, 0), mode='reflect')
-            new_lat = x_shape[3] + pad_lat_top + pad_lat_bottom
-            x = x.reshape(x_shape[0], x_shape[1], x_shape[2], new_lat, x_shape[4])
-
+            x = F.pad(x, pad=(0, 0, self.pad_NS[0], self.pad_NS[1], 0, 0), mode='reflect')
+            
         return x
 
     def _mirror_unpad(self, x):
@@ -134,20 +129,11 @@ class TensorPadding:
         '''
         # unpad along latitude (north-south)
         if any(p > 0 for p in self.pad_NS):
-            pad_lat_top, pad_lat_bottom = self.pad_NS
-            start_NS = pad_lat_top
-            end_NS = -pad_lat_bottom if pad_lat_bottom > 0 else None
-            x_shape = x.shape
-            x = x.reshape(x_shape[0], x_shape[1] * x_shape[2], x_shape[3], x_shape[4])
-            x = x[..., start_NS:end_NS, :]
-            new_lat = x.shape[2]
-            x = x.reshape(x_shape[0], x_shape[1], x_shape[2], new_lat, x_shape[4])
-
+            x = x[..., self.pad_NS[0]:-self.pad_NS[1], :]
+            
         # unpad along longitude (west-east)
         if any(p > 0 for p in self.pad_WE):
-            pad_lon_left, pad_lon_right = self.pad_WE
-            start_WE = pad_lon_left
-            end_WE = -pad_lon_right if pad_lon_right > 0 else None
-            x = x[..., :, start_WE:end_WE]
+            x = x[..., :, self.pad_WE[0]:-self.pad_WE[1]]
 
         return x
+

@@ -270,25 +270,25 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
     # conf['model'] section
     # ======================================================== #
     # padding opts
-    if 'boundary_padding' not in conf['model']:
+    if 'padding_conf' not in conf['model']:
         if ('pad_lon' in conf['model']) and ('pad_lat' in conf['model']):
             pad_lon = int(conf['model']['pad_lon'])
             pad_lat = int(conf['model']['pad_lat'])
-            conf['model']['boundary_padding'] = {'activate': True}
-            conf['model']['boundary_padding']['mode'] = 'mirror'
-            conf['model']['boundary_padding']['pad_lon'] = [pad_lon, pad_lon]
-            conf['model']['boundary_padding']['pad_lat'] = [pad_lat, pad_lat]
+            conf['model']['padding_conf'] = {'activate': True}
+            conf['model']['padding_conf']['mode'] = 'mirror'
+            conf['model']['padding_conf']['pad_lon'] = [pad_lon, pad_lon]
+            conf['model']['padding_conf']['pad_lat'] = [pad_lat, pad_lat]
     else:
-        if conf['model']['boundary_padding']['activate']:
-            pad_lon = conf['model']['boundary_padding']['pad_lon']
-            pad_lat = conf['model']['boundary_padding']['pad_lat']
+        if conf['model']['padding_conf']['activate']:
+            pad_lon = conf['model']['padding_conf']['pad_lon']
+            pad_lat = conf['model']['padding_conf']['pad_lat']
             if isinstance(pad_lon, int):
-                conf['model']['boundary_padding']['pad_lon'] = [pad_lon, pad_lon]
+                conf['model']['padding_conf']['pad_lon'] = [pad_lon, pad_lon]
             if isinstance(pad_lat, int):
-                conf['model']['boundary_padding']['pad_lat'] = [pad_lat, pad_lat]
+                conf['model']['padding_conf']['pad_lat'] = [pad_lat, pad_lat]
     
-    pad_lon = conf['model']['boundary_padding']['pad_lon']
-    pad_lat = conf['model']['boundary_padding']['pad_lat']
+    pad_lon = conf['model']['padding_conf']['pad_lon']
+    pad_lat = conf['model']['padding_conf']['pad_lat']
     assert all(p >= 0 for p in pad_lon), 'padding size for longitude dim must be non-negative.'
     assert all(p >= 0 for p in pad_lat), 'padding size for latitude dim must be non-negative.'
 
