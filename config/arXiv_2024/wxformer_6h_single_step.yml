@@ -99,35 +99,36 @@ trainer:
 model:
     # crossformer example
     type: "crossformer"
-    frames: 1                         # number of input states (default: 1)
-    image_height: 640                 # number of latitude grids (default: 640)
-    image_width: 1280                 # number of longitude grids (default: 1280)
-    levels: 16                        # number of upper-air variable levels (default: 15)
-    channels: 4                       # upper-air variable channels
-    surface_channels: 7               # surface variable channels
-    input_only_channels: 3            # dynamic forcing, forcing, static channels
-    output_only_channels: 0           # diagnostic variable channels
+    frames: 1                          # number of input states (default: 1)
+    image_height: 640                  # number of latitude grids (default: 640)
+    image_width: 1280                  # number of longitude grids (default: 1280)
+    levels: 16                         # number of upper-air variable levels (default: 15)
+    channels: 4                        # upper-air variable channels
+    surface_channels: 7                # surface variable channels
+    input_only_channels: 3             # dynamic forcing, forcing, static channels
+    output_only_channels: 0            # diagnostic variable channels
     
-    patch_width: 1                    # number of latitude grids in each 3D patch (default: 1)
-    patch_height: 1                   # number of longitude grids in each 3D patch (default: 1)
-    frame_patch_size: 1               # number of input states in each 3D patch (default: 1)
+    patch_width: 1                     # number of latitude grids in each 3D patch (default: 1)
+    patch_height: 1                    # number of longitude grids in each 3D patch (default: 1)
+    frame_patch_size: 1                # number of input states in each 3D patch (default: 1)
     
-    dim: [128, 256, 512, 1024]        # Dimensionality of each layer
-    depth: [2, 2, 8, 2]               # Depth of each layer
-    global_window_size: [10, 5, 2, 1] # Global window size for each layer
-    local_window_size: 10             # Local window size
-    cross_embed_kernel_sizes:         # kernel sizes for cross-embedding
+    dim: [128, 256, 512, 1024]         # Dimensionality of each layer
+    depth: [2, 2, 8, 2]                # Depth of each layer
+    global_window_size: [10, 5, 2, 1]  # Global window size for each layer
+    local_window_size: 10              # Local window size
+    cross_embed_kernel_sizes:          # kernel sizes for cross-embedding
     - [4, 8, 16, 32]
     - [2, 4]
     - [2, 4]
     - [2, 4]
-    cross_embed_strides: [2, 2, 2, 2] # Strides for cross-embedding (default: [4, 2, 2, 2])
-    attn_dropout: 0.                  # Dropout probability for attention layers (default: 0.0)
-    ff_dropout: 0.                    # Dropout probability for feed-forward layers (default: 0.0)
+    cross_embed_strides: [2, 2, 2, 2]  # Strides for cross-embedding (default: [4, 2, 2, 2])
+    attn_dropout: 0.                   # Dropout probability for attention layers (default: 0.0)
+    ff_dropout: 0.                     # Dropout probability for feed-forward layers (default: 0.0)
     
     # map boundary padding
-    pad_lon: 80             # number of grids to pad on 0 and 360 deg lon
-    pad_lat: 80             # number of grids to pad on -90 and 90 deg lat
+    pad_opt: "roll_invert_reflect_lat" #roll_invert_reflect_lat, reflect_lat, None
+    pad_lon: 80                        # number of grids to pad on 0 and 360 deg lon
+    pad_lat: 80                        # number of grids to pad on -90 and 90 deg lat
 
     use_spectral_norm: True
     

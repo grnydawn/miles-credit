@@ -8,7 +8,7 @@ from einops.layers.torch import Rearrange
 
 from credit.models.base_model import BaseModel
 from credit.postblock import PostBlock
-
+from credit.models.Padding_Periodic import  PeriodicLon_RotRefLat
 
 logger = logging.getLogger(__name__)
 
@@ -325,6 +325,7 @@ class CrossFormer(BaseModel):
         pad_lat=0,
         use_spectral_norm=True,
         post_conf={"activate": False},
+        pad_opt=None;
         **kwargs
     ):
         super().__init__()
@@ -345,6 +346,7 @@ class CrossFormer(BaseModel):
         self.levels = levels
         self.pad_lon = pad_lon
         self.pad_lat = pad_lat
+        self.pad_opt = pad_opt
         self.use_spectral_norm = use_spectral_norm
 
         # input channels
@@ -414,20 +416,57 @@ class CrossFormer(BaseModel):
         if self.use_post_block:  # copy tensor to feed into postBlock later
             x_copy = x.clone().detach()
 
-        if self.pad_lon > 0:
-            x = circular_pad1d(x, pad=self.pad_lon)
 
-        if self.pad_lat > 0:
-            x_shape = x.shape
+        if self.pad_opt == 'roll_invert_reflect_lat':
+        
+            if (self.pad_lon > 0) | (self.pad_lat > 0):
+                x_shape = x.shape
 
-            # Reshape the tensor to (B, C*2, lat, lon) using the values from x_shape
-            x = torch.reshape(x, (x_shape[0], x_shape[1] * x_shape[2], x_shape[3], x_shape[4]))
+                # Reshape the tensor to (B, C*2, lat, lon) using the values from x_shape
+                x = torch.reshape(x, (x_shape[0], x_shape[1] * x_shape[2], x_shape[3], x_shape[4]))
+                
+                P_RR = PeriodicLon_RotRefLat(N_S=self.pad_lat, E_W=self.pad_lon)
 
-            # Pad the tensor with reflect mode
-            x = F.pad(x, (0, 0, self.pad_lat, self.pad_lat), mode='reflect')
+                # Pad the tensor with rolling lat and reflecting N/S, periodic in lon
+                x = P_RR(x)
+                
+                # Reshape the tensor back to (B, C, 2, new lat, lon) using the values from x_shape
+                #assumes padding is symmetric 
+                x = torch.reshape(x, (x_shape[0], x_shape[1], x_shape[2], x_shape[3] + 2*self.pad_lat + 2*self.pad_lon, x_shape[4]))
+        
+        elif self.pad_opt == 'reflect_lat': 
 
-            # Reshape the tensor back to (B, C, 2, new lat, lon) using the values from x_shape
-            x = torch.reshape(x, (x_shape[0], x_shape[1], x_shape[2], x_shape[3] + 2 * self.pad_lat, x_shape[4]))
+            if self.pad_lon > 0:
+                x = circular_pad1d(x, pad=self.pad_lon)
+    
+            if self.pad_lat > 0:
+                x_shape = x.shape
+    
+                # Reshape the tensor to (B, C*2, lat, lon) using the values from x_shape
+                x = torch.reshape(x, (x_shape[0], x_shape[1] * x_shape[2], x_shape[3], x_shape[4]))
+    
+                # Pad the tensor with reflect mode
+                x = F.pad(x, (0, 0, self.pad_lat, self.pad_lat), mode='reflect')
+    
+                # Reshape the tensor back to (B, C, 2, new lat, lon) using the values from x_shape
+                x = torch.reshape(x, (x_shape[0], x_shape[1], x_shape[2], x_shape[3] + 2 * self.pad_lat, x_shape[4]))
+        else: 
+            
+            if self.pad_lon > 0:
+                x = circular_pad1d(x, pad=self.pad_lon)
+    
+            if self.pad_lat > 0:
+                x_shape = x.shape
+    
+                # Reshape the tensor to (B, C*2, lat, lon) using the values from x_shape
+                x = torch.reshape(x, (x_shape[0], x_shape[1] * x_shape[2], x_shape[3], x_shape[4]))
+    
+                # Pad the tensor with reflect mode
+                x = F.pad(x, (0, 0, self.pad_lat, self.pad_lat), mode='reflect')
+    
+                # Reshape the tensor back to (B, C, 2, new lat, lon) using the values from x_shape
+                x = torch.reshape(x, (x_shape[0], x_shape[1], x_shape[2], x_shape[3] + 2 * self.pad_lat, x_shape[4]))
+            
 
         if self.patch_width > 1 and self.patch_height > 1:
             x = self.cube_embedding(x)
@@ -458,7 +497,6 @@ class CrossFormer(BaseModel):
             # Slice to original size
             x = x[..., self.pad_lat:-self.pad_lat, :]
 
-        x = F.interpolate(x, size=(self.image_height, self.image_width), mode="bilinear")
         x = x.unsqueeze(2)
 
         # ------------------------------ #
