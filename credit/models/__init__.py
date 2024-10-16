@@ -3,9 +3,6 @@ import copy
 import logging
 from importlib.metadata import version
 
-import torch
-import torch.nn.functional as F
-
 # Import model classes
 from credit.models.crossformer import CrossFormer
 from credit.models.crossformer_may1 import CrossFormer as CrossFormerDep
@@ -50,7 +47,12 @@ def load_model(conf, load_weights=False):
 
     model_type = model_conf.pop("type")
 
+<<<<<<< HEAD
     if model_type in ('unet404',):
+=======
+    #if model_type == 'unet':
+    if model_type in ('unet', 'unet404'):
+>>>>>>> c1f3c01 (revert model init to the main branch state)
         import torch
         model, message = model_types[model_type]
         logger.info(message)
@@ -87,6 +89,7 @@ def load_model(conf, load_weights=False):
         raise ValueError(msg)
 
 
+<<<<<<< HEAD
 def earth_padding(x, pad_NS, pad_WE):
     '''
     Apply paddings on poles and longitude boundaries.
@@ -209,6 +212,8 @@ def mirror_unpad(x, pad_NS, pad_WE):
         x = x[..., :, start_WE:end_WE]
 
     return x
+=======
+>>>>>>> c1f3c01 (revert model init to the main branch state)
 # dont need an old timm version anymore https://github.com/qubvel/segmentation_models.pytorch/releases/tag/v0.3.3
 # def check_timm_version(model_type):
 #     if model_type == "unet":
