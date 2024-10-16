@@ -141,7 +141,74 @@ def earth_unpad(x, pad_NS, pad_WE):
 
     return x
 
+def mirror_padding(x, pad_NS, pad_WE):
+    '''
+    Applies padding to the tensor x along latitude and longitude dimensions.
+    Uses 'reflect' mode for latitude (north-south) padding and 'circular' mode for longitude (east-west) padding.
 
+    Args:
+        x (torch.Tensor): Input tensor of shape (batch, var, time, lat, lon)
+        pad_NS (list[int]): [top_pad, bottom_pad] for latitude (north-south)
+        pad_WE (list[int]): [left_pad, right_pad] for longitude (east-west)
+
+    Returns:
+        torch.Tensor: Padded tensor
+    '''
+    # Pad along longitude (east-west)
+    if any(p > 0 for p in pad_WE):
+        pad_lon_left, pad_lon_right = pad_WE
+        # Pad the last dimension (longitude)
+        x = F.pad(x, pad=(pad_lon_left, pad_lon_right, 0, 0, 0, 0), mode='circular')
+    
+    # Pad along latitude (north-south)
+    if any(p > 0 for p in pad_NS):
+        # Reshape to combine var and time dimensions
+        x_shape = x.shape  # (batch, var, time, lat, lon)
+        x = x.reshape(x_shape[0], x_shape[1] * x_shape[2], x_shape[3], x_shape[4])
+        pad_lat_top, pad_lat_bottom = pad_NS
+        # Pad the height dimension (latitude)
+        x = F.pad(x, pad=(0, 0, pad_lat_top, pad_lat_bottom, 0, 0), mode='reflect')
+        # Reshape back to original shape with updated latitude dimension
+        new_lat = x_shape[3] + pad_lat_top + pad_lat_bottom
+        x = x.reshape(x_shape[0], x_shape[1], x_shape[2], new_lat, x_shape[4])
+    
+    return x
+
+def mirror_unpad(x, pad_NS, pad_WE):
+    '''
+    Removes the padding applied by mirror_padding to restore the original tensor size.
+
+    Args:
+        x (torch.Tensor): The padded tensor to unpad.
+        pad_NS (list[int]): [top_pad, bottom_pad] for latitude (north-south).
+        pad_WE (list[int]): [left_pad, right_pad] for longitude (east-west).
+
+    Returns:
+        torch.Tensor: The unpadded tensor with the original size.
+    '''
+    # Unpad along latitude (north-south)
+    if any(p > 0 for p in pad_NS):
+        pad_lat_top, pad_lat_bottom = pad_NS
+        start_NS = pad_lat_top
+        end_NS = -pad_lat_bottom if pad_lat_bottom > 0 else None
+        x_shape = x.shape
+        # Reshape to combine var and time dimensions
+        x = x.reshape(x_shape[0], x_shape[1] * x_shape[2], x_shape[3], x_shape[4])
+        # Slice along the latitude dimension
+        x = x[..., start_NS:end_NS, :]
+        # Reshape back to original shape with updated latitude dimension
+        new_lat = x.shape[2]
+        x = x.reshape(x_shape[0], x_shape[1], x_shape[2], new_lat, x_shape[4])
+
+    # Unpad along longitude (east-west)
+    if any(p > 0 for p in pad_WE):
+        pad_lon_left, pad_lon_right = pad_WE
+        start_WE = pad_lon_left
+        end_WE = -pad_lon_right if pad_lon_right > 0 else None
+        # Slice along the longitude dimension
+        x = x[..., :, start_WE:end_WE]
+
+    return x
 # dont need an old timm version anymore https://github.com/qubvel/segmentation_models.pytorch/releases/tag/v0.3.3
 # def check_timm_version(model_type):
 #     if model_type == "unet":
