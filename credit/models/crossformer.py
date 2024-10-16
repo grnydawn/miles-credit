@@ -325,7 +325,7 @@ class CrossFormer(BaseModel):
         pad_lat=0,
         use_spectral_norm=True,
         post_conf={"activate": False},
-        pad_opt=None;
+        pad_opt=None
         **kwargs
     ):
         super().__init__()
