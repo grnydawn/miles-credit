@@ -7,7 +7,7 @@ import logging
 
 from credit.postblock import PostBlock
 from credit.models.base_model import BaseModel
-
+from credit.boundary_padding import TensorPadding
 
 logger = logging.getLogger(__name__)
 
@@ -19,14 +19,6 @@ def apply_spectral_norm(model):
     for module in model.modules():
         if isinstance(module, (nn.Conv2d, nn.Linear, nn.ConvTranspose2d)):
             nn.utils.spectral_norm(module)
-
-
-def circular_pad1d(x, pad):
-    '''
-    Repeat the edge the map to fill the padded area
-    '''
-    return torch.cat((x[..., -pad:], x, x[..., :pad]), dim=-1)
-
 
 def get_pad3d(input_resolution, window_size):
     """
@@ -291,6 +283,8 @@ class Fuxi(BaseModel):
                  pad_lon=80,
                  pad_lat=80,
                  use_spectral_norm=True,
+                 interp=True,
+                 padding_conf={'activate': False},
                  post_conf={"activate": False},
                  **kwargs):
 
@@ -309,7 +303,6 @@ class Fuxi(BaseModel):
         
         # input resolution = number of embedded patches / 2
         # divide by two because "u_trasnformer" has a down-sampling block
-        # input_resolution = int(img_size[1] / patch_size[1] / 2), int(img_size[2] / patch_size[2] / 2)
         input_resolution = round(img_size[1] / patch_size[1] / 2), round(img_size[2] / patch_size[2] / 2)
         # FuXi cube embedding layer
         self.cube_embedding = CubeEmbedding(img_size, patch_size, in_chans, dim)
@@ -333,21 +326,21 @@ class Fuxi(BaseModel):
 
         self.pad_lon = pad_lon
         self.pad_lat = pad_lat
+        self.use_interp = interp
         self.use_spectral_norm = use_spectral_norm
+        self.use_padding =  padding_conf['activate']
+        self.use_post_block = post_conf['activate']
 
+        if self.use_padding:
+            self.padding_opt = TensorPadding(padding_conf)
+        
         if self.use_spectral_norm:
             logger.info("Adding spectral norm to all conv and linear layers")
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
             # Move the model to the device
             self.to(device)
             apply_spectral_norm(self)
-
-        if self.pad_lon > 0:
-            logger.info(f"Padding each longitudinal boundary with {self.pad_lon} pixels from the other side")
-        if self.pad_lat > 0:
-            logger.info(f"Padding each pole using a reflection with {self.pad_lat} pixels")
-
-        self.use_post_block = post_conf['activate']
+            
         if self.use_post_block:
             self.postblock = PostBlock(post_conf)
     
@@ -355,22 +348,10 @@ class Fuxi(BaseModel):
         # copy tensor to feed into postblock later
         if self.use_post_block:  
             x_copy = x.clone().detach()
+
+        if self.use_padding:
+            x = self.padding_opt.pad(x)
             
-        if self.pad_lon > 0:
-            x = circular_pad1d(x, pad=self.pad_lon)
-
-        if self.pad_lat > 0:
-            x_shape = x.shape
-
-            # Reshape the tensor to (B, C*2, lat, lon) using the values from x_shape
-            x = torch.reshape(x, (x_shape[0], x_shape[1] * x_shape[2], x_shape[3], x_shape[4]))
-
-            # Pad the tensor with reflect mode
-            x = F.pad(x, (0, 0, self.pad_lat, self.pad_lat), mode='reflect')
-
-            # Reshape the tensor back to (B, C, 2, new lat, lon) using the values from x_shape
-            x = torch.reshape(x, (x_shape[0], x_shape[1], x_shape[2], x_shape[3] + 2 * self.pad_lat, x_shape[4]))
-
         # Tensor dims: Batch, Variables, Time, Lat grids, Lon grids
         B, _, _, _, _ = x.shape
 
@@ -397,23 +378,13 @@ class Fuxi(BaseModel):
         # B, lat, patch_lat, lon, patch_lon, C
         x = x.reshape(B, Lat * patch_lat, Lon * patch_lon, self.out_chans)
         x = x.permute(0, 3, 1, 2)  # B C Lat Lon
-
-        img_size = list(self.img_size)
-        if self.pad_lon > 0:
-            # Slice to original size
-            x = x[..., self.pad_lon:-self.pad_lon]
-            img_size[2] -= 2 * self.pad_lon
-
-        if self.pad_lat > 0:
-            # Slice to original size
-            x = x[..., self.pad_lat:-self.pad_lat, :]
-            img_size[1] -= 2 * self.pad_lat
-
-        # bilinear interpolation
-        # if lat/lon grids (i.e., img_size) cannot be divided by the patche size completely
-        # this will preserve the output size
-        x = F.interpolate(x, size=img_size[1:], mode="bilinear")
-        # unfold the time dimension
+        
+        if self.use_padding:
+            x = self.padding_opt.unpad(x)
+            
+        if self.use_interp:
+            x = F.interpolate(x, size=img_size[1:], mode="bilinear")
+            
         x = x.unsqueeze(2)
         
         if self.use_post_block:
@@ -422,6 +393,7 @@ class Fuxi(BaseModel):
                 "x": x_copy,
             }
             x = self.postblock(x)
+            
         return x
 
 
@@ -446,8 +418,6 @@ if __name__ == "__main__":
     window_size = 7       # Window size (default: 7)
     depth = 8            # Depth of the swin transformer (default: 48)
     use_spectral_norm = True
-    pad_lon = 80
-    pad_lat = 80
     
     # ============================================================= #
     # build the model
@@ -467,8 +437,6 @@ if __name__ == "__main__":
         patch_width=patch_width,
         frame_patch_size=frame_patch_size,
         dim=dim,
-        pad_lat=pad_lat,
-        pad_lon=pad_lon,
         use_spectral_norm=use_spectral_norm,
         post_conf={"use_skebs": False}
     ).to("cuda")
