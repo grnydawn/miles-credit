@@ -285,17 +285,21 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             conf['model']['padding_conf']['pad_lat'] = [pad_lat, pad_lat]
     else:
         if conf['model']['padding_conf']['activate']:
+            
             pad_lon = conf['model']['padding_conf']['pad_lon']
             pad_lat = conf['model']['padding_conf']['pad_lat']
+            
             if isinstance(pad_lon, int):
                 conf['model']['padding_conf']['pad_lon'] = [pad_lon, pad_lon]
+                
             if isinstance(pad_lat, int):
                 conf['model']['padding_conf']['pad_lat'] = [pad_lat, pad_lat]
     
-    pad_lon = conf['model']['padding_conf']['pad_lon']
-    pad_lat = conf['model']['padding_conf']['pad_lat']
-    assert all(p >= 0 for p in pad_lon), 'padding size for longitude dim must be non-negative.'
-    assert all(p >= 0 for p in pad_lat), 'padding size for latitude dim must be non-negative.'
+            pad_lon = conf['model']['padding_conf']['pad_lon']
+            pad_lat = conf['model']['padding_conf']['pad_lat']
+            
+            assert all(p >= 0 for p in pad_lon), 'padding size for longitude dim must be non-negative.'
+            assert all(p >= 0 for p in pad_lat), 'padding size for latitude dim must be non-negative.'
 
     # ======================================================== #
     # postblock opts
