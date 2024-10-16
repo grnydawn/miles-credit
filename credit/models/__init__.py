@@ -3,6 +3,9 @@ import copy
 import logging
 from importlib.metadata import version
 
+import torch
+import torch.nn.functional as F
+
 # Import model classes
 from credit.models.crossformer import CrossFormer
 from credit.models.crossformer_may1 import CrossFormer as CrossFormerDep
@@ -83,6 +86,61 @@ def load_model(conf, load_weights=False):
         msg = f"Model type {model_type} not supported. Exiting."
         logger.warning(msg)
         raise ValueError(msg)
+
+
+def earth_padding(x, pad_NS, pad_WE):
+    '''
+    Apply paddings on poles and longitude boundaries.
+
+    Args:
+        x (torch.Tensor): The padded tensor to unpad.
+        pad_NS (list[int]): Padding sizes for the North-South (latitude) dimension [top, bottom].
+        pad_WE (list[int]): Padding sizes for the West-East (longitude) dimension [left, right].
+
+    Returns:
+        torch.Tensor: The unpadded tensor with the original size.
+    '''
+    
+    if any(p > 0 for p in pad_NS):
+        # 180-degree shift using half the longitude size
+        shift_size = int(x.shape[-1] // 2)
+        xroll = torch.roll(x, shifts=shift_size, dims=-1)
+    
+        # pad poles
+        xroll_flip_top = torch.flip(xroll[..., :pad_NS[0], :], (-2,))
+        xroll_flip_bot = torch.flip(xroll[..., -pad_NS[1]:, :], (-2,))
+        x = torch.cat([xroll_flip_top, x, xroll_flip_bot], dim=-2)
+    
+    if any(p > 0 for p in pad_WE):
+        x = F.pad(x, (pad_WE[0], pad_WE[1], 0, 0, 0, 0), mode='circular')
+
+    return x
+
+def earth_unpad(x, pad_NS, pad_WE):
+    '''
+    Removes the padding applied by earth_padding to restore the original tensor size.
+
+    Args:
+        x (torch.Tensor): The padded tensor to unpad.
+        pad_NS (list[int]): Padding sizes for the North-South (latitude) dimension [top, bottom].
+        pad_WE (list[int]): Padding sizes for the West-East (longitude) dimension [left, right].
+
+    Returns:
+        torch.Tensor: The unpadded tensor with the original size.
+    '''
+    # unpad along the lat dim
+    if any(p > 0 for p in pad_NS):
+        start_NS = pad_NS[0]
+        end_NS = -pad_NS[1] if pad_NS[1] > 0 else None
+        x = x[..., start_NS:end_NS, :]
+
+    # unpad along the lon dim
+    if any(p > 0 for p in pad_WE):
+        start_WE = pad_WE[0]
+        end_WE = -pad_WE[1] if pad_WE[1] > 0 else None
+        x = x[..., :, start_WE:end_WE]
+
+    return x
 
 
 # dont need an old timm version anymore https://github.com/qubvel/segmentation_models.pytorch/releases/tag/v0.3.3
