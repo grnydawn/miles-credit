@@ -141,7 +141,7 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
 
     export MPICH_RDMA_ENABLED_CUDA=1
     export NCCL_NET="AWS Libfabric"
-    export NCCL_NET_GDR_LEVEL=PHB
+    export NCCL_NET_GDR_LEVEL=PBH
 
     export FI_CXI_DISABLE_HOST_REGISTER=1
     export FI_CXI_OPTIMIZED_MRS=false
