@@ -131,8 +131,9 @@ model:
     ff_dropout: 0.                    # Dropout probability for feed-forward layers (default: 0.0)
     
     # map boundary padding
-    pad_lon: 80             # number of grids to pad on 0 and 360 deg lon
-    pad_lat: 80             # number of grids to pad on -90 and 90 deg lat
+    pad_opt: "roll_invert_reflect_lat" #roll_invert_reflect_lat, reflect_lat, None
+    pad_lon: 80                        # number of grids to pad on 0 and 360 deg lon
+    pad_lat: 80                        # number of grids to pad on -90 and 90 deg lat
 
     use_spectral_norm: True
     
