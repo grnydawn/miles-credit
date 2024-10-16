@@ -317,8 +317,8 @@ class CrossFormer(BaseModel):
         attn_dropout=0.,
         ff_dropout=0.,
         use_spectral_norm=True,
-        boundary_padding={'activate': False},
-        post_conf={"use_skebs": False},
+        padding_conf={'activate': False},
+        post_conf={"activate": False},
         **kwargs
     ):
         super().__init__()
@@ -337,8 +337,6 @@ class CrossFormer(BaseModel):
         self.channels = channels
         self.surface_channels = surface_channels
         self.levels = levels
-        self.pad_lon = pad_lon
-        self.pad_lat = pad_lat
         self.use_spectral_norm = use_spectral_norm
 
         # input channels
@@ -409,11 +407,10 @@ class CrossFormer(BaseModel):
             
         # =================================================================================== #
         # this block handles boundary padding
-        self.use_padding =  boundary_padding['activate']
+        self.use_padding =  padding_conf['activate']
         
         if self.use_padding:
-            logger.info('Boundary padding is applied')
-            self.padding_opt = TensorPadding(conf['boundary_padding'])
+            self.padding_opt = TensorPadding(padding_conf)
 
         # =================================================================================== #
         # This block handles I/O sizes that cannot be divcided by cross_embed_strides
@@ -441,14 +438,15 @@ class CrossFormer(BaseModel):
             self.image_height != self.image_height_adjust or 
             self.image_width != self.image_width_adjust
         ):
-            logger.info(
+            logger.infos(
                 'Configured input sizes before padding: ({} {}); acceptable input sizes before padding: ({} {}). '
                 'Bilinear interpolation will be used to handle the size differences'.format(
                     self.image_height, self.image_width, 
                     self.image_height_adjust, self.image_width_adjust
                 )
             )
-            
+
+        
         # define embedding layer using adjusted sizes
         # if the original sizes were good, adjusted sizes should == original sizes
         self.cube_embedding = CubeEmbedding(
@@ -467,14 +465,9 @@ class CrossFormer(BaseModel):
         if self.use_spectral_norm:
             logger.info("Adding spectral norm to all conv and linear layers")
             apply_spectral_norm(self)
-
-        if self.pad_lon > 0:
-            logger.info(f"Padding each longitudinal boundary with {self.pad_lon} pixels from the other side")
-        if self.pad_lat > 0:
-            logger.info(f"Padding each pole using a reflection with {self.pad_lat} pixels")
         
         
-        self.use_post_block = post_conf["use_skebs"] # or post_conf["use_lap"] etc
+        self.use_post_block = post_conf['activate']
         if self.use_post_block:
             self.postblock = PostBlock(post_conf)
 
@@ -507,7 +500,6 @@ class CrossFormer(BaseModel):
         
         if self.use_padding:
             x = self.padding_opt.pad(x)
-        
 
         if self.patch_width > 1 and self.patch_height > 1:
             x = self.cube_embedding(x)
@@ -560,45 +552,7 @@ class CrossFormer(BaseModel):
 
         return (k1 + 2 * k2 + 2 * k3 + k4) / 6
 
-
-
 if __name__ == "__main__":
-    # image_height = 192  # 640, 192
-    # image_width = 288  # 1280, 288
-    # levels = 15
-    # frames = 2
-    # channels = 4
-    # surface_channels = 7
-    # patch_height = 1
-    # patch_width = 1
-    # frame_patch_size = 2
-    # pad_lon=48
-    # pad_lat=48
-
-    # input_tensor = torch.randn(1, channels * levels + surface_channels, frames, image_height, image_width).to("cuda")
-
-    # model = CrossFormer(
-    #     image_height=image_height,
-    #     patch_height=patch_height,
-    #     image_width=image_width,
-    #     patch_width=patch_width,
-    #     frames=frames,
-    #     frame_patch_size=frame_patch_size,
-    #     channels=channels,
-    #     surface_channels=surface_channels,
-    #     levels=levels,
-    #     dim=(64, 128, 256, 512),
-    #     depth=(2, 2, 8, 2),
-    #     global_window_size=(4, 4, 2, 1),
-    #     local_window_size=3,
-    #     cross_embed_kernel_sizes=((4, 8, 16, 32), (2, 4), (2, 4), (2, 4)),
-    #     cross_embed_strides=(2, 2, 2, 2),
-    #     attn_dropout=0.,
-    #     ff_dropout=0.,
-    #     pad_lon=pad_lon,
-    #     pad_lat=pad_lat
-    # ).to("cuda")
-
     image_height = 640  # 640, 192
     image_width = 1280  # 1280, 288
     levels = 15
@@ -607,8 +561,6 @@ if __name__ == "__main__":
     surface_channels = 7
     input_only_channels = 3
     frame_patch_size = 2
-    pad_lon = 80
-    pad_lat = 80
 
     input_tensor = torch.randn(1, channels * levels + surface_channels + input_only_channels, frames, image_height, image_width).to("cuda")
 
@@ -629,8 +581,6 @@ if __name__ == "__main__":
         cross_embed_strides=(4, 2, 2, 2),
         attn_dropout=0.,
         ff_dropout=0.,
-        pad_lon=pad_lon,
-        pad_lat=pad_lat
     ).to("cuda")
 
     num_params = sum(p.numel() for p in model.parameters())
