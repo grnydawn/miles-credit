@@ -268,6 +268,11 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
 
     # --------------------------------------------------------- #
     # conf['model'] section
+    
+    # use interpolation
+    if 'interp' not in conf['model']:
+        conf['model']['interp'] = True
+    
     # ======================================================== #
     # padding opts
     if 'padding_conf' not in conf['model']:
