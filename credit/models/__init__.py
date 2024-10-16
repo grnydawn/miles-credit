@@ -3,9 +3,6 @@ import copy
 import logging
 from importlib.metadata import version
 
-import torch
-import torch.nn.functional as F
-
 # Import model classes
 from credit.models.crossformer import CrossFormer
 from credit.models.crossformer_may1 import CrossFormer as CrossFormerDep
@@ -37,6 +34,56 @@ model_types = {
     "swin": (SwinTransformerV2Cr, "Loading the minimal Swin model"),
     "graph": (GraphResTransfGRU, "Loading Graph Residual Transformer GRU model")
 } 
+
+
+def load_model(conf, load_weights=False):
+    conf = copy.deepcopy(conf)
+    model_conf = conf["model"]
+
+    if "type" not in model_conf:
+        msg = "You need to specify a model type in the config file. Exiting."
+        logger.warning(msg)
+        raise ValueError(msg)
+
+    model_type = model_conf.pop("type")
+
+    #if model_type == 'unet':
+    if model_type in ('unet', 'unet404'):
+        import torch
+        model, message = model_types[model_type]
+        logger.info(message)
+        if load_weights:
+            model = model(conf)
+            save_loc = conf['save_loc']
+            ckpt = os.path.join(save_loc, "checkpoint.pt")
+
+            if not os.path.isfile(ckpt):
+                raise ValueError(
+                    "No saved checkpoint exists. You must train a model first. Exiting."
+                )
+
+            logging.info(
+                f"Loading a model with pre-trained weights from path {ckpt}"
+            )
+
+            checkpoint = torch.load(ckpt)
+            model.load_state_dict(checkpoint["model_state_dict"])
+            return model
+            
+        return model(conf)
+
+    if model_type in model_types:
+        model, message = model_types[model_type]
+        logger.info(message)
+        if load_weights:
+            return model.load_model(conf)
+        return model(**model_conf)
+
+    else:
+        msg = f"Model type {model_type} not supported. Exiting."
+        logger.warning(msg)
+        raise ValueError(msg)
+
 
 # dont need an old timm version anymore https://github.com/qubvel/segmentation_models.pytorch/releases/tag/v0.3.3
 # def check_timm_version(model_type):
