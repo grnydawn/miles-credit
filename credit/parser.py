@@ -301,6 +301,10 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             assert all(p >= 0 for p in pad_lon), 'padding size for longitude dim must be non-negative.'
             assert all(p >= 0 for p in pad_lat), 'padding size for latitude dim must be non-negative.'
 
+            assert conf['model']['padding_conf']['mode'] in ['mirror', 'earth'], (
+                'Padding options must be "mirror" or "earth". Got ""'.format(
+                    conf['model']['padding_conf']['mode']))
+
     # ======================================================== #
     # postblock opts
     # turn-off post if post_conf does not exist
