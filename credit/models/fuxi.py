@@ -352,13 +352,14 @@ class Fuxi(BaseModel):
             self.postblock = PostBlock(post_conf)
     
     def forward(self, x: torch.Tensor):
+        
         # copy tensor to feed into postblock later
         if self.use_post_block:  
             x_copy = x.clone().detach()
-        print(x.shape)
+            
         if self.use_padding:
             x = self.padding_opt.pad(x)
-        print(x.shape)
+            
         # Tensor dims: Batch, Variables, Time, Lat grids, Lon grids
         B, _, _, _, _ = x.shape
 
