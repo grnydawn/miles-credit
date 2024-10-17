@@ -125,9 +125,15 @@ model:
     attn_dropout: 0.                  # Dropout probability for attention layers (default: 0.0)
     ff_dropout: 0.                    # Dropout probability for feed-forward layers (default: 0.0)
     
+    # use interpolation to match the output size
+    interp: True
+    
     # map boundary padding
-    pad_lon: 48             # number of grids to pad on 0 and 360 deg lon
-    pad_lat: 48             # number of grids to pad on -90 and 90 deg lat
+    padding_conf:
+        activate: True
+        mode: earth
+        pad_lat: 48
+        pad_lon: 48
     
 loss: 
     # the main training loss
