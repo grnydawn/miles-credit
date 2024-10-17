@@ -4,7 +4,8 @@ import logging
 import copy
 import os
 import torch.nn.functional as F
-#from credit.models.base_model import BaseModel
+from torch import nn
+from credit.models.base_model import BaseModel
 from credit.postblock import PostBlock
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -40,46 +41,67 @@ def load_premade_encoder_model(model_conf):
             f"Model name {name} not recognized. Please choose from {supported_models.keys()}")
 
 
-class SegmentationModel(torch.nn.Module):
+class SegmentationModel(BaseModel):
 
-    def __init__(self, conf):
+    def __init__(self,
+                 image_height=640,
+                 image_width=1280,
+                 frames=2,
+                 channels=4,
+                 surface_channels=7,
+                 input_only_channels=3,
+                 output_only_channels=0,
+                 levels=16,
+                 rk4_integration=False,
+                 architecture=
+                 {
+                    "name": "unet",
+                    "encoder_name": "resnet34",
+                    "encoder_weights": "imagenet",
+                 },
+                 post_conf={"use_skebs": False},
+                 **kwargs
+                 ):
 
         super(SegmentationModel, self).__init__()
 
-        self.variables = len(conf["data"]["variables"])
-        self.levels = conf["model"]["levels"]
-        self.frames = conf["model"]["frames"]
-        self.surface_variables = len(conf["data"]["surface_variables"])
-        self.static_variables = len(conf["data"]["static_variables"])
-        self.use_codebook = False
-        self.rk4_integration = conf["model"]["rk4_integration"]
-        self.channels = 1
+        self.image_height = image_height
+        self.image_width = image_width
+        self.frames = frames
+        self.channels = channels
+        self.surface_channels = surface_channels
+        self.levels = levels
+        self.rk4_integration = rk4_integration
 
-        in_out_channels = int(self.variables*self.levels + self.surface_variables + self.static_variables)
+        # input channels
+        input_channels = channels * levels + surface_channels + input_only_channels
 
-        if conf['model']['architecture']['name'] == 'unet':
-            conf['model']['architecture']['decoder_attention_type'] = 'scse'
-        conf['model']['architecture']['in_channels'] = in_out_channels
-        conf['model']['architecture']['classes'] = in_out_channels
+        # output channels
+        output_channels = channels * levels + surface_channels + output_only_channels
 
-        self.model = load_premade_encoder_model(conf['model']['architecture'])
+        if architecture['name'] == 'unet':
+            architecture['decoder_attention_type'] = 'scse'
+        architecture['in_channels'] = input_channels
+        architecture['classes'] = output_channels
+
+        self.model = load_premade_encoder_model(architecture)
         # Additional layers for testing
 
-        self.use_post_block = conf["model"]["post_conf"]["activate"]
+        self.use_post_block = post_conf["activate"]
         if self.use_post_block:
-            self.postblock = PostBlock(conf["model"]["post_conf"])
+            self.postblock = PostBlock(post_conf)
 
 
-    def concat_and_reshape(self, x1, x2):
-        x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
-        x_concat = torch.cat((x1, x2), dim=2)
-        return x_concat.permute(0, 2, 1, 3, 4)
+    # def concat_and_reshape(self, x1, x2):
+    #     x1 = x1.view(x1.shape[0], x1.shape[1], x1.shape[2] * x1.shape[3], x1.shape[4], x1.shape[5])
+    #     x_concat = torch.cat((x1, x2), dim=2)
+    #     return x_concat.permute(0, 2, 1, 3, 4)
 
-    def split_and_reshape(self, tensor):
-        tensor1 = tensor[:, :int(self.channels * self.levels), :, :, :]
-        tensor2 = tensor[:, -int(self.surface_channels):, :, :, :]
-        tensor1 = tensor1.view(tensor1.shape[0], self.channels, self.levels, tensor1.shape[2], tensor1.shape[3], tensor1.shape[4])
-        return tensor1, tensor2
+    # def split_and_reshape(self, tensor):
+    #     tensor1 = tensor[:, :int(self.channels * self.levels), :, :, :]
+    #     tensor2 = tensor[:, -int(self.surface_channels):, :, :, :]
+    #     tensor1 = tensor1.view(tensor1.shape[0], self.channels, self.levels, tensor1.shape[2], tensor1.shape[3], tensor1.shape[4])
+    #     return tensor1, tensor2
 
     def forward(self, x):
         if self.use_post_block:  # copy tensor to feed into postBlock later
