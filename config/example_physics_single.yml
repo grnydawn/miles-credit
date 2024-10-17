@@ -151,13 +151,19 @@ model:
     window_size: 7          # window size (default: 7)
     depth: 2               # number of swin transformers (default: 48)
     
-    # map boundary padding
-    pad_lon: 40             # number of grids to pad on 0 and 360 deg lon
-    pad_lat: 40             # number of grids to pad on -90 and 90 deg lat
-    
     # use spectral norm
     use_spectral_norm: True
 
+    # use interpolation to match the output size
+    interp: True
+    
+    # map boundary padding
+    padding_conf:
+        activate: True
+        mode: mirror
+        pad_lat: 40
+        pad_lon: 40
+        
     post_conf: 
         activate: True
         
