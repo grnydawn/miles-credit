@@ -3,7 +3,7 @@ import torch
 import torch.nn.functional as F
 
 class TensorPadding:
-    def __init__(self, mode="earth", pad_lat=40, pad_lon=40, **kwargs):
+    def __init__(self, mode="earth", pad_lat=(40, 40), pad_lon=(40, 40), **kwargs):
         """
         Initialize the TensorPadding class with the specified mode and padding sizes.
 
