@@ -318,8 +318,8 @@ class CrossFormer(BaseModel):
         ff_dropout=0.,
         use_spectral_norm=True,
         interp=True,
-        padding_conf={'activate': False},
-        post_conf={"activate": False},
+        padding_conf=None,
+        post_conf=None,
         **kwargs
     ):
         super().__init__()
@@ -340,7 +340,11 @@ class CrossFormer(BaseModel):
         self.levels = levels
         self.use_spectral_norm = use_spectral_norm
         self.use_interp = interp
+        if padding_conf is None:
+            padding_conf = {'activate': False}
         self.use_padding =  padding_conf['activate']
+        if post_conf is None:
+            post_conf = {"activate": False}
         self.use_post_block = post_conf['activate']
         
         # input channels
@@ -435,7 +439,7 @@ class CrossFormer(BaseModel):
             self.postblock = PostBlock(post_conf)
 
     def forward(self, x):
-        
+        x_copy = None
         if self.use_post_block:  # copy tensor to feed into postBlock later
             x_copy = x.clone().detach()
             
