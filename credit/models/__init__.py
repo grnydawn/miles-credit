@@ -47,8 +47,7 @@ def load_model(conf, load_weights=False):
 
     model_type = model_conf.pop("type")
 
-    #if model_type == 'unet':
-    if model_type in ('unet', 'unet404'):
+    if model_type in ('unet404',):
         import torch
         model, message = model_types[model_type]
         logger.info(message)

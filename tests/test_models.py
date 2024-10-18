@@ -29,14 +29,20 @@ def test_unet():
     levels = conf["model"]["levels"]
     frames = conf["model"]["frames"]
     surface_variables = len(conf["data"]["surface_variables"])
-    static_variables = len(conf["data"]["static_variables"])
+    input_only_variables = (len(conf["data"]["static_variables"])
+                            + len(conf["data"]["dynamic_forcing_variables"]))
+    output_only_variables = conf["model"]["output_only_channels"]
 
-    in_channels = int(variables*levels + surface_variables + static_variables)
+    in_channels = int(variables*levels + surface_variables + input_only_variables)
+    out_channels = int(variables*levels + surface_variables + output_only_variables)
+    
+    assert in_channels != out_channels
+
     input_tensor = torch.randn(1, in_channels, frames, image_height, image_width)
 
     y_pred = model(input_tensor)
 
-    assert y_pred.shape == torch.Size([1, in_channels, 1, image_height, image_width])
+    assert y_pred.shape == torch.Size([1, out_channels, 1, image_height, image_width])
     assert not torch.isnan(y_pred).any()
 
 def test_crossformer(): 
@@ -45,6 +51,7 @@ def test_crossformer():
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
+    conf = CREDIT_main_parser(conf)
     image_height = conf["model"]["image_height"]
     image_width = conf["model"]["image_width"]
 
@@ -65,9 +72,9 @@ def test_crossformer():
     assert y_pred.shape == torch.Size([1, in_channels - input_only_channels, 1, image_height, image_width])
     assert not torch.isnan(y_pred).any()
 
-# if __name__ == "__main__":
-#     # test_unet()
-#     test_crossformer()
+if __name__ == "__main__":
+    test_unet()
+    # test_crossformer()
 
 
 

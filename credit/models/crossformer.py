@@ -8,7 +8,7 @@ from einops.layers.torch import Rearrange
 
 from credit.models.base_model import BaseModel
 from credit.postblock import PostBlock
-
+from credit.boundary_padding import TensorPadding
 
 logger = logging.getLogger(__name__)
 
@@ -17,11 +17,6 @@ logger = logging.getLogger(__name__)
 
 def cast_tuple(val, length=1):
     return val if isinstance(val, tuple) else ((val,) * length)
-
-
-def circular_pad1d(x, pad):
-    return torch.cat((x[..., -pad:], x, x[..., :pad]), dim=-1)
-
 
 def apply_spectral_norm(model):
     for module in model.modules():
@@ -321,10 +316,10 @@ class CrossFormer(BaseModel):
         cross_embed_strides=(4, 2, 2, 2),
         attn_dropout=0.,
         ff_dropout=0.,
-        pad_lon=0,
-        pad_lat=0,
         use_spectral_norm=True,
-        post_conf={"activate": False},
+        interp=True,
+        padding_conf=None,
+        post_conf=None,
         **kwargs
     ):
         super().__init__()
@@ -343,10 +338,15 @@ class CrossFormer(BaseModel):
         self.channels = channels
         self.surface_channels = surface_channels
         self.levels = levels
-        self.pad_lon = pad_lon
-        self.pad_lat = pad_lat
         self.use_spectral_norm = use_spectral_norm
-
+        self.use_interp = interp
+        if padding_conf is None:
+            padding_conf = {'activate': False}
+        self.use_padding =  padding_conf['activate']
+        if post_conf is None:
+            post_conf = {"activate": False}
+        self.use_post_block = post_conf['activate']
+        
         # input channels
         input_channels = channels * levels + surface_channels + input_only_channels
 
@@ -368,7 +368,6 @@ class CrossFormer(BaseModel):
         assert len(cross_embed_strides) == 4
 
         # dimensions
-
         last_dim = dim[-1]
         first_dim = input_channels if (patch_height == 1 and patch_width == 1) else dim[0]
         dims = [first_dim, *dim]
@@ -412,42 +411,10 @@ class CrossFormer(BaseModel):
                     transformer_layer
                 ])
             )
-
-        # =================================================================================== #
-        # This block handles I/O sizes that cannot be divcided by cross_embed_strides
         
-        # total downsampling factors
-        total_dsample_factor_H = patch_height
-        total_dsample_factor_W = patch_width
-        
-        for s in cross_embed_strides:
-            total_dsample_factor_H *= s
-            total_dsample_factor_W *= s
-        
-        # compute I/O sizes that can be accepted
-        self.image_height_adjust = (image_height // total_dsample_factor_H) * total_dsample_factor_H
-        self.image_width_adjust = (image_width // total_dsample_factor_W) * total_dsample_factor_W
-
-        # acceptable sizes are at least the size of the total factor
-        if self.image_height_adjust == 0:
-            self.image_height_adjust = total_dsample_factor_H
-
-        if self.image_width_adjust == 0:
-            self.image_width_adjust = total_dsample_factor_W
+        if self.use_padding:
+            self.padding_opt = TensorPadding(**padding_conf)
             
-        if (
-            self.image_height != self.image_height_adjust or 
-            self.image_width != self.image_width_adjust
-        ):
-            logger.info(
-                'Configured input sizes before padding: ({}, {}); acceptable input sizes before padding: ({}, {}). '
-                'Bilinear interpolation will be used to handle the size differences'.format(
-                    self.image_height, self.image_width, 
-                    self.image_height_adjust, self.image_width_adjust
-                )
-            )
-
-        
         # define embedding layer using adjusted sizes
         # if the original sizes were good, adjusted sizes should == original sizes
         self.cube_embedding = CubeEmbedding(
@@ -456,6 +423,7 @@ class CrossFormer(BaseModel):
             input_channels,
             dim[0]
         )
+        
         # =================================================================================== #
 
         self.up_block1 = UpBlock(1 * last_dim, last_dim // 2, dim[0])
@@ -466,58 +434,17 @@ class CrossFormer(BaseModel):
         if self.use_spectral_norm:
             logger.info("Adding spectral norm to all conv and linear layers")
             apply_spectral_norm(self)
-
-        if self.pad_lon > 0:
-            logger.info(f"Padding each longitudinal boundary with {self.pad_lon} pixels from the other side")
-        if self.pad_lat > 0:
-            logger.info(f"Padding each pole using a reflection with {self.pad_lat} pixels")
-        
-        
-        self.use_post_block = post_conf['activate']
+            
         if self.use_post_block:
             self.postblock = PostBlock(post_conf)
 
     def forward(self, x):
-        
+        x_copy = None
         if self.use_post_block:  # copy tensor to feed into postBlock later
             x_copy = x.clone().detach()
-        
-        # ===================================================================== #
-        # this block does the input interpolation, if adjusted sizes are needed
-
-        # get the current size
-        B, C, T, H_in, W_in = x.shape
-
-        # if current size needs to be adjusted
-        if H_in != self.image_height_adjust or W_in != self.image_width_adjust:
             
-            # merge batch and time becuase F.interpolate works for 4D tensor
-            x = x.permute(0, 2, 1, 3, 4).reshape(B * T, C, H_in, W_in)
-            
-            # F.interpolate to the adjusted sizes
-            x = F.interpolate(x, 
-                              size=(self.image_height_adjust, self.image_width_adjust), 
-                              mode='bilinear', 
-                              align_corners=False)
-            
-            # reshape back
-            x = x.reshape(B, T, C, self.image_height_adjust, self.image_width_adjust).permute(0, 2, 1, 3, 4)
-        # ===================================================================== #
-        
-        if self.pad_lon > 0:
-            x = circular_pad1d(x, pad=self.pad_lon)
-
-        if self.pad_lat > 0:
-            x_shape = x.shape
-
-            # Reshape the tensor to (B, C*2, lat, lon) using the values from x_shape
-            x = torch.reshape(x, (x_shape[0], x_shape[1] * x_shape[2], x_shape[3], x_shape[4]))
-
-            # Pad the tensor with reflect mode
-            x = F.pad(x, (0, 0, self.pad_lat, self.pad_lat), mode='reflect')
-
-            # Reshape the tensor back to (B, C, 2, new lat, lon) using the values from x_shape
-            x = torch.reshape(x, (x_shape[0], x_shape[1], x_shape[2], x_shape[3] + 2 * self.pad_lat, x_shape[4]))
+        if self.use_padding:
+            x = self.padding_opt.pad(x)
 
         if self.patch_width > 1 and self.patch_height > 1:
             x = self.cube_embedding(x)
@@ -540,17 +467,14 @@ class CrossFormer(BaseModel):
         x = torch.cat([x, encodings[0]], dim=1)
         x = self.up_block4(x)
 
-        if self.pad_lon > 0:
-            # Slice to original size
-            x = x[..., self.pad_lon:-self.pad_lon]
+        if self.use_padding:
+            x = self.padding_opt.unpad(x)
 
-        if self.pad_lat > 0:
-            # Slice to original size
-            x = x[..., self.pad_lat:-self.pad_lat, :]
+        if self.use_interp:
+            x = F.interpolate(x, size=(self.image_height, self.image_width), mode="bilinear")
             
-        x = F.interpolate(x, size=(self.image_height, self.image_width), mode="bilinear")
         x = x.unsqueeze(2)
-
+        
         if self.use_post_block:
             x = {
                 "y_pred": x,
@@ -575,9 +499,7 @@ class CrossFormer(BaseModel):
 
         return (k1 + 2 * k2 + 2 * k3 + k4) / 6
 
-
 if __name__ == "__main__":
-    
     image_height = 640  # 640, 192
     image_width = 1280  # 1280, 288
     levels = 15
@@ -586,8 +508,6 @@ if __name__ == "__main__":
     surface_channels = 7
     input_only_channels = 3
     frame_patch_size = 2
-    pad_lon = 80
-    pad_lat = 80
 
     input_tensor = torch.randn(1, 
                                channels * levels + surface_channels + input_only_channels, 
@@ -612,8 +532,6 @@ if __name__ == "__main__":
         cross_embed_strides=(2, 2, 2, 2),
         attn_dropout=0.,
         ff_dropout=0.,
-        pad_lon=pad_lon,
-        pad_lat=pad_lat
     ).to("cuda")
 
     num_params = sum(p.numel() for p in model.parameters())

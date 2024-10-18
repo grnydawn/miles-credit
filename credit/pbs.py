@@ -24,7 +24,8 @@ def launch_script(config_file, script_path, launch=True):
     # Extract PBS options from the config
     pbs_options = config['pbs']
 
-    config_save_path = os.path.expandvars(os.path.join(config["save_loc"], "model.yml"))
+    save_loc = os.path.expandvars(config["save_loc"])
+    config_save_path = os.path.join(save_loc, "model.yml")
 
     # Generate the PBS script
     script = f"""#!/bin/bash -l
@@ -56,6 +57,7 @@ def launch_script(config_file, script_path, launch=True):
             shell=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            cwd=save_loc,
         ).communicate()[0]
         jobid = jobid.decode("utf-8").strip("\n")
         logger.info(jobid)
@@ -98,7 +100,7 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
     destination_path = config_save_path
 
     # Only delete the original if the source and destination paths are different
-    if os.path.exists(destination_path) and os.path.abspath(source_path) != os.path.abspath(destination_path):
+    if os.path.exists(destination_path) and os.path.realpath(source_path) != os.path.realpath(destination_path):
         os.remove(destination_path)
         logger.info(f'Removed the old model.yml at {destination_path}')
 
@@ -179,6 +181,7 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
             shell=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            cwd=save_loc
         ).communicate()[0]
         jobid = jobid.decode("utf-8").strip("\n")
         logger.info(jobid)
@@ -189,7 +192,7 @@ def launch_script_mpi(config_file, script_path, launch=True, backend='nccl'):
         destination_path = os.path.join(save_loc, "launch.sh")
 
         # Only delete the original if the source and destination paths are different
-        if os.path.exists(destination_path) and os.path.abspath(source_path) != os.path.abspath(destination_path):
+        if os.path.exists(destination_path) and os.path.realpath(source_path) != os.path.realpath(destination_path):
             os.remove(destination_path)
             logger.info(f'Removed the old launch.sh at {destination_path}')
 

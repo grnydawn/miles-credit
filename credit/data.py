@@ -464,7 +464,7 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         if self.filename_forcing is not None:
             # drop variables if they are not in the config
             ds = get_forward_data(filename_forcing)
-            ds_forcing = drop_var_from_dataset(ds, varname_forcing)
+            ds_forcing = drop_var_from_dataset(ds, varname_forcing).load() # <---- load in static
 
             self.xarray_forcing = ds_forcing
         else:
@@ -477,7 +477,7 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         if self.filename_static is not None:
             # drop variables if they are not in the config
             ds = get_forward_data(filename_static)
-            ds_static = drop_var_from_dataset(ds, varname_static)
+            ds_static = drop_var_from_dataset(ds, varname_static).load() # <---- load in static
             
             self.xarray_static = ds_static
         else:
@@ -567,7 +567,7 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
             month_day_inputs = extract_month_day_hour(np.array(historical_ERA5_images['time'])) # <-- upper air
             # indices to subset
             ind_forcing, _ = find_common_indices(month_day_forcing, month_day_inputs)
-            forcing_subset_input = self.xarray_forcing.isel(time=ind_forcing).load() # <-- load into memory
+            forcing_subset_input = self.xarray_forcing.isel(time=ind_forcing) #.load() # <-- loadded in init
             # forcing and upper air have different years but the same mon/day/hour
             # safely replace forcing time with upper air time
             forcing_subset_input['time'] = historical_ERA5_images['time']
@@ -587,7 +587,7 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
 
             # slice + load to the GPU
             static_subset_input = static_subset_input.isel(
-                time=slice(0, self.history_len, self.skip_periods)).load() # <-- load into memory
+                time=slice(0, self.history_len, self.skip_periods)) #.load() # <-- loaded in init
 
             # update 
             static_subset_input['time'] = historical_ERA5_images['time']
