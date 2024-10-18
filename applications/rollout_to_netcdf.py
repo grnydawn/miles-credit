@@ -22,7 +22,6 @@ import torch
 import torch.distributed as dist
 from torch.utils.data import get_worker_info
 from torch.utils.data.distributed import DistributedSampler
-from torchvision import transforms
 
 # ---------- #
 # credit
@@ -34,7 +33,7 @@ from credit.pbs import launch_script, launch_script_mpi
 from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
 from credit.metrics import LatWeightedMetrics
 from credit.forecast import load_forecasts
-from credit.distributed import distributed_model_wrapper
+from credit.distributed import distributed_model_wrapper, setup, get_rank_info
 from credit.models.checkpoint import load_model_state
 from credit.parser import CREDIT_main_parser, predict_data_check
 from credit.output import load_metadata, make_xarray, save_netcdf_increment
@@ -188,10 +187,6 @@ class Predict_Dataset_Metrics(Predict_Dataset):
                     break
 
 
-def setup(rank, world_size, mode):
-    logging.info(f"Running {mode.upper()} on rank {rank} with world_size {world_size}.")
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-
 
 def predict(rank, world_size, conf, p):
 
@@ -309,6 +304,7 @@ def predict(rank, world_size, conf, p):
     metrics = LatWeightedMetrics(conf, predict_mode=True)
     metrics_results = defaultdict(list)
 
+    dpf = None
     # Set up the diffusion and pole filters
     if (
         "use_laplace_filter" in conf["predict"]
@@ -618,10 +614,13 @@ if __name__ == "__main__":
 
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
+    
+
+    local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])
 
     with mp.Pool(num_cpus) as p:
         if conf["predict"]["mode"] in ["fsdp", "ddp"]:  # multi-gpu inference
-            _ = predict(int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf, p=p)
+            _ = predict(world_rank, world_size, conf, p=p)
         else:  # single device inference
             _ = predict(0, 1, conf, p=p)
 
