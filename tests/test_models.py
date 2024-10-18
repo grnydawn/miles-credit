@@ -51,6 +51,7 @@ def test_crossformer():
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
+    conf = CREDIT_main_parser(conf)
     image_height = conf["model"]["image_height"]
     image_width = conf["model"]["image_width"]
 

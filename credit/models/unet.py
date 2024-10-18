@@ -104,6 +104,7 @@ class SegmentationModel(BaseModel):
     #     return tensor1, tensor2
 
     def forward(self, x):
+        x_copy = None
         if self.use_post_block:  # copy tensor to feed into postBlock later
             x_copy = x.clone().detach()
 

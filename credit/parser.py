@@ -268,7 +268,45 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
 
     # --------------------------------------------------------- #
     # conf['model'] section
+    
+    # use interpolation
+    if 'interp' not in conf['model']:
+        conf['model']['interp'] = True
+    
+    # ======================================================== #
+    # padding opts
+    if 'padding_conf' not in conf['model']:
+        if ('pad_lon' in conf['model']) and ('pad_lat' in conf['model']):
+            pad_lon = int(conf['model']['pad_lon'])
+            pad_lat = int(conf['model']['pad_lat'])
+            conf['model']['padding_conf'] = {'activate': True}
+            conf['model']['padding_conf']['mode'] = 'mirror'
+            conf['model']['padding_conf']['pad_lon'] = [pad_lon, pad_lon]
+            conf['model']['padding_conf']['pad_lat'] = [pad_lat, pad_lat]
+    else:
+        if conf['model']['padding_conf']['activate']:
+            
+            pad_lon = conf['model']['padding_conf']['pad_lon']
+            pad_lat = conf['model']['padding_conf']['pad_lat']
+            
+            if isinstance(pad_lon, int):
+                conf['model']['padding_conf']['pad_lon'] = [pad_lon, pad_lon]
+                
+            if isinstance(pad_lat, int):
+                conf['model']['padding_conf']['pad_lat'] = [pad_lat, pad_lat]
+    
+            pad_lon = conf['model']['padding_conf']['pad_lon']
+            pad_lat = conf['model']['padding_conf']['pad_lat']
+            
+            assert all(p >= 0 for p in pad_lon), 'padding size for longitude dim must be non-negative.'
+            assert all(p >= 0 for p in pad_lat), 'padding size for latitude dim must be non-negative.'
 
+            assert conf['model']['padding_conf']['mode'] in ['mirror', 'earth'], (
+                'Padding options must be "mirror" or "earth". Got ""'.format(
+                    conf['model']['padding_conf']['mode']))
+
+    # ======================================================== #
+    # postblock opts
     # turn-off post if post_conf does not exist
     conf['model'].setdefault('post_conf', {'activate': False})
 
@@ -431,11 +469,6 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
             if var in conf['model']['post_conf']['global_energy_fixer']['v_wind_name']
         ]
         
-        # Phi_inds = [
-        #     i_var for i_var, var in enumerate(varname_input) 
-        #     if var in conf['model']['post_conf']['global_energy_fixer']['surface_geopotential_name']
-        # ]
-        
         TOA_rad_inds = [
             i_var for i_var, var in enumerate(varname_output) 
             if var in conf['model']['post_conf']['global_energy_fixer']['TOA_net_radiation_flux_name']
@@ -455,7 +488,6 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         conf['model']['post_conf']['global_energy_fixer']['q_inds'] = q_inds
         conf['model']['post_conf']['global_energy_fixer']['U_inds'] = U_inds
         conf['model']['post_conf']['global_energy_fixer']['V_inds'] = V_inds
-        #conf['model']['post_conf']['global_energy_fixer']['Phi_ind'] = Phi_inds[0]
         conf['model']['post_conf']['global_energy_fixer']['TOA_rad_inds'] = TOA_rad_inds
         conf['model']['post_conf']['global_energy_fixer']['surf_rad_inds'] = surf_rad_inds
         conf['model']['post_conf']['global_energy_fixer']['surf_flux_inds'] = surf_flux_inds
