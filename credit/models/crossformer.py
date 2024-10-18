@@ -413,7 +413,7 @@ class CrossFormer(BaseModel):
             )
         
         if self.use_padding:
-            self.padding_opt = TensorPadding(padding_conf)
+            self.padding_opt = TensorPadding(**padding_conf)
             
         # define embedding layer using adjusted sizes
         # if the original sizes were good, adjusted sizes should == original sizes
@@ -439,6 +439,7 @@ class CrossFormer(BaseModel):
             self.postblock = PostBlock(post_conf)
 
     def forward(self, x):
+        x_copy = None
         if self.use_post_block:  # copy tensor to feed into postBlock later
             x_copy = x.clone().detach()
             
