@@ -439,7 +439,6 @@ class CrossFormer(BaseModel):
             self.postblock = PostBlock(post_conf)
 
     def forward(self, x):
-        x_copy = None
         if self.use_post_block:  # copy tensor to feed into postBlock later
             x_copy = x.clone().detach()
             

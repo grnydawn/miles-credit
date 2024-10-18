@@ -356,7 +356,6 @@ class Fuxi(BaseModel):
             self.postblock = PostBlock(post_conf)
     
     def forward(self, x: torch.Tensor):
-        x_copy = None
         # copy tensor to feed into postblock later
         if self.use_post_block:  
             x_copy = x.clone().detach()
