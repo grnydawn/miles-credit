@@ -343,7 +343,7 @@ class Fuxi(BaseModel):
         self.levels = levels
 
         if self.use_padding:
-            self.padding_opt = TensorPadding(padding_conf)
+            self.padding_opt = TensorPadding(**padding_conf)
         
         if self.use_spectral_norm:
             logger.info("Adding spectral norm to all conv and linear layers")
@@ -357,7 +357,8 @@ class Fuxi(BaseModel):
     
     def forward(self, x: torch.Tensor):
         # copy tensor to feed into postblock later
-        if self.use_post_block:  
+        x_copy = None
+        if self.use_post_block:
             x_copy = x.clone().detach()
             
         if self.use_padding:
