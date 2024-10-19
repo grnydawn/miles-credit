@@ -22,12 +22,25 @@ import torch
 import torch.distributed as dist
 from torch.utils.data import get_worker_info
 from torch.utils.data.distributed import DistributedSampler
+from torchvision import transforms
 
 # ---------- #
 # credit
 from credit.models import load_model
 from credit.seed import seed_everything
-from credit.data import Predict_Dataset, concat_and_reshape, reshape_only, generate_datetime, nanoseconds_to_year, hour_to_nanoseconds
+
+from credit.data import (
+    Sample,
+    concat_and_reshape,
+    reshape_only,
+    get_forward_data,
+    drop_var_from_dataset,
+    generate_datetime,
+    nanoseconds_to_year,
+    hour_to_nanoseconds,
+    get_forward_data
+)
+
 from credit.transforms import load_transforms, Normalize_ERA5_and_Forcing
 from credit.pbs import launch_script, launch_script_mpi
 from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
@@ -46,8 +59,165 @@ os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 
 
-class Predict_Dataset_Metrics(Predict_Dataset):
+class Predict_Dataset(torch.utils.data.IterableDataset):
+    '''
+    Same as ERA5_and_Forcing_Dataset() but work with rollout_to_netcdf_new.py
 
+    *ksha: dynamic forcing has been added to the rollout-only Dataset, but it has
+    not been tested. Once the new tsi is ready, this dataset class will be tested
+    '''
+    def __init__(self,
+                 conf, 
+                 varname_upper_air,
+                 varname_surface,
+                 varname_dyn_forcing,
+                 varname_forcing,
+                 varname_static,
+                 varname_diagnostic,
+                 filenames,
+                 filename_surface,
+                 filename_dyn_forcing,
+                 filename_forcing,
+                 filename_static,
+                 filename_diagnostic,
+                 fcst_datetime,
+                 history_len,
+                 rank,
+                 world_size,
+                 transform=None,
+                 rollout_p=0.0,
+                 which_forecast=None):
+        
+        # ------------------------------------------------------------------------------ #
+        
+        ## no diagnostics because they are output only
+        # varname_diagnostic = None
+        
+        self.rank = rank
+        self.world_size = world_size
+        self.transform = transform
+        self.history_len = history_len
+        self.init_datetime = fcst_datetime
+        
+        self.which_forecast = which_forecast # <-- got from the old roll-out script. Dont know 
+        
+        # -------------------------------------- #
+        # file names
+        self.filenames = filenames # <------------------------ a list of files
+        self.filename_surface = filename_surface # <---------- a list of files
+        self.filename_dyn_forcing = filename_dyn_forcing # <-- a list of files
+        self.filename_forcing = filename_forcing # <-- single file
+        self.filename_static = filename_static # <---- single file
+        self.filename_diagnostic = filename_diagnostic # <---- single file
+        
+        # -------------------------------------- #
+        # var names
+        self.varname_upper_air = varname_upper_air
+        self.varname_surface = varname_surface
+        self.varname_dyn_forcing = varname_dyn_forcing
+        self.varname_forcing = varname_forcing
+        self.varname_static = varname_static
+        self.varname_diagnostic = varname_diagnostic
+
+        # ====================================== #
+        # import all upper air zarr files
+        all_files = []
+        for fn in self.filenames:
+            # drop variables if they are not in the config
+            xarray_dataset = get_forward_data(filename=fn)
+            xarray_dataset = drop_var_from_dataset(xarray_dataset, self.varname_upper_air)
+            # collect yearly datasets within a list
+            all_files.append(xarray_dataset)
+        self.all_files = all_files
+        # ====================================== #
+
+        # -------------------------------------- #
+        # other settings
+        self.current_epoch = 0
+        self.rollout_p = rollout_p
+        
+        self.lead_time_periods = conf['data']['lead_time_periods']
+        self.skip_periods = conf['data']['skip_periods']
+
+    def ds_read_and_subset(self, filename, time_start, time_end, varnames):
+        sliced_x = get_forward_data(filename)
+        sliced_x = sliced_x.isel(time=slice(time_start, time_end))
+        sliced_x = drop_var_from_dataset(sliced_x, varnames)
+        return sliced_x
+
+    def load_zarr_as_input(self, i_file, i_init_start, i_init_end, mode='input'):
+        # get the needed file from a list of zarr files
+        # open the zarr file as xr.dataset and subset based on the needed time
+        
+        # sliced_x: the final output, starts with an upper air xr.dataset
+        sliced_x = self.ds_read_and_subset(self.filenames[i_file], 
+                                           i_init_start,
+                                           i_init_end+1,
+                                           self.varname_upper_air)
+        # surface variables
+        if self.filename_surface is not None:
+            sliced_surface = self.ds_read_and_subset(self.filename_surface[i_file], 
+                                                     i_init_start,
+                                                     i_init_end+1,
+                                                     self.varname_surface)
+            # merge surface to sliced_x
+            sliced_surface['time'] = sliced_x['time']
+            sliced_x = sliced_x.merge(sliced_surface)
+
+        if mode == 'input':
+            # dynamic forcing variables
+            if self.filename_dyn_forcing is not None:
+                sliced_dyn_forcing = self.ds_read_and_subset(self.filename_dyn_forcing[i_file], 
+                                                             i_init_start,
+                                                             i_init_end+1,
+                                                             self.varname_dyn_forcing)
+                # merge surface to sliced_x
+                sliced_dyn_forcing['time'] = sliced_x['time']
+                sliced_x = sliced_x.merge(sliced_dyn_forcing)
+    
+            # forcing / static
+            if self.filename_forcing is not None:
+                sliced_forcing = get_forward_data(self.filename_forcing)
+                sliced_forcing = drop_var_from_dataset(sliced_forcing, self.varname_forcing)
+    
+                # See also `ERA5_and_Forcing_Dataset`
+                # =============================================================================== #
+                # matching month, day, hour between forcing and upper air [time]
+                # this approach handles leap year forcing file and non-leap-year upper air file
+                month_day_forcing = extract_month_day_hour(np.array(sliced_forcing['time']))
+                month_day_inputs = extract_month_day_hour(np.array(sliced_x['time']))
+                # indices to subset
+                ind_forcing, _ = find_common_indices(month_day_forcing, month_day_inputs)
+                sliced_forcing = sliced_forcing.isel(time=ind_forcing)
+                # forcing and upper air have different years but the same mon/day/hour
+                # safely replace forcing time with upper air time
+                sliced_forcing['time'] = sliced_x['time']
+                # =============================================================================== #
+                
+                # merge forcing to sliced_x
+                sliced_x = sliced_x.merge(sliced_forcing)
+                
+            if self.filename_static is not None:
+                sliced_static = get_forward_data(self.filename_static)
+                sliced_static = drop_var_from_dataset(sliced_static, self.varname_static)
+                sliced_static = sliced_static.expand_dims(dim={"time": len(sliced_x['time'])})
+                sliced_static['time'] = sliced_x['time']
+                # merge static to sliced_x
+                sliced_x = sliced_x.merge(sliced_static)
+
+        elif mode == 'target':
+            # diagnostic
+            if self.filename_diagnostic is not None:
+                sliced_diagnostic = self.ds_read_and_subset(self.filename_diagnostic[i_file], 
+                                                            i_init_start,
+                                                            i_init_end+1,
+                                                            self.varname_diagnostic)
+                # merge diagnostics to sliced_x
+                sliced_diagnostic['time'] = sliced_x['time']
+                sliced_x = sliced_x.merge(sliced_diagnostic)
+            
+        return sliced_x
+        
     def find_start_stop_indices(self, index):
         # ============================================================================ #
         # shift hours for history_len > 1, becuase more than one init times are needed
@@ -62,7 +232,9 @@ class Predict_Dataset_Metrics(Predict_Dataset):
             self.init_datetime[index][1], '%Y-%m-%d %H:%M:%S') - timedelta(hours=shifted_hours)
 
         # convert the 1st & last init times to a list of init times
-        self.init_datetime[index] = generate_datetime(self.init_datetime[index][0], self.init_datetime[index][1], self.lead_time_periods)
+        self.init_datetime[index] = generate_datetime(self.init_datetime[index][0], 
+                                                      self.init_datetime[index][1], 
+                                                      self.lead_time_periods)
         # convert datetime obj to nanosecondes
         init_time_list_dt = [np.datetime64(date.strftime('%Y-%m-%d %H:%M:%S')) for date in self.init_datetime[index]]
         
@@ -113,6 +285,9 @@ class Predict_Dataset_Metrics(Predict_Dataset):
                         info.append([i_file, i_init_start, i_init_end, N_times])
         return info
 
+    def __len__(self):
+        return len(self.init_datetime)
+
     def __iter__(self):
         worker_info = get_worker_info()
         num_workers = worker_info.num_workers if worker_info is not None else 1
@@ -134,7 +309,7 @@ class Predict_Dataset_Metrics(Predict_Dataset):
                 output_dict = {}
 
                 # get all inputs in one xr.Dataset
-                sliced_x = self.load_zarr_as_input(i_file, i_init_start, i_init_end)
+                sliced_x = self.load_zarr_as_input(i_file, i_init_start, i_init_end, mode='input')
                 
                 # Check if additional data from the next file is needed
                 if (len(sliced_x['time']) < self.history_len) or (i_init_end+1 >= N_times):
@@ -147,20 +322,22 @@ class Predict_Dataset_Metrics(Predict_Dataset):
                         raise OSError("You have reached the end of the available data. Exiting.")
 
                     else:
+                        sliced_y = self.load_zarr_as_input(i_file, i_init_end, i_init_end, mode='target')
+                        
                         # i_init_start = 0 because we need the beginning of the next file only
-                        sliced_x_next = self.load_zarr_as_input(next_file_idx, 0, self.history_len)
+                        sliced_x_next = self.load_zarr_as_input(next_file_idx, 0, self.history_len, mode='input')
+                        sliced_y_next = self.load_zarr_as_input(next_file_idx, 0, 1, mode='target')
+                        # 1 becuase taregt is one step a time
 
                         # Concatenate excess data from the next file with the current data
-                        sliced_xy = xr.concat([sliced_x, sliced_x_next], dim='time')
-                        sliced_x = sliced_xy.isel(time=slice(0, self.history_len))
+                        sliced_x_combine = xr.concat([sliced_x, sliced_x_next], dim='time')
+                        sliced_y_combine = xr.concat([sliced_y, sliced_y_next], dim='time')
                         
-                        sliced_y = sliced_xy.isel(time=slice(self.history_len, self.history_len+1))
-                        #self.load_zarr_as_input(next_file_idx, self.history_len, self.history_len+1)
-
+                        sliced_x = sliced_x_combine.isel(time=slice(0, self.history_len))
+                        sliced_y = sliced_y_combine.isel(time=slice(self.history_len, self.history_len+1))
                 else:
-                    sliced_y = self.load_zarr_as_input(i_file, i_init_end+1, i_init_end+1)
-
-                # Prepare data for transform application
+                    sliced_y = self.load_zarr_as_input(i_file, i_init_end+1, i_init_end+1, mode='target')
+                
                 sample_x = {'historical_ERA5_images': sliced_x, 'target_ERA5_images': sliced_y}
 
                 if self.transform:
@@ -181,6 +358,10 @@ class Predict_Dataset_Metrics(Predict_Dataset):
                 if output_dict['stop_forecast']:
                     break
 
+
+def setup(rank, world_size, mode):
+    logging.info(f"Running {mode.upper()} on rank {rank} with world_size {world_size}.")
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
 
 
 def predict(rank, world_size, conf, p):
@@ -228,6 +409,14 @@ def predict(rank, world_size, conf, p):
     else:
         surface_files = None
 
+    # diagnostic variables
+    varname_diagnostic = conf['data']['diagnostic_variables']
+    
+    if conf["data"]['flag_diagnostic']:
+        diagnostic_files = sorted(glob(conf["data"]["save_loc_diagnostic"]))
+    else:
+        diagnostic_files = None
+    
     # dynamic forcing variables
     varname_dyn_forcing = conf['data']['dynamic_forcing_variables']
 
@@ -254,18 +443,20 @@ def predict(rank, world_size, conf, p):
     
     # ----------------------------------------------------------------- #\
     # get dataset
-    dataset = Predict_Dataset_Metrics(
+    dataset = Predict_Dataset(
         conf,
         varname_upper_air,
         varname_surface,
         varname_dyn_forcing,
         varname_forcing,
         varname_static,
+        varname_diagnostic,
         filenames=all_ERA_files,
         filename_surface=surface_files,
         filename_dyn_forcing=dyn_forcing_files,
         filename_forcing=forcing_files,
         filename_static=static_files,
+        filename_diagnostic=diagnostic_files,
         fcst_datetime=load_forecasts(conf),
         history_len=history_len,
         rank=rank,
@@ -274,7 +465,7 @@ def predict(rank, world_size, conf, p):
         rollout_p=0.0,
         which_forecast=None
     )
-
+    
     # setup the dataloder
     data_loader = torch.utils.data.DataLoader(
         dataset,
@@ -307,7 +498,6 @@ def predict(rank, world_size, conf, p):
     metrics = LatWeightedMetrics(conf, predict_mode=True)
     metrics_results = defaultdict(list)
 
-    dpf = None
     # Set up the diffusion and pole filters
     if (
         "use_laplace_filter" in conf["predict"]
@@ -416,6 +606,7 @@ def predict(rank, world_size, conf, p):
             )
             results.append(result)
             
+            
             metrics_results["datetime"].append(utc_datetime)
 
             print_str = f"Forecast: {forecast_count} "
@@ -437,7 +628,7 @@ def predict(rank, world_size, conf, p):
             #     # if static_dim_size=0 then :0 gives empty range
             #     x_detach = x[:, :-static_dim_size, 1:].detach() if static_dim_size else x[:, :, 1:].detach()
             #     x = torch.cat([x_detach, y_pred.detach()], dim=2)
-
+            
             # ============================================================ #
             # use previous step y_pred as the next step input
             if history_len == 1:
@@ -462,7 +653,7 @@ def predict(rank, world_size, conf, p):
                     x = torch.cat([x_detach, 
                                    y_pred.detach()], dim=2)
             # ============================================================ #
-            
+
             # Explicitly release GPU memory
             torch.cuda.empty_cache()
             gc.collect()
