@@ -589,7 +589,7 @@ if __name__ == "__main__":
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
     # ======================================================== #
-    if conf['data']['scaler_type'] == 'std_new':
+    if conf['data']['scaler_type'] in ['std_new', 'std_cached']:
         conf = CREDIT_main_parser(conf, parse_training=False, parse_predict=True, print_summary=False)
         predict_data_check(conf, print_summary=False)
     # ======================================================== #
