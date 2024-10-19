@@ -418,7 +418,7 @@ class CrossFormer(BaseModel):
         # define embedding layer using adjusted sizes
         # if the original sizes were good, adjusted sizes should == original sizes
         self.cube_embedding = CubeEmbedding(
-            (frames, self.image_height_adjust, self.image_width_adjust),
+            (frames, image_height, image_width),
             (frames, patch_height, patch_width),
             input_channels,
             dim[0]
@@ -509,11 +509,7 @@ if __name__ == "__main__":
     input_only_channels = 3
     frame_patch_size = 2
 
-    input_tensor = torch.randn(1, 
-                               channels * levels + surface_channels + input_only_channels, 
-                               frames, 
-                               image_height, 
-                               image_width).to("cuda")
+    input_tensor = torch.randn(1, channels * levels + surface_channels + input_only_channels, frames, image_height, image_width).to("cuda")
 
     model = CrossFormer(
         image_height=image_height,
@@ -524,12 +520,12 @@ if __name__ == "__main__":
         surface_channels=surface_channels,
         input_only_channels=input_only_channels,
         levels=levels,
-        dim=(32, 64, 128, 256),
-        depth=(2, 2, 8, 2),
-        global_window_size=(10, 5, 2, 1),
+        dim=(128, 256, 512, 1024),
+        depth=(2, 2, 18, 2),
+        global_window_size=(8, 4, 2, 1),
         local_window_size=5,
         cross_embed_kernel_sizes=((4, 8, 16, 32), (2, 4), (2, 4), (2, 4)),
-        cross_embed_strides=(2, 2, 2, 2),
+        cross_embed_strides=(4, 2, 2, 2),
         attn_dropout=0.,
         ff_dropout=0.,
     ).to("cuda")
