@@ -135,8 +135,6 @@ class Predict_Dataset_Metrics(Predict_Dataset):
 
                 # get all inputs in one xr.Dataset
                 sliced_x = self.load_zarr_as_input(i_file, i_init_start, i_init_end)
-                #print(i_file, i_init_start, i_init_end, N_times)
-                #print(sliced_x['time'])
                 
                 # Check if additional data from the next file is needed
                 if (len(sliced_x['time']) < self.history_len) or (i_init_end+1 >= N_times):
@@ -163,9 +161,6 @@ class Predict_Dataset_Metrics(Predict_Dataset):
                     sliced_y = self.load_zarr_as_input(i_file, i_init_end+1, i_init_end+1)
 
                 # Prepare data for transform application
-                # print(sliced_x['time'])
-                # print(sliced_y['time'])
-                
                 sample_x = {'historical_ERA5_images': sliced_x, 'target_ERA5_images': sliced_y}
 
                 if self.transform:
@@ -249,6 +244,14 @@ def predict(rank, world_size, conf, p):
     static_files = conf['data']['save_loc_static']
     varname_static = conf['data']['static_variables']
 
+    # number of diagnostic variables        
+    varnum_diag = len(conf["data"]['diagnostic_variables'])
+
+    # number of dynamic forcing + forcing + static
+    static_dim_size = len(conf['data']['dynamic_forcing_variables']) + \
+                      len(conf['data']['forcing_variables']) + \
+                      len(conf['data']['static_variables'])
+    
     # ----------------------------------------------------------------- #\
     # get dataset
     dataset = Predict_Dataset_Metrics(
@@ -413,7 +416,6 @@ def predict(rank, world_size, conf, p):
             )
             results.append(result)
             
-            
             metrics_results["datetime"].append(utc_datetime)
 
             print_str = f"Forecast: {forecast_count} "
@@ -425,17 +427,42 @@ def predict(rank, world_size, conf, p):
             # setup for next iteration, transform to z-space and send to device
             y_pred = state_transformer.transform_array(y_pred).to(device)
 
+            # if history_len == 1:
+            #     x = y_pred.detach()
+            # else:
+            #     # use multiple past forecast steps as inputs
+            #     # static channels will get updated on next pass
+            #     static_dim_size = abs(x.shape[1] - y_pred.shape[1])
+
+            #     # if static_dim_size=0 then :0 gives empty range
+            #     x_detach = x[:, :-static_dim_size, 1:].detach() if static_dim_size else x[:, :, 1:].detach()
+            #     x = torch.cat([x_detach, y_pred.detach()], dim=2)
+
+            # ============================================================ #
+            # use previous step y_pred as the next step input
             if history_len == 1:
-                x = y_pred.detach()
+                # cut diagnostic vars from y_pred, they are not inputs
+                if 'y_diag' in batch:
+                    x = y_pred[:, :-varnum_diag, ...].detach()
+                else:
+                    x = y_pred.detach()
+
+            # multi-step in
             else:
-                # use multiple past forecast steps as inputs
-                # static channels will get updated on next pass
-                static_dim_size = abs(x.shape[1] - y_pred.shape[1])
+                if static_dim_size == 0:
+                    x_detach = x[:, :, 1:, ...].detach()
+                else:
+                    x_detach = x[:, :-static_dim_size, 1:, ...].detach()
 
-                # if static_dim_size=0 then :0 gives empty range
-                x_detach = x[:, :-static_dim_size, 1:].detach() if static_dim_size else x[:, :, 1:].detach()
-                x = torch.cat([x_detach, y_pred.detach()], dim=2)
-
+                # cut diagnostic vars from y_pred, they are not inputs
+                if 'y_diag' in batch:
+                    x = torch.cat([x_detach, 
+                                   y_pred[:, :-varnum_diag, ...].detach()], dim=2)
+                else:
+                    x = torch.cat([x_detach, 
+                                   y_pred.detach()], dim=2)
+            # ============================================================ #
+            
             # Explicitly release GPU memory
             torch.cuda.empty_cache()
             gc.collect()
