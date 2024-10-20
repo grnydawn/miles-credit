@@ -50,7 +50,7 @@ from credit.distributed import distributed_model_wrapper, setup, get_rank_info
 from credit.models.checkpoint import load_model_state
 from credit.parser import CREDIT_main_parser, predict_data_check
 from credit.output import load_metadata, make_xarray, save_netcdf_increment
-
+from credit.postblock import GlobalMassFixer, GlobalEnergyFixer
 
 logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")
@@ -440,6 +440,26 @@ def predict(rank, world_size, conf, p):
     static_dim_size = len(conf['data']['dynamic_forcing_variables']) + \
                       len(conf['data']['forcing_variables']) + \
                       len(conf['data']['static_variables'])
+
+    # ====================================================== #
+    # postblock opts outside of model
+    post_conf = conf['model']['post_conf']
+    flag_mass_conserve = False
+    flag_energy_conserve = False
+    
+    if post_conf['activate']:
+        if post_conf['global_mass_fixer']['activate']:
+            if post_conf['global_mass_fixer']['activate_outside_model']:
+                logger.info('Activate GlobalMassFixer outside of model')
+                flag_mass_conserve = True
+                opt_mass = GlobalMassFixer(post_conf)
+
+        if post_conf['global_energy_fixer']['activate']:
+            if post_conf['global_energy_fixer']['activate_outside_model']:
+                logger.info('Activate GlobalEnergyFixer outside of model')
+                flag_energy_conserve = True
+                opt_energy = GlobalEnergyFixer(post_conf)
+    # ====================================================== #
     
     # ----------------------------------------------------------------- #\
     # get dataset
@@ -561,9 +581,31 @@ def predict(rank, world_size, conf, p):
                 y = reshape_only(batch["y"]).to(device).float()
 
             # -------------------------------------------------------------------------------------- #
-            # start prediction
+            # start prediction                
             y_pred = model(x)
+
+            # ============================================= #
+            # postblock opts outside of model
+
+            # backup init state
+            if flag_mass_conserve or flag_energy_conserve:
+                if forecast_hour == 1:
+                    x_init = x.clone()
+                    
+            if flag_mass_conserve:
+                input_dict = {'y_pred': y_pred, 'x': x_init}
+                input_dict = opt_mass(input_dict)
+                y_pred = input_dict['y_pred']
+                
+            if flag_energy_conserve:
+                input_dict = {'y_pred': y_pred, 'x': x_init}
+                input_dict = opt_energy(input_dict)
+                y_pred = input_dict['y_pred']
+            # ============================================= #
+
+            # y_pred with unit
             y_pred = state_transformer.inverse_transform(y_pred.cpu())
+            # y_target with unit
             y = state_transformer.inverse_transform(y.cpu())
 
             if ("use_laplace_filter" in conf["predict"] and conf["predict"]["use_laplace_filter"]):
