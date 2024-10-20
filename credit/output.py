@@ -112,8 +112,8 @@ def make_xarray(pred, forecast_datetime, lat, lon, conf):
             vars=varname_upper,
             time=[forecast_datetime],
             level=range(conf["model"]["levels"]),
-            lat=lat,
-            lon=lon,
+            latitude=lat,
+            longitude=lon,
         ),
     )
 
@@ -127,8 +127,8 @@ def make_xarray(pred, forecast_datetime, lat, lon, conf):
         coords=dict(
             vars=varname_single_level,
             time=[forecast_datetime],
-            lat=lat,
-            lon=lon,
+            latitude=lat,
+            longitude=lon,
         ),
     )
     
