@@ -402,6 +402,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         # these variables must be outputs
         
         # global mass fixer defaults
+        conf['model']['post_conf']['global_mass_fixer'].setdefault('activate_outside_model', False)
         conf['model']['post_conf']['global_mass_fixer'].setdefault('denorm', True)
         conf['model']['post_conf']['global_mass_fixer'].setdefault('simple_demo', False)
         conf['model']['post_conf']['global_mass_fixer'].setdefault('midpoint', False)
@@ -441,6 +442,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         # geopotential at surface is input, others are outputs
         
         # global energy fixer defaults
+        conf['model']['post_conf']['global_energy_fixer'].setdefault('activate_outside_model', False)
         conf['model']['post_conf']['global_energy_fixer'].setdefault('denorm', True)
         conf['model']['post_conf']['global_energy_fixer'].setdefault('simple_demo', False)
         conf['model']['post_conf']['global_energy_fixer'].setdefault('midpoint', False)
