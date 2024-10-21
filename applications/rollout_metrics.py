@@ -296,6 +296,7 @@ def predict(rank, world_size, conf, backend, p):
     # Set up metrics and containers
     metrics = LatWeightedMetrics(conf, predict_mode=True)
     metrics_results = defaultdict(list)
+    dpf = None
 
     # Set up the diffusion and pole filters
     if (
