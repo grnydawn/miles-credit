@@ -92,9 +92,11 @@ def test_fuxi():
     
     in_channels = channels * levels + surface_channels + input_only_channels
     out_channels = channels * levels + surface_channels + output_only_channels
-    input_tensor = torch.randn(1, in_channels, frames, image_height, image_width)
     
-    model = load_model(conf)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    input_tensor = torch.randn(1, in_channels, frames, image_height, image_width).to(device)
+    
+    model = load_model(conf).to(device)
     assert isinstance(model, Fuxi)
     
     y_pred = model(input_tensor)
