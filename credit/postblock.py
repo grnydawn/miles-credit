@@ -246,7 +246,7 @@ class GlobalMassFixer(nn.Module):
             axis=(-2, -1))
 
         q_correct_ratio = (mass_dry_sum_t0 - mass_dry_sum_t1_hold) / mass_dry_sum_t1_fix
-        q_correct_ratio = torch.clamp(q_correct_ratio, min=0.9, max=1.1)
+        #q_correct_ratio = torch.clamp(q_correct_ratio, min=0.9, max=1.1)
         
         # broadcast: (batch, 1, 1, 1, 1)
         q_correct_ratio = q_correct_ratio.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
@@ -382,7 +382,7 @@ class GlobalWaterFixer(nn.Module):
         
         # compute correction ratio
         P_correct_ratio = (P_sum + residual) / P_sum
-        P_correct_ratio = torch.clamp(P_correct_ratio, min=0.9, max=1.1)
+        #P_correct_ratio = torch.clamp(P_correct_ratio, min=0.9, max=1.1)
         # broadcast: (batch_size, 1, 1, 1)
         P_correct_ratio = P_correct_ratio.unsqueeze(-1).unsqueeze(-1)
         
@@ -568,7 +568,7 @@ class GlobalEnergyFixer(nn.Module):
 
         # total energy correction ratio
         E_correct_ratio = (self.N_seconds * (R_T_sum - F_S_sum) + global_TE_t0) / global_TE_t1
-        E_correct_ratio = torch.clamp(E_correct_ratio, min=0.9, max=1.1)
+        #E_correct_ratio = torch.clamp(E_correct_ratio, min=0.9, max=1.1)
         # broadcast: (batch, 1, 1, 1, 1)
         E_correct_ratio = E_correct_ratio.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
 
