@@ -8,6 +8,7 @@ def test_SKEBS_rand():
                           "model": {"image_width": image_width,}}}
     conf['post_conf']['tracer_fixer'] = {'activate': False}
     conf['post_conf']['global_mass_fixer'] = {'activate': False}
+    conf['post_conf']['global_water_fixer'] = {'activate': False}
     conf['post_conf']['global_energy_fixer'] = {'activate': False}
 
     input_tensor = torch.randn(image_width)
