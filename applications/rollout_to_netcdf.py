@@ -27,7 +27,14 @@ from torch.utils.data.distributed import DistributedSampler
 # credit
 from credit.models import load_model
 from credit.seed import seed_everything
-from credit.data import Predict_Dataset, concat_and_reshape, reshape_only, generate_datetime, nanoseconds_to_year, hour_to_nanoseconds
+from credit.data import (
+    Predict_Dataset,
+    concat_and_reshape,
+    reshape_only,
+    generate_datetime,
+    nanoseconds_to_year,
+    hour_to_nanoseconds,
+)
 from credit.transforms import load_transforms, Normalize_ERA5_and_Forcing
 from credit.pbs import launch_script, launch_script_mpi
 from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
@@ -47,61 +54,76 @@ os.environ["MKL_NUM_THREADS"] = "1"
 
 
 class Predict_Dataset_Metrics(Predict_Dataset):
-
     def find_start_stop_indices(self, index):
         # ============================================================================ #
         # shift hours for history_len > 1, becuase more than one init times are needed
         # <--- !! it MAY NOT work when self.skip_period != 1
-        shifted_hours = self.lead_time_periods * self.skip_periods * (self.history_len-1)
+        shifted_hours = (
+            self.lead_time_periods * self.skip_periods * (self.history_len - 1)
+        )
         # ============================================================================ #
         # subtrack shifted_hour form the 1st & last init times
         # convert to datetime object
         self.init_datetime[index][0] = datetime.strptime(
-            self.init_datetime[index][0], '%Y-%m-%d %H:%M:%S') - timedelta(hours=shifted_hours)
+            self.init_datetime[index][0], "%Y-%m-%d %H:%M:%S"
+        ) - timedelta(hours=shifted_hours)
         self.init_datetime[index][1] = datetime.strptime(
-            self.init_datetime[index][1], '%Y-%m-%d %H:%M:%S') - timedelta(hours=shifted_hours)
+            self.init_datetime[index][1], "%Y-%m-%d %H:%M:%S"
+        ) - timedelta(hours=shifted_hours)
 
         # convert the 1st & last init times to a list of init times
-        self.init_datetime[index] = generate_datetime(self.init_datetime[index][0], self.init_datetime[index][1], self.lead_time_periods)
+        self.init_datetime[index] = generate_datetime(
+            self.init_datetime[index][0],
+            self.init_datetime[index][1],
+            self.lead_time_periods,
+        )
         # convert datetime obj to nanosecondes
-        init_time_list_dt = [np.datetime64(date.strftime('%Y-%m-%d %H:%M:%S')) for date in self.init_datetime[index]]
-        
+        init_time_list_dt = [
+            np.datetime64(date.strftime("%Y-%m-%d %H:%M:%S"))
+            for date in self.init_datetime[index]
+        ]
+
         # init_time_list_np: a list of python datetime objects, each is a forecast step
         # init_time_list_np[0]: the first initialization time
         # init_time_list_np[t]: the forcasted time of the (t-1)th step; the initialization time of the t-th step
-        self.init_time_list_np = [np.datetime64(str(dt_obj) + '.000000000').astype(datetime) for dt_obj in init_time_list_dt]
+        self.init_time_list_np = [
+            np.datetime64(str(dt_obj) + ".000000000").astype(datetime)
+            for dt_obj in init_time_list_dt
+        ]
 
         info = []
         for init_time in self.init_time_list_np:
             for i_file, ds in enumerate(self.all_files):
                 # get the year of the current file
-                ds_year = int(np.datetime_as_string(ds['time'][0].values, unit='Y'))
-    
+                ds_year = int(np.datetime_as_string(ds["time"][0].values, unit="Y"))
+
                 # get the first and last years of init times
                 init_year0 = nanoseconds_to_year(init_time)
-    
+
                 # found the right yearly file
                 if init_year0 == ds_year:
-                    
-                    N_times = len(ds['time'])
+                    N_times = len(ds["time"])
                     # convert ds['time'] to a list of nanosecondes
-                    ds_time_list = [np.datetime64(ds_time.values).astype(datetime) for ds_time in ds['time']]
+                    ds_time_list = [
+                        np.datetime64(ds_time.values).astype(datetime)
+                        for ds_time in ds["time"]
+                    ]
                     ds_start_time = ds_time_list[0]
                     ds_end_time = ds_time_list[-1]
-    
+
                     init_time_start = init_time
                     # if initalization time is within this (yearly) xr.Dataset
                     if ds_start_time <= init_time_start <= ds_end_time:
-    
                         # try getting the index of the first initalization time
                         i_init_start = ds_time_list.index(init_time_start)
-    
+
                         # for multiple init time inputs (history_len > 1), init_end is different for init_start
-                        init_time_end = init_time_start + hour_to_nanoseconds(shifted_hours)
-    
+                        init_time_end = init_time_start + hour_to_nanoseconds(
+                            shifted_hours
+                        )
+
                         # see if init_time_end is alos in this file
                         if ds_start_time <= init_time_end <= ds_end_time:
-    
                             # try getting the index
                             i_init_end = ds_time_list.index(init_time_end)
                         else:
@@ -109,7 +131,7 @@ class Predict_Dataset_Metrics(Predict_Dataset):
                             # get the last element of the current file
                             # we have anthoer section that checks additional input data
                             i_init_end = len(ds_time_list) - 1
-    
+
                         info.append([i_file, i_init_start, i_init_end, N_times])
         return info
 
@@ -117,16 +139,17 @@ class Predict_Dataset_Metrics(Predict_Dataset):
         worker_info = get_worker_info()
         num_workers = worker_info.num_workers if worker_info is not None else 1
         worker_id = worker_info.id if worker_info is not None else 0
-        sampler = DistributedSampler(self,
-                                     num_replicas=num_workers*self.world_size,
-                                     rank=self.rank*num_workers+worker_id,
-                                     shuffle=False)
+        sampler = DistributedSampler(
+            self,
+            num_replicas=num_workers * self.world_size,
+            rank=self.rank * num_workers + worker_id,
+            shuffle=False,
+        )
         for index in sampler:
             # get the init time info for the current sample
             data_lookup = self.find_start_stop_indices(index)
 
             for k, _ in enumerate(self.init_time_list_np):
-
                 # the first initialization time: get initalization from data
                 i_file, i_init_start, i_init_end, N_times = data_lookup[k]
 
@@ -135,38 +158,50 @@ class Predict_Dataset_Metrics(Predict_Dataset):
 
                 # get all inputs in one xr.Dataset
                 sliced_x = self.load_zarr_as_input(i_file, i_init_start, i_init_end)
-                #print(i_file, i_init_start, i_init_end, N_times)
-                #print(sliced_x['time'])
-                
-                # Check if additional data from the next file is needed
-                if (len(sliced_x['time']) < self.history_len) or (i_init_end+1 >= N_times):
+                # print(i_file, i_init_start, i_init_end, N_times)
+                # print(sliced_x['time'])
 
+                # Check if additional data from the next file is needed
+                if (len(sliced_x["time"]) < self.history_len) or (
+                    i_init_end + 1 >= N_times
+                ):
                     # Load excess data from the next file
                     next_file_idx = self.filenames.index(self.filenames[i_file]) + 1
 
                     if next_file_idx >= len(self.filenames):
                         # not enough input data to support this forecast
-                        raise OSError("You have reached the end of the available data. Exiting.")
+                        raise OSError(
+                            "You have reached the end of the available data. Exiting."
+                        )
 
                     else:
                         # i_init_start = 0 because we need the beginning of the next file only
-                        sliced_x_next = self.load_zarr_as_input(next_file_idx, 0, self.history_len)
+                        sliced_x_next = self.load_zarr_as_input(
+                            next_file_idx, 0, self.history_len
+                        )
 
                         # Concatenate excess data from the next file with the current data
-                        sliced_xy = xr.concat([sliced_x, sliced_x_next], dim='time')
+                        sliced_xy = xr.concat([sliced_x, sliced_x_next], dim="time")
                         sliced_x = sliced_xy.isel(time=slice(0, self.history_len))
-                        
-                        sliced_y = sliced_xy.isel(time=slice(self.history_len, self.history_len+1))
-                        #self.load_zarr_as_input(next_file_idx, self.history_len, self.history_len+1)
+
+                        sliced_y = sliced_xy.isel(
+                            time=slice(self.history_len, self.history_len + 1)
+                        )
+                        # self.load_zarr_as_input(next_file_idx, self.history_len, self.history_len+1)
 
                 else:
-                    sliced_y = self.load_zarr_as_input(i_file, i_init_end+1, i_init_end+1)
+                    sliced_y = self.load_zarr_as_input(
+                        i_file, i_init_end + 1, i_init_end + 1
+                    )
 
                 # Prepare data for transform application
                 # print(sliced_x['time'])
                 # print(sliced_y['time'])
-                
-                sample_x = {'historical_ERA5_images': sliced_x, 'target_ERA5_images': sliced_y}
+
+                sample_x = {
+                    "historical_ERA5_images": sliced_x,
+                    "target_ERA5_images": sliced_y,
+                }
 
                 if self.transform:
                     sample_x = self.transform(sample_x)
@@ -175,21 +210,21 @@ class Predict_Dataset_Metrics(Predict_Dataset):
                     output_dict[key] = sample_x[key]
 
                 # <--- !! 'forecast_hour' is actually "forecast_step" but named by assuming hourly
-                output_dict['forecast_hour'] = k + 1
+                output_dict["forecast_hour"] = k + 1
                 # Adjust stopping condition
-                output_dict['stop_forecast'] = k == (len(self.init_time_list_np) - 1)
-                output_dict['datetime'] = sliced_x.time.values.astype('datetime64[s]').astype(int)[-1]
-                
+                output_dict["stop_forecast"] = k == (len(self.init_time_list_np) - 1)
+                output_dict["datetime"] = sliced_x.time.values.astype(
+                    "datetime64[s]"
+                ).astype(int)[-1]
+
                 # return output_dict
                 yield output_dict
 
-                if output_dict['stop_forecast']:
+                if output_dict["stop_forecast"]:
                     break
 
 
-
 def predict(rank, world_size, conf, p):
-
     # setup rank and world size for GPU-based rollout
     if conf["predict"]["mode"] in ["fsdp", "ddp"]:
         setup(rank, world_size, conf["predict"]["mode"])
@@ -209,45 +244,45 @@ def predict(rank, world_size, conf, p):
     history_len = conf["data"]["history_len"]
 
     # length of forecast steps
-    lead_time_periods = conf['data']['lead_time_periods']
+    lead_time_periods = conf["data"]["lead_time_periods"]
 
     # transform and ToTensor class
     transform = load_transforms(conf)
-    if conf["data"]["scaler_type"] == 'std_new':
+    if conf["data"]["scaler_type"] == "std_new":
         state_transformer = Normalize_ERA5_and_Forcing(conf)
     else:
-        print('Scaler type {} not supported'.format(conf["data"]["scaler_type"]))
+        print("Scaler type {} not supported".format(conf["data"]["scaler_type"]))
         raise
     # ----------------------------------------------------------------- #
     # parse varnames and save_locs from config
 
     # upper air variables
     all_ERA_files = sorted(glob(conf["data"]["save_loc"]))
-    varname_upper_air = conf['data']['variables']
+    varname_upper_air = conf["data"]["variables"]
 
     # surface variables
-    varname_surface = conf['data']['surface_variables']
+    varname_surface = conf["data"]["surface_variables"]
 
-    if conf["data"]['flag_surface']:
+    if conf["data"]["flag_surface"]:
         surface_files = sorted(glob(conf["data"]["save_loc_surface"]))
     else:
         surface_files = None
 
     # dynamic forcing variables
-    varname_dyn_forcing = conf['data']['dynamic_forcing_variables']
+    varname_dyn_forcing = conf["data"]["dynamic_forcing_variables"]
 
-    if conf["data"]['flag_dyn_forcing']:
+    if conf["data"]["flag_dyn_forcing"]:
         dyn_forcing_files = sorted(glob(conf["data"]["save_loc_dynamic_forcing"]))
     else:
         dyn_forcing_files = None
 
     # forcing variables
-    forcing_files = conf['data']['save_loc_forcing']
-    varname_forcing = conf['data']['forcing_variables']
+    forcing_files = conf["data"]["save_loc_forcing"]
+    varname_forcing = conf["data"]["forcing_variables"]
 
     # static variables
-    static_files = conf['data']['save_loc_static']
-    varname_static = conf['data']['static_variables']
+    static_files = conf["data"]["save_loc_static"]
+    varname_static = conf["data"]["static_variables"]
 
     # ----------------------------------------------------------------- #\
     # get dataset
@@ -269,7 +304,7 @@ def predict(rank, world_size, conf, p):
         world_size=world_size,
         transform=transform,
         rollout_p=0.0,
-        which_forecast=None
+        which_forecast=None,
     )
 
     # setup the dataloder
@@ -297,9 +332,9 @@ def predict(rank, world_size, conf, p):
 
     # get lat/lons from x-array
     latlons = xr.open_dataset(conf["loss"]["latitude_weights"])
-    
+
     meta_data = load_metadata(conf)
-    
+
     # Set up metrics and containers
     metrics = LatWeightedMetrics(conf, predict_mode=True)
     metrics_results = defaultdict(list)
@@ -328,32 +363,35 @@ def predict(rank, world_size, conf, p):
 
         # model inference loop
         for k, batch in enumerate(data_loader):
-
             # get the datetime and forecasted hours
             date_time = batch["datetime"].item()
             forecast_hour = batch["forecast_hour"].item()
             # initialization on the first forecast hour
             if forecast_hour == 1:
-
                 # Initialize x and x_surf with the first time step
                 if "x_surf" in batch:
                     # combine x and x_surf
                     # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon)
                     # output: (batch_num, var, time, lat, lon), 'x' first and then 'x_surf'
-                    x = concat_and_reshape(batch["x"], batch["x_surf"]).to(device).float()
+                    x = (
+                        concat_and_reshape(batch["x"], batch["x_surf"])
+                        .to(device)
+                        .float()
+                    )
                 else:
                     # no x_surf
                     x = reshape_only(batch["x"]).to(device).float()
 
                 init_datetime = datetime.utcfromtimestamp(date_time)
-                init_datetime_str = init_datetime.strftime('%Y-%m-%dT%HZ')
+                init_datetime_str = init_datetime.strftime("%Y-%m-%dT%HZ")
 
             # -------------------------------------------------------------------------------------- #
             # add forcing and static variables (regardless of fcst hours)
-            if 'x_forcing_static' in batch:
-
+            if "x_forcing_static" in batch:
                 # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
-                x_forcing_batch = batch['x_forcing_static'].to(device).permute(0, 2, 1, 3, 4).float()
+                x_forcing_batch = (
+                    batch["x_forcing_static"].to(device).permute(0, 2, 1, 3, 4).float()
+                )
 
                 # concat on var dimension
                 x = torch.cat((x, x_forcing_batch), dim=1)
@@ -373,7 +411,10 @@ def predict(rank, world_size, conf, p):
             y_pred = state_transformer.inverse_transform(y_pred.cpu())
             y = state_transformer.inverse_transform(y.cpu())
 
-            if ("use_laplace_filter" in conf["predict"] and conf["predict"]["use_laplace_filter"]):
+            if (
+                "use_laplace_filter" in conf["predict"]
+                and conf["predict"]["use_laplace_filter"]
+            ):
                 y_pred = (
                     dpf.diff_lap2d_filt(y_pred.to(device).squeeze())
                     .unsqueeze(0)
@@ -382,13 +423,17 @@ def predict(rank, world_size, conf, p):
                 )
 
             # Compute metrics
-            metrics_dict = metrics(y_pred.float(), y.float(), forecast_datetime=forecast_hour)
+            metrics_dict = metrics(
+                y_pred.float(), y.float(), forecast_datetime=forecast_hour
+            )
             for k, m in metrics_dict.items():
                 metrics_results[k].append(m.item())
             metrics_results["forecast_hour"].append(forecast_hour)
 
             # Save the current forecast hour data in parallel
-            utc_datetime = init_datetime + timedelta(hours=lead_time_periods*forecast_hour)
+            utc_datetime = init_datetime + timedelta(
+                hours=lead_time_periods * forecast_hour
+            )
 
             # convert the current step result as x-array
             darray_upper_air, darray_single_level = make_xarray(
@@ -398,22 +443,21 @@ def predict(rank, world_size, conf, p):
                 latlons.longitude.values,
                 conf,
             )
-            
+
             # Save the current forecast hour data in parallel
             result = p.apply_async(
                 save_netcdf_increment,
                 (
-                    darray_upper_air, 
-                     darray_single_level, 
-                     init_datetime_str, 
-                     lead_time_periods*forecast_hour, 
-                     meta_data, 
-                     conf
-                )
+                    darray_upper_air,
+                    darray_single_level,
+                    init_datetime_str,
+                    lead_time_periods * forecast_hour,
+                    meta_data,
+                    conf,
+                ),
             )
             results.append(result)
-            
-            
+
             metrics_results["datetime"].append(utc_datetime)
 
             print_str = f"Forecast: {forecast_count} "
@@ -433,7 +477,11 @@ def predict(rank, world_size, conf, p):
                 static_dim_size = abs(x.shape[1] - y_pred.shape[1])
 
                 # if static_dim_size=0 then :0 gives empty range
-                x_detach = x[:, :-static_dim_size, 1:].detach() if static_dim_size else x[:, :, 1:].detach()
+                x_detach = (
+                    x[:, :-static_dim_size, 1:].detach()
+                    if static_dim_size
+                    else x[:, :, 1:].detach()
+                )
                 x = torch.cat([x_detach, y_pred.detach()], dim=2)
 
             # Explicitly release GPU memory
@@ -444,12 +492,18 @@ def predict(rank, world_size, conf, p):
                 # Wait for all processes to finish in order
                 for result in results:
                     result.get()
-                    
+
                 # save metrics file
-                save_location = os.path.join(os.path.expandvars(conf["save_loc"]), "forecasts", "metrics")
-                os.makedirs(save_location, exist_ok=True)  # should already be made above
+                save_location = os.path.join(
+                    os.path.expandvars(conf["save_loc"]), "forecasts", "metrics"
+                )
+                os.makedirs(
+                    save_location, exist_ok=True
+                )  # should already be made above
                 df = pd.DataFrame(metrics_results)
-                df.to_csv(os.path.join(save_location, f"metrics{init_datetime_str}.csv"))
+                df.to_csv(
+                    os.path.join(save_location, f"metrics{init_datetime_str}.csv")
+                )
 
                 # forecast count = a constant for each run
                 forecast_count += 1
@@ -469,7 +523,6 @@ def predict(rank, world_size, conf, p):
 
 
 if __name__ == "__main__":
-
     description = "Rollout AI-NWP forecasts"
     parser = ArgumentParser(description=description)
     # -------------------- #
@@ -562,19 +615,23 @@ if __name__ == "__main__":
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
     # ======================================================== #
-    if conf['data']['scaler_type'] == 'std_new':
-        conf = CREDIT_main_parser(conf, parse_training=False, parse_predict=True, print_summary=False)
+    if conf["data"]["scaler_type"] == "std_new":
+        conf = CREDIT_main_parser(
+            conf, parse_training=False, parse_predict=True, print_summary=False
+        )
         predict_data_check(conf, print_summary=False)
     # ======================================================== #
 
     # create a save location for rollout
     # ---------------------------------------------------- #
-    assert 'save_forecast' in conf['predict'], "Please specify the output dir through conf['predict']['save_forecast']"
+    assert (
+        "save_forecast" in conf["predict"]
+    ), "Please specify the output dir through conf['predict']['save_forecast']"
 
-    forecast_save_loc = conf['predict']['save_forecast']
+    forecast_save_loc = conf["predict"]["save_forecast"]
     os.makedirs(forecast_save_loc, exist_ok=True)
 
-    print('Save roll-outs to {}'.format(forecast_save_loc))
+    print("Save roll-outs to {}".format(forecast_save_loc))
 
     # Create a project directory (to save launch.sh and model.yml) if they do not exist
     save_loc = os.path.expandvars(conf["save_loc"])
@@ -614,7 +671,6 @@ if __name__ == "__main__":
 
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
-    
 
     local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])
 

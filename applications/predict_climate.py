@@ -89,14 +89,13 @@ def split_and_reshape(tensor, conf):
     )
 
     # subset surface variables
-    tensor_single_level = tensor[:, -int(single_level_channels):, :, :]
+    tensor_single_level = tensor[:, -int(single_level_channels) :, :, :]
 
     # return x, surf for B, c, lat, lon output
     return tensor_upper_air, tensor_single_level
 
 
 def make_xarray(pred, forecast_datetime, lat, lon, conf):
-
     # subset upper air and surface variables
     tensor_upper_air, tensor_single_level = split_and_reshape(pred, conf)
 
@@ -145,12 +144,12 @@ def save_netcdf(list_darray_upper_air, list_darray_single_level, conf):
     )
 
     # create save directory for xarrays
-    save_location = os.path.join(os.path.expandvars(conf["save_loc"]), "climate", "netcdf")
+    save_location = os.path.join(
+        os.path.expandvars(conf["save_loc"]), "climate", "netcdf"
+    )
     os.makedirs(save_location, exist_ok=True)
 
-    nc_filename_all = os.path.join(
-        save_location, f"pred_{init_datetime_str}.nc"
-    )
+    nc_filename_all = os.path.join(save_location, f"pred_{init_datetime_str}.nc")
     ds_x = darray_upper_air_merge.to_dataset(dim="vars")
     ds_surf = darray_single_level_merge.to_dataset(dim="vars")
     ds = xr.merge([ds_x, ds_surf])
@@ -158,11 +157,11 @@ def save_netcdf(list_darray_upper_air, list_darray_single_level, conf):
         path=nc_filename_all,
         format="NETCDF4",
         engine="netcdf4",
-        encoding={variable: {"zlib": True, "complevel": 1} for variable in ds.data_vars}
+        encoding={
+            variable: {"zlib": True, "complevel": 1} for variable in ds.data_vars
+        },
     )
-    logger.info(
-        f"wrote .nc file for prediction: \n{nc_filename_all}"
-    )
+    logger.info(f"wrote .nc file for prediction: \n{nc_filename_all}")
 
     # return saved file names
     return nc_filename_all
@@ -214,7 +213,6 @@ def create_shared_mem(da, smm):
 
 
 def predict(rank, world_size, conf, pool, smm):
-
     if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
         setup(rank, world_size, conf["trainer"]["mode"])
 
@@ -313,15 +311,11 @@ def predict(rank, world_size, conf, pool, smm):
         filenames_surface = []
 
         # Total # of figures
-        N_vars = len(
-            conf["visualization"]["sigma_level_visualize"]["variable_keys"]
-        )
+        N_vars = len(conf["visualization"]["sigma_level_visualize"]["variable_keys"])
         N_vars += len(
             conf["visualization"]["diagnostic_variable_visualize"]["variable_keys"]
         )
-        N_vars += len(
-            conf["visualization"]["surface_visualize"]["variable_keys"]
-        )
+        N_vars += len(conf["visualization"]["surface_visualize"]["variable_keys"])
 
         # y_pred allocation
         y_pred = None
@@ -343,7 +337,7 @@ def predict(rank, world_size, conf, pool, smm):
 
             # get the datetime and forecasted hours
             date_time = batch["datetime"].item()
-            print('first datetime:', date_time)
+            print("first datetime:", date_time)
             forecast_hour = batch["forecast_hour"].item()
 
             # initialization on the first forecast hour
@@ -355,7 +349,7 @@ def predict(rank, world_size, conf, pool, smm):
                 init_time = datetime.datetime.utcfromtimestamp(date_time).strftime(
                     "%Y-%m-%dT%HZ"
                 )
-                print('init time!:', init_time)
+                print("init time!:", init_time)
                 img_save_loc = os.path.join(
                     os.path.expandvars(conf["save_loc"]),
                     f"forecasts/images_{init_time}",
@@ -366,20 +360,38 @@ def predict(rank, world_size, conf, pool, smm):
             # Add statics
             if "static" in batch:
                 if static is None:
-                    static = batch["static"].to(device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float()
+                    static = (
+                        batch["static"]
+                        .to(device)
+                        .unsqueeze(2)
+                        .expand(-1, -1, x.shape[2], -1, -1)
+                        .float()
+                    )
                 x = torch.cat((x, static.clone()), dim=1)
 
             # Add solar "statics"
-            if "static_variables" in conf["data"] and "tsi" in conf["data"]["static_variables"]:
+            if (
+                "static_variables" in conf["data"]
+                and "tsi" in conf["data"]["static_variables"]
+            ):
                 if k == 0:
                     toaDL = TOADataLoader(conf)
                 elapsed_time = pd.Timedelta(hours=k)
-                tnow = pd.to_datetime(datetime.datetime.utcfromtimestamp(batch["datetime"]))
+                tnow = pd.to_datetime(
+                    datetime.datetime.utcfromtimestamp(batch["datetime"])
+                )
                 tnow = tnow + elapsed_time
                 if history_len == 1:
-                    current_times = [pd.to_datetime(datetime.datetime.utcfromtimestamp(_t)) + elapsed_time for _t in tnow]
+                    current_times = [
+                        pd.to_datetime(datetime.datetime.utcfromtimestamp(_t))
+                        + elapsed_time
+                        for _t in tnow
+                    ]
                 else:
-                    current_times = [tnow if hl == 0 else tnow - pd.Timedelta(hours=hl) for hl in range(history_len)]
+                    current_times = [
+                        tnow if hl == 0 else tnow - pd.Timedelta(hours=hl)
+                        for hl in range(history_len)
+                    ]
 
                 toa = torch.cat([toaDL(_t) for _t in current_times], dim=0).to(device)
                 toa = toa.squeeze().unsqueeze(0)
@@ -527,7 +539,9 @@ def predict(rank, world_size, conf, pool, smm):
                 x = y_pred.detach()
             else:
                 # use multiple past forecast steps as inputs
-                static_dim_size = abs(x.shape[1] - y_pred.shape[1])  # static channels will get updated on next pass
+                static_dim_size = abs(
+                    x.shape[1] - y_pred.shape[1]
+                )  # static channels will get updated on next pass
                 x_detach = x[:, :-static_dim_size, 1:].detach()
                 x = torch.cat([x_detach, y_pred.detach()], dim=2)
 
@@ -552,7 +566,10 @@ def predict(rank, world_size, conf, pool, smm):
 
             if len(list_darray_upper_air) > save_number_forecasts:
                 # save forecast results to file
-                if "save_format" in conf["predict"] and conf["predict"]["save_format"] == "nc":
+                if (
+                    "save_format" in conf["predict"]
+                    and conf["predict"]["save_format"] == "nc"
+                ):
                     logger.info("Save forecasts as netCDF format")
                     _ = save_netcdf(
                         list_darray_upper_air, list_darray_single_level, conf
@@ -584,36 +601,52 @@ def predict(rank, world_size, conf, pool, smm):
         bingo = 0
         end_date = pd.to_datetime(end_date)
         while bingo < 20:
-            print('k is :', k)
+            print("k is :", k)
 
             # deal with the time step:
             elapsed_time = pd.Timedelta(hours=k)
             tnow = pd.to_datetime(datetime.datetime.utcfromtimestamp(batch["datetime"]))
             tnow = tnow + elapsed_time
             # setup save directory for images
-            file_save_name_time = tnow.strftime(
-                    "%Y-%m-%dT%HZ"
-                )
-            print('time now is:', tnow, file_save_name_time)
+            file_save_name_time = tnow.strftime("%Y-%m-%dT%HZ")
+            print("time now is:", tnow, file_save_name_time)
             start_time = time.time()
 
             # Add statics
             if "static" in batch:
                 if static is None:
-                    static = batch["static"].to(device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float()
+                    static = (
+                        batch["static"]
+                        .to(device)
+                        .unsqueeze(2)
+                        .expand(-1, -1, x.shape[2], -1, -1)
+                        .float()
+                    )
                 x = torch.cat((x, static.clone()), dim=1)
 
             # Add solar "statics"
-            if "static_variables" in conf["data"] and "tsi" in conf["data"]["static_variables"]:
+            if (
+                "static_variables" in conf["data"]
+                and "tsi" in conf["data"]["static_variables"]
+            ):
                 if k == 0:
                     toaDL = TOADataLoader(conf)
                 elapsed_time = pd.Timedelta(hours=k)
-                tnow = pd.to_datetime(datetime.datetime.utcfromtimestamp(batch["datetime"]))
+                tnow = pd.to_datetime(
+                    datetime.datetime.utcfromtimestamp(batch["datetime"])
+                )
                 tnow = tnow + elapsed_time
                 if history_len == 1:
-                    current_times = [pd.to_datetime(datetime.datetime.utcfromtimestamp(_t)) + elapsed_time for _t in tnow]
+                    current_times = [
+                        pd.to_datetime(datetime.datetime.utcfromtimestamp(_t))
+                        + elapsed_time
+                        for _t in tnow
+                    ]
                 else:
-                    current_times = [tnow if hl == 0 else tnow - pd.Timedelta(hours=hl) for hl in range(history_len)]
+                    current_times = [
+                        tnow if hl == 0 else tnow - pd.Timedelta(hours=hl)
+                        for hl in range(history_len)
+                    ]
 
                 toa = torch.cat([toaDL(_t) for _t in current_times], dim=0).to(device)
                 toa = toa.squeeze().unsqueeze(0)
@@ -761,7 +794,9 @@ def predict(rank, world_size, conf, pool, smm):
                 x = y_pred.detach()
             else:
                 # use multiple past forecast steps as inputs
-                static_dim_size = abs(x.shape[1] - y_pred.shape[1])  # static channels will get updated on next pass
+                static_dim_size = abs(
+                    x.shape[1] - y_pred.shape[1]
+                )  # static channels will get updated on next pass
                 x_detach = x[:, :-static_dim_size, 1:].detach()
                 x = torch.cat([x_detach, y_pred.detach()], dim=2)
 
@@ -785,9 +820,11 @@ def predict(rank, world_size, conf, pool, smm):
             print(len(list_darray_upper_air))
 
             if len(list_darray_upper_air) > save_number_forecasts:
-
                 # save forecast results to file
-                if "save_format" in conf["predict"] and conf["predict"]["save_format"] == "nc":
+                if (
+                    "save_format" in conf["predict"]
+                    and conf["predict"]["save_format"] == "nc"
+                ):
                     logger.info("Save forecasts as netCDF format")
                     _ = save_netcdf(
                         list_darray_upper_air, list_darray_single_level, conf
@@ -837,7 +874,6 @@ def predict(rank, world_size, conf, pool, smm):
 
 
 if __name__ == "__main__":
-
     description = "Rollout AI-NWP forecasts"
     parser = ArgumentParser(description=description)
     # -------------------- #
@@ -953,7 +989,11 @@ if __name__ == "__main__":
 
     if no_data:
         # set the fields in the config file to prevent any movies from being made
-        for movie_option in ["sigma_level_visualize", "diagnostic_variable_visualize", "surface_visualize"]:
+        for movie_option in [
+            "sigma_level_visualize",
+            "diagnostic_variable_visualize",
+            "surface_visualize",
+        ]:
             conf["visualization"][movie_option] = []
 
     # ---------------------------------------------------------------------------------- #

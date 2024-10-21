@@ -9,15 +9,17 @@ from credit.models.crossformer import CrossFormer
 from credit.parser import CREDIT_main_parser
 
 TEST_FILE_DIR = "/".join(os.path.abspath(__file__).split("/")[:-1])
-CONFIG_FILE_DIR = os.path.join("/".join(os.path.abspath(__file__).split("/")[:-2]),
-                      "config")
+CONFIG_FILE_DIR = os.path.join(
+    "/".join(os.path.abspath(__file__).split("/")[:-2]), "config"
+)
+
 
 def test_unet():
-    #load config
+    # load config
     config = os.path.join(CONFIG_FILE_DIR, "unet_test.yml")
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
-    
+
     conf = CREDIT_main_parser(conf)
     model = load_model(conf)
 
@@ -29,13 +31,14 @@ def test_unet():
     levels = conf["model"]["levels"]
     frames = conf["model"]["frames"]
     surface_variables = len(conf["data"]["surface_variables"])
-    input_only_variables = (len(conf["data"]["static_variables"])
-                            + len(conf["data"]["dynamic_forcing_variables"]))
+    input_only_variables = len(conf["data"]["static_variables"]) + len(
+        conf["data"]["dynamic_forcing_variables"]
+    )
     output_only_variables = conf["model"]["output_only_channels"]
 
-    in_channels = int(variables*levels + surface_variables + input_only_variables)
-    out_channels = int(variables*levels + surface_variables + output_only_variables)
-    
+    in_channels = int(variables * levels + surface_variables + input_only_variables)
+    out_channels = int(variables * levels + surface_variables + output_only_variables)
+
     assert in_channels != out_channels
 
     input_tensor = torch.randn(1, in_channels, frames, image_height, image_width)
@@ -45,8 +48,9 @@ def test_unet():
     assert y_pred.shape == torch.Size([1, out_channels, 1, image_height, image_width])
     assert not torch.isnan(y_pred).any()
 
-def test_crossformer(): 
-    #load config
+
+def test_crossformer():
+    # load config
     config = os.path.join(CONFIG_FILE_DIR, "wxformer_1dg_test.yml")
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
@@ -67,14 +71,13 @@ def test_crossformer():
     model = load_model(conf)
     assert isinstance(model, CrossFormer)
 
-
     y_pred = model(input_tensor)
-    assert y_pred.shape == torch.Size([1, in_channels - input_only_channels, 1, image_height, image_width])
+    assert y_pred.shape == torch.Size(
+        [1, in_channels - input_only_channels, 1, image_height, image_width]
+    )
     assert not torch.isnan(y_pred).any()
+
 
 if __name__ == "__main__":
     test_unet()
     # test_crossformer()
-
-
-

@@ -4,10 +4,9 @@ import xarray as xr
 
 
 class LatWeightedMetrics:
-
     def __init__(self, conf):
-        lat_file = conf['loss']['latitude_weights']
-        atmos_vars = conf['data']['variables']
+        lat_file = conf["loss"]["latitude_weights"]
+        atmos_vars = conf["data"]["variables"]
         self.vars = atmos_vars
 
         self.w_lat = None
@@ -19,7 +18,10 @@ class LatWeightedMetrics:
 
         self.w_var = None
         if conf["loss"]["use_variable_weights"]:
-            var_weights = [value if isinstance(value, list) else [value] for value in conf["loss"]["variable_weights"].values()]
+            var_weights = [
+                value if isinstance(value, list) else [value]
+                for value in conf["loss"]["variable_weights"].values()
+            ]
             var_weights = [item for sublist in var_weights for item in sublist]
             self.w_var = torch.from_numpy(var_weights).unsqueeze(0).unsqueeze(-1)
 
@@ -29,8 +31,16 @@ class LatWeightedMetrics:
             y = transform(y)
 
         # Get latitude and variable weights
-        w_lat = self.w_lat.to(dtype=pred.dtype, device=pred.device) if self.w_lat is not None else 1.
-        w_var = self.w_var.to(dtype=pred.dtype, device=pred.device) if self.w_var is not None else 1.
+        w_lat = (
+            self.w_lat.to(dtype=pred.dtype, device=pred.device)
+            if self.w_lat is not None
+            else 1.0
+        )
+        w_var = (
+            self.w_var.to(dtype=pred.dtype, device=pred.device)
+            if self.w_var is not None
+            else 1.0
+        )
 
         if clim is not None:
             clim = clim.to(device=y.device).unsqueeze(0)
@@ -39,7 +49,7 @@ class LatWeightedMetrics:
 
         loss_dict = {}
         with torch.no_grad():
-            error = (pred - y)
+            error = pred - y
             for i, var in enumerate(self.vars):
                 pred_prime = pred[:, i] - torch.mean(pred[:, i])
                 y_prime = y[:, i] - torch.mean(y[:, i])
@@ -47,28 +57,49 @@ class LatWeightedMetrics:
                 # Add epsilon to avoid division by zero
                 epsilon = 1e-7
 
-                denominator = torch.sqrt(
-                    torch.sum(w_var * w_lat * pred_prime**2) * torch.sum(w_var * w_lat * y_prime**2)
-                ) + epsilon
+                denominator = (
+                    torch.sqrt(
+                        torch.sum(w_var * w_lat * pred_prime**2)
+                        * torch.sum(w_var * w_lat * y_prime**2)
+                    )
+                    + epsilon
+                )
 
-                loss_dict[f"acc_{var}"] = torch.sum(w_var * w_lat * pred_prime * y_prime) / denominator
+                loss_dict[f"acc_{var}"] = (
+                    torch.sum(w_var * w_lat * pred_prime * y_prime) / denominator
+                )
                 loss_dict[f"rmse_{var}"] = torch.mean(
-                    torch.sqrt(torch.mean(error[:, i] ** 2 * w_lat * w_var, dim=(-2, -1)))
+                    torch.sqrt(
+                        torch.mean(error[:, i] ** 2 * w_lat * w_var, dim=(-2, -1))
+                    )
                 )
                 loss_dict[f"mse_{var}"] = (error[:, i] ** 2 * w_lat * w_var).mean()
-                loss_dict[f"mae_{var}"] = (torch.abs(error[:, i]) * w_lat * w_var).mean()
+                loss_dict[f"mae_{var}"] = (
+                    torch.abs(error[:, i]) * w_lat * w_var
+                ).mean()
 
         # Calculate metrics averages
-        loss_dict["acc"] = np.mean([loss_dict[k].cpu().item() for k in loss_dict.keys() if "acc_" in k])
-        loss_dict["rmse"] = np.mean([loss_dict[k].cpu() for k in loss_dict.keys() if "rmse_" in k])
-        loss_dict["mse"] = np.mean([loss_dict[k].cpu() for k in loss_dict.keys() if "mse_" in k and "rmse_" not in k])
-        loss_dict["mae"] = np.mean([loss_dict[k].cpu() for k in loss_dict.keys() if "mae_" in k])
+        loss_dict["acc"] = np.mean(
+            [loss_dict[k].cpu().item() for k in loss_dict.keys() if "acc_" in k]
+        )
+        loss_dict["rmse"] = np.mean(
+            [loss_dict[k].cpu() for k in loss_dict.keys() if "rmse_" in k]
+        )
+        loss_dict["mse"] = np.mean(
+            [
+                loss_dict[k].cpu()
+                for k in loss_dict.keys()
+                if "mse_" in k and "rmse_" not in k
+            ]
+        )
+        loss_dict["mae"] = np.mean(
+            [loss_dict[k].cpu() for k in loss_dict.keys() if "mae_" in k]
+        )
 
         return loss_dict
 
 
 def anomaly_correlation_coefficient(pred, true):
-
     pred = pred.float()
     true = true.float()
 
@@ -87,15 +118,19 @@ def anomaly_correlation_coefficient(pred, true):
     true_anomaly = true_flat - true_mean
 
     # Covariance matrix
-    covariance_matrix = torch.bmm(pred_anomaly, true_anomaly.transpose(1, 2)) / (H * W - 1)
+    covariance_matrix = torch.bmm(pred_anomaly, true_anomaly.transpose(1, 2)) / (
+        H * W - 1
+    )
 
     # Variance terms
     pred_var = torch.bmm(pred_anomaly, pred_anomaly.transpose(1, 2)) / (H * W - 1)
     true_var = torch.bmm(true_anomaly, true_anomaly.transpose(1, 2)) / (H * W - 1)
 
     # Anomaly Correlation Coefficient
-    acc_numerator = torch.einsum('bii->b', covariance_matrix).sum()
-    acc_denominator = torch.sqrt(torch.einsum('bii->b', pred_var).sum() * torch.einsum('bii->b', true_var).sum())
+    acc_numerator = torch.einsum("bii->b", covariance_matrix).sum()
+    acc_denominator = torch.sqrt(
+        torch.einsum("bii->b", pred_var).sum() * torch.einsum("bii->b", true_var).sum()
+    )
 
     # Avoid division by zero
     epsilon = 1e-8

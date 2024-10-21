@@ -35,16 +35,16 @@ from torchvision import transforms
 
 from torch.distributed.fsdp.fully_sharded_data_parallel import (
     MixedPrecision,
-    CPUOffload
+    CPUOffload,
 )
 from torch.distributed.fsdp.wrap import (
     transformer_auto_wrap_policy,
     size_based_auto_wrap_policy,
 )
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
-   checkpoint_wrapper,
-   CheckpointImpl,
-   apply_activation_checkpointing,
+    checkpoint_wrapper,
+    CheckpointImpl,
+    apply_activation_checkpointing,
 )
 
 # ---------- #
@@ -60,10 +60,7 @@ from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
 from credit.forecast import load_forecasts
 # from credit.trainer import TOADataLoader
 
-from credit.models.checkpoint import (
-    TorchFSDPModel,
-    TorchFSDPCheckpointIO
-)
+from credit.models.checkpoint import TorchFSDPModel, TorchFSDPCheckpointIO
 from credit.mixed_precision import parse_dtype
 
 # ---------- #
@@ -92,10 +89,11 @@ class TOADataLoader:
 
         # Use vectorized comparison for masking
         mask_toa = (self.days_of_year == doy) & (self.hours_of_day == hod)
-        selected_tsi = self.TOA['tsi'].sel(time=mask_toa) / 2540585.74
+        selected_tsi = self.TOA["tsi"].sel(time=mask_toa) / 2540585.74
 
         # Convert to tensor and add dimension
         return torch.tensor(selected_tsi.to_numpy()).unsqueeze(0).float()
+
 
 def get_num_cpus():
     num_cpus = len(os.sched_getaffinity(0))
@@ -132,14 +130,13 @@ def split_and_reshape(tensor, conf):
     )
 
     # subset surface variables
-    tensor_single_level = tensor[:, -int(single_level_channels):, :, :]
+    tensor_single_level = tensor[:, -int(single_level_channels) :, :, :]
 
     # return x, surf for B, c, lat, lon output
     return tensor_upper_air, tensor_single_level
 
 
 def make_xarray(pred, forecast_datetime, lat, lon, conf):
-
     # subset upper air and surface variables
     tensor_upper_air, tensor_single_level = split_and_reshape(pred, conf)
 
@@ -188,12 +185,12 @@ def save_netcdf(list_darray_upper_air, list_darray_single_level, conf):
     )
 
     # create save directory for xarrays
-    save_location = os.path.join(os.path.expandvars(conf["save_loc"]), "weather", "netcdf")
+    save_location = os.path.join(
+        os.path.expandvars(conf["save_loc"]), "weather", "netcdf"
+    )
     os.makedirs(save_location, exist_ok=True)
 
-    nc_filename_all = os.path.join(
-        save_location, f"pred_{init_datetime_str}.nc"
-    )
+    nc_filename_all = os.path.join(save_location, f"pred_{init_datetime_str}.nc")
     ds_x = darray_upper_air_merge.to_dataset(dim="vars")
     ds_surf = darray_single_level_merge.to_dataset(dim="vars")
     ds = xr.merge([ds_x, ds_surf])
@@ -201,11 +198,11 @@ def save_netcdf(list_darray_upper_air, list_darray_single_level, conf):
         path=nc_filename_all,
         format="NETCDF4",
         engine="netcdf4",
-        encoding={variable: {"zlib": True, "complevel": 1} for variable in ds.data_vars}
+        encoding={
+            variable: {"zlib": True, "complevel": 1} for variable in ds.data_vars
+        },
     )
-    logger.info(
-        f"wrote .nc file for prediction: \n{nc_filename_all}"
-    )
+    logger.info(f"wrote .nc file for prediction: \n{nc_filename_all}")
 
     # return saved file names
     return nc_filename_all
@@ -257,9 +254,7 @@ def create_shared_mem(da, smm):
 
 
 def distributed_model_wrapper(conf, neural_network, device):
-
     if conf["trainer"]["mode"] == "fsdp":
-
         # Define the sharding policies
 
         if "crossformer" in conf["model"]["type"]:
@@ -267,11 +262,12 @@ def distributed_model_wrapper(conf, neural_network, device):
         elif "fuxi" in conf["model"]["type"]:
             from credit.models.fuxi import UTransformer as Attend
         else:
-            raise OSError("You asked for FSDP but only crossformer and fuxi are currently supported.")
+            raise OSError(
+                "You asked for FSDP but only crossformer and fuxi are currently supported."
+            )
 
         auto_wrap_policy1 = functools.partial(
-            transformer_auto_wrap_policy,
-            transformer_layer_cls={Attend}
+            transformer_auto_wrap_policy, transformer_layer_cls={Attend}
         )
 
         auto_wrap_policy2 = functools.partial(
@@ -286,20 +282,30 @@ def distributed_model_wrapper(conf, neural_network, device):
 
         # Mixed precision
 
-        use_mixed_precision = conf["trainer"]["use_mixed_precision"] if "use_mixed_precision" in conf["trainer"] else False
+        use_mixed_precision = (
+            conf["trainer"]["use_mixed_precision"]
+            if "use_mixed_precision" in conf["trainer"]
+            else False
+        )
 
         logging.info(f"Using mixed_precision: {use_mixed_precision}")
 
         if use_mixed_precision:
             for key, val in conf["trainer"]["mixed_precision"].items():
                 conf["trainer"]["mixed_precision"][key] = parse_dtype(val)
-            mixed_precision_policy = MixedPrecision(**conf["trainer"]["mixed_precision"])
+            mixed_precision_policy = MixedPrecision(
+                **conf["trainer"]["mixed_precision"]
+            )
         else:
             mixed_precision_policy = None
 
         # CPU offloading
 
-        cpu_offload = conf["trainer"]["cpu_offload"] if "cpu_offload" in conf["trainer"] else False
+        cpu_offload = (
+            conf["trainer"]["cpu_offload"]
+            if "cpu_offload" in conf["trainer"]
+            else False
+        )
 
         logging.info(f"Using CPU offloading: {cpu_offload}")
 
@@ -310,17 +316,20 @@ def distributed_model_wrapper(conf, neural_network, device):
             use_orig_params=True,
             auto_wrap_policy=combined_auto_wrap_policy,
             mixed_precision=mixed_precision_policy,
-            cpu_offload=CPUOffload(offload_params=cpu_offload)
+            cpu_offload=CPUOffload(offload_params=cpu_offload),
         )
 
         # activation checkpointing on the transformer blocks
 
-        activation_checkpoint = conf["trainer"]["activation_checkpoint"] if "activation_checkpoint" in conf["trainer"] else False
+        activation_checkpoint = (
+            conf["trainer"]["activation_checkpoint"]
+            if "activation_checkpoint" in conf["trainer"]
+            else False
+        )
 
         logging.info(f"Activation checkpointing: {activation_checkpoint}")
 
         if activation_checkpoint:
-
             # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
 
             non_reentrant_wrapper = functools.partial(
@@ -331,9 +340,7 @@ def distributed_model_wrapper(conf, neural_network, device):
             check_fn = lambda submodule: isinstance(submodule, Attend)
 
             apply_activation_checkpointing(
-                model,
-                checkpoint_wrapper_fn=non_reentrant_wrapper,
-                check_fn=check_fn
+                model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=check_fn
             )
 
     elif conf["trainer"]["mode"] == "ddp":
@@ -345,26 +352,33 @@ def distributed_model_wrapper(conf, neural_network, device):
 
 
 def load_model_state(conf, model, device):
-    save_loc = os.path.expandvars(conf['save_loc'])
+    save_loc = os.path.expandvars(conf["save_loc"])
     #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
     ckpt = os.path.join(save_loc, "checkpoint.pt")
     checkpoint = torch.load(ckpt, map_location=device)
     if conf["trainer"]["mode"] == "fsdp":
-        logging.info(f"Loading FSDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+        logging.info(
+            f"Loading FSDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}"
+        )
         checkpoint_io = TorchFSDPCheckpointIO()
-        checkpoint_io.load_unsharded_model(model, os.path.join(save_loc, "model_checkpoint.pt"))
+        checkpoint_io.load_unsharded_model(
+            model, os.path.join(save_loc, "model_checkpoint.pt")
+        )
     else:
         if conf["trainer"]["mode"] == "ddp":
-            logging.info(f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+            logging.info(
+                f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}"
+            )
             model.module.load_state_dict(checkpoint["model_state_dict"])
         else:
-            logging.info(f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}")
+            logging.info(
+                f"Loading model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}"
+            )
             model.load_state_dict(checkpoint["model_state_dict"])
     return model
 
 
 def predict(rank, world_size, conf, pool, smm):
-
     if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
         setup(rank, world_size, conf["trainer"]["mode"])
 
@@ -468,39 +482,35 @@ def predict(rank, world_size, conf, pool, smm):
         filenames_surface = []
 
         # Total # of figures
-        N_vars = len(
-            conf["visualization"]["sigma_level_visualize"]["variable_keys"]
-        )
+        N_vars = len(conf["visualization"]["sigma_level_visualize"]["variable_keys"])
         N_vars += len(
             conf["visualization"]["diagnostic_variable_visualize"]["variable_keys"]
         )
-        N_vars += len(
-            conf["visualization"]["surface_visualize"]["variable_keys"]
-        )
+        N_vars += len(conf["visualization"]["surface_visualize"]["variable_keys"])
 
         # y_pred allocation
         y_pred = None
         static = None
         loop_time = time.time()
-        
+
         # model inference loops
         k = 0
-        time_step = 1 # this will have to change (hr)
+        time_step = 1  # this will have to change (hr)
         start_date = conf["predict"]["forecasts"][0][0]
-        end_date =conf["predict"]["forecasts"][0][1]
+        end_date = conf["predict"]["forecasts"][0][1]
         next_fore = 0
-        print('Forecasts!!!!:',conf["predict"]["forecasts"])
+        print("Forecasts!!!!:", conf["predict"]["forecasts"])
 
         # First loop is context setting
         for batch in data_loader:
-            print('next fore is:', next_fore)
-            end_date =conf["predict"]["forecasts"][next_fore][1]
+            print("next fore is:", next_fore)
+            end_date = conf["predict"]["forecasts"][next_fore][1]
             end_date = pd.to_datetime(end_date)
             start_time = time.time()
 
             # get the datetime and forecasted hours
             date_time = batch["datetime"].item()
-            print('first datetime:', date_time)
+            print("first datetime:", date_time)
             forecast_hour = batch["forecast_hour"].item()
 
             # initialization on the first forecast hour
@@ -512,7 +522,7 @@ def predict(rank, world_size, conf, pool, smm):
                 init_time = datetime.datetime.utcfromtimestamp(date_time).strftime(
                     "%Y-%m-%dT%HZ"
                 )
-                print('init time!:', init_time)
+                print("init time!:", init_time)
                 img_save_loc = os.path.join(
                     os.path.expandvars(conf["save_loc"]),
                     f"forecasts/images_{init_time}",
@@ -523,28 +533,46 @@ def predict(rank, world_size, conf, pool, smm):
             # Add statics
             if "static" in batch:
                 if static is None:
-                    static = batch["static"].to(device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float()
+                    static = (
+                        batch["static"]
+                        .to(device)
+                        .unsqueeze(2)
+                        .expand(-1, -1, x.shape[2], -1, -1)
+                        .float()
+                    )
                 x = torch.cat((x, static.clone()), dim=1)
 
             # Add solar "statics"
-            if "static_variables" in conf["data"] and "tsi" in conf["data"]["static_variables"]:
-                if k==0:
+            if (
+                "static_variables" in conf["data"]
+                and "tsi" in conf["data"]["static_variables"]
+            ):
+                if k == 0:
                     toaDL = TOADataLoader(conf)
                 elapsed_time = pd.Timedelta(hours=k)
-                tnow = pd.to_datetime(datetime.datetime.utcfromtimestamp(batch["datetime"]))
+                tnow = pd.to_datetime(
+                    datetime.datetime.utcfromtimestamp(batch["datetime"])
+                )
                 tnow = tnow + elapsed_time
                 if history_len == 1:
-                    current_times = [pd.to_datetime(datetime.datetime.utcfromtimestamp(_t)) + elapsed_time for _t in tnow]
+                    current_times = [
+                        pd.to_datetime(datetime.datetime.utcfromtimestamp(_t))
+                        + elapsed_time
+                        for _t in tnow
+                    ]
                 else:
-                    current_times = [tnow if hl == 0 else tnow - pd.Timedelta(hours=hl) for hl in range(history_len)]
-                
+                    current_times = [
+                        tnow if hl == 0 else tnow - pd.Timedelta(hours=hl)
+                        for hl in range(history_len)
+                    ]
+
                 toa = torch.cat([toaDL(_t) for _t in current_times], dim=0).to(device)
                 toa = toa.squeeze().unsqueeze(0)
-                #print(f"toa shape 1: {toa.shape} || ")
+                # print(f"toa shape 1: {toa.shape} || ")
                 print_str2 = f"toa shape 2: {toa.unsqueeze(1).shape} || "
                 x = torch.cat([x, toa.unsqueeze(1).to(device).float()], dim=1)
                 k += 1
-            
+
             y_pred = model(x)
 
             end_time = time.time()
@@ -684,7 +712,9 @@ def predict(rank, world_size, conf, pool, smm):
                 x = y_pred.detach()
             else:
                 # use multiple past forecast steps as inputs
-                static_dim_size = abs(x.shape[1] - y_pred.shape[1])  # static channels will get updated on next pass
+                static_dim_size = abs(
+                    x.shape[1] - y_pred.shape[1]
+                )  # static channels will get updated on next pass
                 x_detach = x[:, :-static_dim_size, 1:].detach()
                 x = torch.cat([x_detach, y_pred.detach()], dim=2)
 
@@ -700,65 +730,84 @@ def predict(rank, world_size, conf, pool, smm):
             duration = end_time - start_time
             print_str2 += f"TOT time: {duration:.4f} ||"
 
-
             end_time = time.time()
             duration = end_time - loop_time
             print_str2 += f"LOOP time: {duration:.4f} ||"
 
-            logger.info(print_str2)        
+            logger.info(print_str2)
 
-            #rollout loop, which is much faster. 
+            # rollout loop, which is much faster.
             end_condition = 0
             # end_date = pd.to_datetime(end_date)
-            print('we are looking for end_date:', end_date)
+            print("we are looking for end_date:", end_date)
             while end_condition < 1:
-                print('k is :', k)
-                
-                #deal with the time step:
+                print("k is :", k)
+
+                # deal with the time step:
                 elapsed_time = pd.Timedelta(hours=k)
-                tnow = pd.to_datetime(datetime.datetime.utcfromtimestamp(batch["datetime"]))
+                tnow = pd.to_datetime(
+                    datetime.datetime.utcfromtimestamp(batch["datetime"])
+                )
                 tnow = tnow + elapsed_time
                 # setup save directory for images
-                file_save_name_time = tnow.strftime(
-                        "%Y-%m-%dT%HZ"
-                    )
-                print('time now is:', tnow, file_save_name_time)
+                file_save_name_time = tnow.strftime("%Y-%m-%dT%HZ")
+                print("time now is:", tnow, file_save_name_time)
                 start_time = time.time()
-    
+
                 # Add statics
                 if "static" in batch:
                     if static is None:
-                        static = batch["static"].to(device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float()
+                        static = (
+                            batch["static"]
+                            .to(device)
+                            .unsqueeze(2)
+                            .expand(-1, -1, x.shape[2], -1, -1)
+                            .float()
+                        )
                     x = torch.cat((x, static.clone()), dim=1)
-    
+
                 # Add solar "statics"
-                if "static_variables" in conf["data"] and "tsi" in conf["data"]["static_variables"]:
-                    if k==0:
+                if (
+                    "static_variables" in conf["data"]
+                    and "tsi" in conf["data"]["static_variables"]
+                ):
+                    if k == 0:
                         toaDL = TOADataLoader(conf)
                     elapsed_time = pd.Timedelta(hours=k)
-                    tnow = pd.to_datetime(datetime.datetime.utcfromtimestamp(batch["datetime"]))
+                    tnow = pd.to_datetime(
+                        datetime.datetime.utcfromtimestamp(batch["datetime"])
+                    )
                     tnow = tnow + elapsed_time
                     if history_len == 1:
-                        current_times = [pd.to_datetime(datetime.datetime.utcfromtimestamp(_t)) + elapsed_time for _t in tnow]
+                        current_times = [
+                            pd.to_datetime(datetime.datetime.utcfromtimestamp(_t))
+                            + elapsed_time
+                            for _t in tnow
+                        ]
                     else:
-                        current_times = [tnow if hl == 0 else tnow - pd.Timedelta(hours=hl) for hl in range(history_len)]
-                    
-                    toa = torch.cat([toaDL(_t) for _t in current_times], dim=0).to(device)
+                        current_times = [
+                            tnow if hl == 0 else tnow - pd.Timedelta(hours=hl)
+                            for hl in range(history_len)
+                        ]
+
+                    toa = torch.cat([toaDL(_t) for _t in current_times], dim=0).to(
+                        device
+                    )
                     toa = toa.squeeze().unsqueeze(0)
-                    #print(f"toa shape 1: {toa.shape} || ")
+                    # print(f"toa shape 1: {toa.shape} || ")
                     print_str2 = f"toa shape 2: {toa.unsqueeze(1).shape} || "
                     x = torch.cat([x, toa.unsqueeze(1).to(device).float()], dim=1)
                     k += 1
-                
+
                 y_pred = model(x)
-    
+
                 end_time = time.time()
                 duration = end_time - start_time
                 print_str2 += f"time to make pred: {duration:.4f} ||"
-    
+
                 # convert to real space for laplace filter and metrics
                 y_pred = state_transformer.inverse_transform(y_pred.cpu())
-    
+
                 if (
                     "use_laplace_filter" in conf["predict"]
                     and conf["predict"]["use_laplace_filter"]
@@ -769,7 +818,7 @@ def predict(rank, world_size, conf, pool, smm):
                         .unsqueeze(2)
                         .cpu()
                     )
-    
+
                 utc_datetime = tnow
                 print_str = f"Forecast: {forecast_count} "
                 print_str += f"Date: {utc_datetime.strftime('%Y-%m-%d %H:%M:%S')} "
@@ -783,29 +832,29 @@ def predict(rank, world_size, conf, pool, smm):
                     latlons.longitude.values,
                     conf,
                 )
-    
+
                 # collect x-arrays for upper air and surface variables
                 list_darray_upper_air.append(darray_upper_air)
                 list_darray_single_level.append(darray_single_level)
-    
+
                 end_time = time.time()
                 duration = end_time - start_time
                 print_str2 += f"time to make xarray: {duration:.4f} ||"
-    
+
                 # ---------------------------------------------------------------------------------- #
                 # Draw upper air variables
-    
+
                 # get the number of variables to draw
                 N_vars = len(
                     conf["visualization"]["sigma_level_visualize"]["variable_keys"]
                 )
-    
+
                 if N_vars > 0:
                     # get the required model levels to plot
                     sigma_levels = conf["visualization"]["sigma_level_visualize"][
                         "visualize_levels"
                     ]
-    
+
                     f = partial(
                         shared_mem_draw_wrapper,
                         visualization_key="sigma_level_visualize",
@@ -813,7 +862,7 @@ def predict(rank, world_size, conf, pool, smm):
                         conf=conf,
                         save_location=img_save_loc,
                     )
-    
+
                     # slice x-array on its time dimension to get rid of time dim
                     darray_upper_air_slice = darray_upper_air.isel(datetime=0)
                     shm_upper_air = create_shared_mem(darray_upper_air_slice, smm)
@@ -825,13 +874,15 @@ def predict(rank, world_size, conf, pool, smm):
                     filenames_upper_air.append(
                         job_result
                     )  # .get() blocks computation. need to get after the pool closes
-    
+
                 # ---------------------------------------------------------------------------------- #
                 # Draw diagnostics
-    
+
                 # get the number of variables to draw
                 N_vars = len(
-                    conf["visualization"]["diagnostic_variable_visualize"]["variable_keys"]
+                    conf["visualization"]["diagnostic_variable_visualize"][
+                        "variable_keys"
+                    ]
                 )
                 # slice x-array on its time dimension to get rid of time dim
                 darray_single_level_slice = darray_single_level.isel(datetime=0)
@@ -856,7 +907,9 @@ def predict(rank, world_size, conf, pool, smm):
                     filenames_diagnostics.append(job_result)
                 # ---------------------------------------------------------------------------------- #
                 # Draw surface variables
-                N_vars = len(conf["visualization"]["surface_visualize"]["variable_keys"])
+                N_vars = len(
+                    conf["visualization"]["surface_visualize"]["variable_keys"]
+                )
                 if N_vars > 0:
                     f = partial(
                         shared_mem_draw_wrapper,
@@ -866,7 +919,7 @@ def predict(rank, world_size, conf, pool, smm):
                         conf=conf,
                         save_location=img_save_loc,
                     )
-    
+
                     # produce images
                     job_result = pool.map_async(
                         f,
@@ -876,53 +929,57 @@ def predict(rank, world_size, conf, pool, smm):
                     )
                     job_info.append(job_result)
                     filenames_surface.append(job_result)
-    
+
                 # Update the input
                 # setup for next iteration, transform to z-space and send to device
-    
+
                 y_pred = state_transformer.transform_array(y_pred).to(device)
-    
+
                 if history_len == 1:
                     x = y_pred.detach()
                 else:
                     # use multiple past forecast steps as inputs
-                    static_dim_size = abs(x.shape[1] - y_pred.shape[1])  # static channels will get updated on next pass
+                    static_dim_size = abs(
+                        x.shape[1] - y_pred.shape[1]
+                    )  # static channels will get updated on next pass
                     x_detach = x[:, :-static_dim_size, 1:].detach()
                     x = torch.cat([x_detach, y_pred.detach()], dim=2)
-    
+
                 end_time = time.time()
                 duration = end_time - start_time
                 print_str2 += f"time to cycle to next x input: {duration:.4f} ||"
-    
+
                 # Explicitly release GPU memory
                 torch.cuda.empty_cache()
                 gc.collect()
-    
+
                 end_time = time.time()
                 duration = end_time - start_time
                 print_str2 += f"TOT time: {duration:.4f} ||"
-    
-    
+
                 end_time = time.time()
                 duration = end_time - loop_time
                 print_str2 += f"LOOP time: {duration:.4f} ||"
-    
-                #logger.info(print_str2)
-               
+
+                # logger.info(print_str2)
+
                 if tnow > end_date:
                     end_condition = 9999
-    
-                if end_condition  == 9999:
+
+                if end_condition == 9999:
                     # convert to datasets and save out
                     # save forecast results to file
-                    if "save_format" in conf["predict"] and conf["predict"]["save_format"] == "nc":
+                    if (
+                        "save_format" in conf["predict"]
+                        and conf["predict"]["save_format"] == "nc"
+                    ):
                         logger.info("Save forecasts as netCDF format")
-    
+
                         logger.info("Save forecasts as netCDF format")
                         filename_netcdf = save_netcdf(
                             list_darray_upper_air, list_darray_single_level, conf
                         )
-                        
+
                         # xr.merge(list_datasets).to_netcdf(
                         #             path=os.path.join(dataset_save_loc, f"pred_{init_time}-{utc_datetime.strftime('%Y-%m-%d %H:%M:%S')}.nc"),
                         #             format="NETCDF4",
@@ -931,29 +988,29 @@ def predict(rank, world_size, conf, pool, smm):
                         #     )
                     else:
                         logger.info("Warning: forecast results will not be saved")
-    
+
                     # forecast count = a constant for each run
                     forecast_count += 1
-    
+
                     # lists to collect x-arrays
                     list_darray_upper_air = []
                     list_darray_single_level = []
-    
+
                     # a list that collects image file names
                     job_info = []
                     filenames_upper_air = []
                     filenames_diagnostics = []
                     filenames_surface = []
-    
+
                     # y_pred allocation
                     y_pred = None
-    
+
                     # Set up metrics and containers
                     metrics = LatWeightedMetrics(conf)
                     metrics_results = defaultdict(list)
-    
+
                     gc.collect()
-    
+
                     if distributed:
                         torch.distributed.barrier()
 
@@ -962,15 +1019,14 @@ def predict(rank, world_size, conf, pool, smm):
             next_fore += 1
             k = 0
             continue
-            
-    
+
     # y_pred allocation
     y_pred = None
-            
+
     gc.collect()
     if distributed:
         torch.distributed.barrier()
-            
+
     # collect all image file names for making videos
     filename_bundle = {}
     filename_bundle["sigma_level_visualize"] = filenames_upper_air
@@ -990,7 +1046,6 @@ def predict(rank, world_size, conf, pool, smm):
 
 
 if __name__ == "__main__":
-
     description = "Rollout AI-NWP forecasts"
     parser = ArgumentParser(description=description)
     # -------------------- #
@@ -1080,13 +1135,9 @@ if __name__ == "__main__":
 
     num_cpus = get_num_cpus()
     logger.info(f"using {num_cpus} cpus for image generation")
-    
-    
-    
+
     num_forecasts = conf
-    
-    
-    
+
     with Pool(processes=num_cpus - 1) as pool, SharedMemoryManager() as smm:
         if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
             (
@@ -1113,7 +1164,11 @@ if __name__ == "__main__":
 
     if no_data:
         # set the fields in the config file to prevent any movies from being made
-        for movie_option in ["sigma_level_visualize", "diagnostic_variable_visualize", "surface_visualize"]:
+        for movie_option in [
+            "sigma_level_visualize",
+            "diagnostic_variable_visualize",
+            "surface_visualize",
+        ]:
             conf["visualization"][movie_option] = []
 
     # ---------------------------------------------------------------------------------- #

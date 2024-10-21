@@ -43,7 +43,7 @@ from credit.forecast import load_forecasts
 from credit.data_conversions import dataConverter
 from credit.distributed import distributed_model_wrapper
 from credit.models.checkpoint import load_model_state
-from credit.solar import TOADataLoader
+from credit.data import TOADataLoader
 
 # ---------- #
 from credit.visualization_tools import shared_mem_draw_wrapper
@@ -91,7 +91,7 @@ def split_and_reshape(tensor, conf):
     )
 
     # subset surface variables
-    tensor_single_level = tensor[:, -int(single_level_channels):, :, :]
+    tensor_single_level = tensor[:, -int(single_level_channels) :, :, :]
 
     # return x, surf for B, c, lat, lon output
     return tensor_upper_air, tensor_single_level
@@ -143,7 +143,6 @@ def create_shared_mem(da, smm):
 
 
 def predict(rank, world_size, conf, pool, smm):
-
     if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
         setup(rank, world_size, conf["trainer"]["mode"])
 
@@ -249,15 +248,11 @@ def predict(rank, world_size, conf, pool, smm):
         filenames_surface = []
 
         # Total # of figures
-        N_vars = len(
-            conf["visualization"]["sigma_level_visualize"]["variable_keys"]
-        )
+        N_vars = len(conf["visualization"]["sigma_level_visualize"]["variable_keys"])
         N_vars += len(
             conf["visualization"]["diagnostic_variable_visualize"]["variable_keys"]
         )
-        N_vars += len(
-            conf["visualization"]["surface_visualize"]["variable_keys"]
-        )
+        N_vars += len(conf["visualization"]["surface_visualize"]["variable_keys"])
 
         # y_pred allocation
         y_pred = None
@@ -265,7 +260,6 @@ def predict(rank, world_size, conf, pool, smm):
 
         # model inference loop
         for k, batch in enumerate(data_loader):
-
             # get the datetime and forecasted hours
             date_time = batch["datetime"].item()
             forecast_hour = batch["forecast_hour"].item()
@@ -281,9 +275,9 @@ def predict(rank, world_size, conf, pool, smm):
                 init_time = datetime.datetime.utcfromtimestamp(date_time).strftime(
                     "%Y-%m-%d %H:%M:%S"
                 )
-                svloc_init_time = datetime.datetime.utcfromtimestamp(date_time).strftime(
-                    "%Y-%m-%dT%HZ"
-                )
+                svloc_init_time = datetime.datetime.utcfromtimestamp(
+                    date_time
+                ).strftime("%Y-%m-%dT%HZ")
 
                 img_save_loc = os.path.join(
                     os.path.expandvars(conf["save_loc"]),
@@ -303,20 +297,38 @@ def predict(rank, world_size, conf, pool, smm):
             # Add statics
             if "static" in batch:
                 if static is None:
-                    static = batch["static"].to(device).unsqueeze(2).expand(-1, -1, x.shape[2], -1, -1).float()
+                    static = (
+                        batch["static"]
+                        .to(device)
+                        .unsqueeze(2)
+                        .expand(-1, -1, x.shape[2], -1, -1)
+                        .float()
+                    )
                 x = torch.cat((x, static.clone()), dim=1)
 
             # Add solar "statics"
-            if "static_variables" in conf["data"] and "tsi" in conf["data"]["static_variables"]:
+            if (
+                "static_variables" in conf["data"]
+                and "tsi" in conf["data"]["static_variables"]
+            ):
                 if k == 0:
                     toaDL = TOADataLoader(conf)
                 elapsed_time = pd.Timedelta(hours=k)
-                tnow = pd.to_datetime(datetime.datetime.utcfromtimestamp(batch["datetime"]))
+                tnow = pd.to_datetime(
+                    datetime.datetime.utcfromtimestamp(batch["datetime"])
+                )
                 tnow = tnow + elapsed_time
                 if history_len == 1:
-                    current_times = [pd.to_datetime(datetime.datetime.utcfromtimestamp(_t)) + elapsed_time for _t in tnow]
+                    current_times = [
+                        pd.to_datetime(datetime.datetime.utcfromtimestamp(_t))
+                        + elapsed_time
+                        for _t in tnow
+                    ]
                 else:
-                    current_times = [tnow if hl == 0 else tnow - pd.Timedelta(hours=hl) for hl in range(history_len)]
+                    current_times = [
+                        tnow if hl == 0 else tnow - pd.Timedelta(hours=hl)
+                        for hl in range(history_len)
+                    ]
 
                 toa = torch.cat([toaDL(_t) for _t in current_times], dim=0).to(device)
                 toa = toa.squeeze().unsqueeze(0)
@@ -328,7 +340,10 @@ def predict(rank, world_size, conf, pool, smm):
             y_pred = state_transformer.inverse_transform(y_pred.cpu())
             y = state_transformer.inverse_transform(y.cpu())
 
-            if ("use_laplace_filter" in conf["predict"] and conf["predict"]["use_laplace_filter"]):
+            if (
+                "use_laplace_filter" in conf["predict"]
+                and conf["predict"]["use_laplace_filter"]
+            ):
                 y_pred = (
                     dpf.diff_lap2d_filt(y_pred.to(device).squeeze())
                     .unsqueeze(0)
@@ -345,7 +360,9 @@ def predict(rank, world_size, conf, pool, smm):
             utc_datetime = datetime.datetime.utcfromtimestamp(date_time)
 
             mae = loss_fn(y, y_pred)
-            metrics_dict = metrics(y_pred.float(), y.float(), forecast_datetime=forecast_hour)
+            metrics_dict = metrics(
+                y_pred.float(), y.float(), forecast_datetime=forecast_hour
+            )
             for k, m in metrics_dict.items():
                 metrics_results[k].append(m.item())
             metrics_results["forecast_hour"].append(forecast_hour)
@@ -359,14 +376,17 @@ def predict(rank, world_size, conf, pool, smm):
             # print_str += f"spectrumMSE: {metrics_dict['spectrum_mse']}" #WEC limiting spectrum shit cause weather bench2 not installed.
 
             # convert the current step result as x-array
-            darray_upper_air, darray_single_level = (
-                data_converter.tensor_to_dataArray(y_pred.float(), [utc_datetime]))
+            darray_upper_air, darray_single_level = data_converter.tensor_to_dataArray(
+                y_pred.float(), [utc_datetime]
+            )
             # collect x-arrays for upper air and surface variables
             list_darray_upper_air.append(darray_upper_air)
             list_darray_single_level.append(darray_single_level)
 
             # convert to datasets and save out
-            pred_ds = data_converter.dataArrays_to_dataset(darray_upper_air, darray_single_level)
+            pred_ds = data_converter.dataArrays_to_dataset(
+                darray_upper_air, darray_single_level
+            )
             y_ds = data_converter.tensor_to_dataset(y.float(), [utc_datetime])
 
             list_datasets.append(pred_ds)
@@ -472,8 +492,14 @@ def predict(rank, world_size, conf, pool, smm):
                 x = y_pred.detach()
             else:
                 # use multiple past forecast steps as inputs
-                static_dim_size = abs(x.shape[1] - y_pred.shape[1])  # static channels will get updated on next pass
-                x_detach = x[:, :-static_dim_size, 1:].detach() if static_dim_size else x[:, :, 1:].detach()  # if static_dim_size=0 then :0 gives empty range
+                static_dim_size = abs(
+                    x.shape[1] - y_pred.shape[1]
+                )  # static channels will get updated on next pass
+                x_detach = (
+                    x[:, :-static_dim_size, 1:].detach()
+                    if static_dim_size
+                    else x[:, :, 1:].detach()
+                )  # if static_dim_size=0 then :0 gives empty range
                 x = torch.cat([x_detach, y_pred.detach()], dim=2)
 
             # Explicitly release GPU memory
@@ -482,20 +508,33 @@ def predict(rank, world_size, conf, pool, smm):
 
             if batch["stop_forecast"][0]:
                 # save metrics csv
-                save_location = os.path.join(os.path.expandvars(conf["save_loc"]), "forecasts", "metrics")
-                os.makedirs(save_location, exist_ok=True)  # should already be made above
+                save_location = os.path.join(
+                    os.path.expandvars(conf["save_loc"]), "forecasts", "metrics"
+                )
+                os.makedirs(
+                    save_location, exist_ok=True
+                )  # should already be made above
                 df = pd.DataFrame(metrics_results)
                 df.to_csv(os.path.join(save_location, f"metrics{init_time}.csv"))
 
                 # save forecast results to file
-                if "save_format" in conf["predict"] and conf["predict"]["save_format"] == "nc":
+                if (
+                    "save_format" in conf["predict"]
+                    and conf["predict"]["save_format"] == "nc"
+                ):
                     logger.info("Save forecasts as netCDF format")
                     xr.merge(list_datasets).to_netcdf(
-                                path=os.path.join(dataset_save_loc, f"pred_{init_time}-{utc_datetime.strftime('%Y-%m-%d %H:%M:%S')}.nc"),
-                                format="NETCDF4",
-                                engine="netcdf4",
-                                encoding={variable: {"zlib": True, "complevel": 1} for variable in pred_ds.data_vars}
-                        )
+                        path=os.path.join(
+                            dataset_save_loc,
+                            f"pred_{init_time}-{utc_datetime.strftime('%Y-%m-%d %H:%M:%S')}.nc",
+                        ),
+                        format="NETCDF4",
+                        engine="netcdf4",
+                        encoding={
+                            variable: {"zlib": True, "complevel": 1}
+                            for variable in pred_ds.data_vars
+                        },
+                    )
                 else:
                     logger.info("Warning: forecast results will not be saved")
 
@@ -543,7 +582,6 @@ def predict(rank, world_size, conf, pool, smm):
 
 
 if __name__ == "__main__":
-
     description = "Rollout AI-NWP forecasts"
     parser = ArgumentParser(description=description)
     # -------------------- #
@@ -611,7 +649,7 @@ if __name__ == "__main__":
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
     # create a save location for rollout
-    forecast_save_loc = os.path.join(os.path.expandvars(conf['save_loc']), 'forecasts')
+    forecast_save_loc = os.path.join(os.path.expandvars(conf["save_loc"]), "forecasts")
     os.makedirs(forecast_save_loc, exist_ok=True)
 
     # Update config using override options
@@ -678,7 +716,11 @@ if __name__ == "__main__":
 
     if no_data:
         # set the fields in the config file to prevent any movies from being made
-        for movie_option in ["sigma_level_visualize", "diagnostic_variable_visualize", "surface_visualize"]:
+        for movie_option in [
+            "sigma_level_visualize",
+            "diagnostic_variable_visualize",
+            "surface_visualize",
+        ]:
             conf["visualization"][movie_option] = []
 
     # ---------------------------------------------------------------------------------- #

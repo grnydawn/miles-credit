@@ -207,10 +207,13 @@ class KE_Diagnostic:
             for ax in self.KE_axs:  # overwrite every time in case of crash
                 ax.legend()
             self.KE_fig.savefig(join(self.plot_save_loc, f"ke_spectra_summary{fh}"))
-            logger.info(f"saved summary plot to {join(self.plot_save_loc, 'ke_spectra_summary')}")
+            logger.info(
+                f"saved summary plot to {join(self.plot_save_loc, 'ke_spectra_summary')}"
+            )
 
-    def plot_avg_spectrum(self, avg_pred_spectrum, avg_y_spectrum,
-                          fig, axs, alpha=1, label=None):
+    def plot_avg_spectrum(
+        self, avg_pred_spectrum, avg_y_spectrum, fig, axs, alpha=1, label=None
+    ):
         # copied from spectrum diagnostic function
         for ax in axs:
             ax.set_yscale("log")
@@ -408,7 +411,9 @@ def interpolate_spectral_frequencies(
         raise ValueError(f"Expected 1-D frequencies, found {frequencies.shape=}")
 
     def interp_at_one_lat(da: xr.DataArray) -> xr.DataArray:
-        if len(da.latitude.values.shape) > 0:  # latitude weirdly not squeezed out by groupby sometimes
+        if (
+            len(da.latitude.values.shape) > 0
+        ):  # latitude weirdly not squeezed out by groupby sometimes
             da = da.squeeze("latitude")
         da = (
             da.swap_dims({wavenumber_dim: "frequency"})
