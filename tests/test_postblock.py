@@ -64,6 +64,7 @@ def test_GlobalMassFixer_rand():
     # global mass fixer specs
     conf['post_conf']['global_mass_fixer'] = {
         'activate': True, 
+        'activate_outside_model': False,
         'denorm': False, 
         'midpoint': False,
         'simple_demo': True, 
@@ -109,6 +110,7 @@ def test_GlobalEnergyFixer_rand():
     # global energy fixer specs
     conf['post_conf']['global_energy_fixer'] = {
         'activate': True,
+        'activate_outside_model': False,
         'simple_demo': True,
         'denorm': False,
         'midpoint': False,
