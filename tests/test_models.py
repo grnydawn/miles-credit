@@ -6,6 +6,7 @@ import torch
 from credit.models import load_model
 from credit.models.unet import SegmentationModel
 from credit.models.crossformer import CrossFormer
+from credit.models.fuxi import Fuxi
 from credit.parser import CREDIT_main_parser
 
 TEST_FILE_DIR = "/".join(os.path.abspath(__file__).split("/")[:-1])
@@ -70,6 +71,34 @@ def test_crossformer():
 
     y_pred = model(input_tensor)
     assert y_pred.shape == torch.Size([1, in_channels - input_only_channels, 1, image_height, image_width])
+    assert not torch.isnan(y_pred).any()
+
+def test_fuxi(): 
+    # load config
+    config = os.path.join(CONFIG_FILE_DIR, 'fuxi_1deg_test.yml')
+    with open(config) as cf:
+        conf = yaml.load(cf, Loader=yaml.FullLoader)
+    # handle config args
+    conf = CREDIT_main_parser(conf)
+    
+    image_height = conf["model"]["image_height"]
+    image_width = conf["model"]["image_width"]
+    channels = conf["model"]["channels"]
+    levels = conf["model"]["levels"]
+    surface_channels = conf["model"]["surface_channels"]
+    input_only_channels = conf["model"]["input_only_channels"]
+    output_only_channels = conf["model"]["output_only_channels"]
+    frames = conf["model"]["frames"]
+    
+    in_channels = channels * levels + surface_channels + input_only_channels
+    out_channels = channels * levels + surface_channels + output_only_channels
+    input_tensor = torch.randn(1, in_channels, frames, image_height, image_width)
+    
+    model = load_model(conf)
+    assert isinstance(model, Fuxi)
+    
+    y_pred = model(input_tensor)
+    assert y_pred.shape == torch.Size([1, out_channels, 1, image_height, image_width])
     assert not torch.isnan(y_pred).any()
 
 if __name__ == "__main__":
