@@ -50,7 +50,7 @@ from credit.distributed import distributed_model_wrapper, setup, get_rank_info
 from credit.models.checkpoint import load_model_state
 from credit.parser import CREDIT_main_parser, predict_data_check
 from credit.output import load_metadata, make_xarray, save_netcdf_increment
-from credit.postblock import GlobalMassFixer, GlobalEnergyFixer
+from credit.postblock import GlobalMassFixer, GlobalWaterFixer, GlobalEnergyFixer
 
 logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")
@@ -445,6 +445,7 @@ def predict(rank, world_size, conf, p):
     # postblock opts outside of model
     post_conf = conf['model']['post_conf']
     flag_mass_conserve = False
+    flag_water_conserve = False
     flag_energy_conserve = False
     
     if post_conf['activate']:
@@ -454,6 +455,13 @@ def predict(rank, world_size, conf, p):
                 flag_mass_conserve = True
                 opt_mass = GlobalMassFixer(post_conf)
 
+        if post_conf['global_water_fixer']['activate']:
+            if post_conf['global_water_fixer']['activate_outside_model']:
+                logger.info('Activate GlobalWaterFixer outside of model')
+                flag_water_conserve = True
+                opt_water = GlobalWaterFixer(post_conf)
+                
+        
         if post_conf['global_energy_fixer']['activate']:
             if post_conf['global_energy_fixer']['activate_outside_model']:
                 logger.info('Activate GlobalEnergyFixer outside of model')
@@ -588,17 +596,25 @@ def predict(rank, world_size, conf, p):
             # postblock opts outside of model
 
             # backup init state
-            if flag_mass_conserve or flag_energy_conserve:
+            if flag_mass_conserve:
                 if forecast_hour == 1:
                     x_init = x.clone()
-                    
+
+            # mass conserve using initialization as reference
             if flag_mass_conserve:
                 input_dict = {'y_pred': y_pred, 'x': x_init}
                 input_dict = opt_mass(input_dict)
                 y_pred = input_dict['y_pred']
-                
+
+            # water conserve use previous step output as reference
+            if flag_water_conserve:
+                input_dict = {'y_pred': y_pred, 'x': x}
+                input_dict = opt_water(input_dict)
+                y_pred = input_dict['y_pred']
+
+            # energy conserve use previous step output as reference
             if flag_energy_conserve:
-                input_dict = {'y_pred': y_pred, 'x': x_init}
+                input_dict = {'y_pred': y_pred, 'x': x}
                 input_dict = opt_energy(input_dict)
                 y_pred = input_dict['y_pred']
             # ============================================= #
@@ -659,17 +675,6 @@ def predict(rank, world_size, conf, p):
             # Update the input
             # setup for next iteration, transform to z-space and send to device
             y_pred = state_transformer.transform_array(y_pred).to(device)
-
-            # if history_len == 1:
-            #     x = y_pred.detach()
-            # else:
-            #     # use multiple past forecast steps as inputs
-            #     # static channels will get updated on next pass
-            #     static_dim_size = abs(x.shape[1] - y_pred.shape[1])
-
-            #     # if static_dim_size=0 then :0 gives empty range
-            #     x_detach = x[:, :-static_dim_size, 1:].detach() if static_dim_size else x[:, :, 1:].detach()
-            #     x = torch.cat([x_detach, y_pred.detach()], dim=2)
             
             # ============================================================ #
             # use previous step y_pred as the next step input
