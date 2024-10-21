@@ -1,8 +1,5 @@
 # --------------------------------------------------------------------------------------------------------------------- #
-# This yaml file implements hourly state-in-state-out crossformer
-# on NSF NCAR HPCs (casper.ucar.edu and derecho.hpc.ucar.edu) 
-# The model is trained on hourly model-level ERA5 data with top solar irradiance, geopotential, and land-sea mask
-# Output variables: model level [U, V, T, Q], single level [SP, t2m], and 500 hPa [U, V, T, Z, Q]
+# This config is used for the unit testing of credit.model.Crossformer
 # --------------------------------------------------------------------------------------------------------------------- #
 save_loc: '/glade/work/$USER/CREDIT_runs/wxformer_1h_physics_test/'
 seed: 1000
