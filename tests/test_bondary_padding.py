@@ -62,7 +62,7 @@ def test_TensorPadding():
     
     # get unpadded tensors
     x_unpad_mirror = opt_mirror.unpad(x_pad_mirror)
-    x_unpad_earth = opt_mirror.unpad(x_pad_earth)
+    x_unpad_earth = opt_earth.unpad(x_pad_earth)
     
     # padding checks (must pass all)
     assert x_pad_mirror.shape == output_shape, 'Shape mismatch error found in mirror padding'

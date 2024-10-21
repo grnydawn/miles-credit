@@ -74,7 +74,35 @@ def test_crossformer():
     assert not torch.isnan(y_pred).any()
 
 def test_fuxi(): 
-    # load config
+    """
+    Test the I/O size of the Fuxi torch model to ensure that the input/output dimensions match the expected configuration.
+
+    This test verifies the following:
+    1. Correct loading and parsing of the model configuration file.
+    2. Construction of the input tensor with the appropriate number of channels, frames, and spatial dimensions.
+    3. Successful instantiation of the Fuxi model.
+    4. The output tensor produced by the model has the expected shape, including the correct number of channels, height, width, and no NaN values.
+
+    Test steps:
+    -----------
+    1. Load the model configuration from a YAML file.
+    2. Parse the configuration to extract model-related parameters such as image dimensions, channels, and levels.
+    3. Calculate the number of input and output channels based on the configuration.
+    4. Create a random input tensor with the specified size and transfer it to the appropriate device (GPU or CPU).
+    5. Load the Fuxi model and ensure it is an instance of the `Fuxi` class.
+    6. Perform a forward pass with the input tensor and check the output tensor's shape.
+    7. Assert that the output tensor has the correct size and contains no NaN values.
+
+    Assertions:
+    -----------
+    - The model is an instance of the Fuxi class.
+    - The output tensor has the correct shape: [batch_size, out_channels, 1, image_height, image_width].
+    - The output tensor contains no NaN values.
+    
+    Raises:
+    -------
+    AssertionError if any of the checks fail.
+    """
     config = os.path.join(CONFIG_FILE_DIR, 'fuxi_1deg_test.yml')
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
