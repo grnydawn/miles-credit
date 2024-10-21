@@ -59,6 +59,7 @@ def test_GlobalMassFixer_rand():
     # initialize post_conf, turn-off other blocks
     conf = {'post_conf': {'skebs': {'activate': False}}}
     conf['post_conf']['tracer_fixer'] = {'activate': False}
+    conf['post_conf']['global_water_fixer'] = {'activate': False}
     conf['post_conf']['global_energy_fixer'] = {'activate': False}
     
     # global mass fixer specs
@@ -102,6 +103,7 @@ def test_GlobalWaterFixer_rand():
     # initialize post_conf, turn-off other blocks
     conf = {'post_conf': {'skebs': {'activate': False}}}
     conf['post_conf']['tracer_fixer'] = {'activate': False}
+    conf['post_conf']['global_mass_fixer'] = {'activate': False}
     conf['post_conf']['global_energy_fixer'] = {'activate': False}
     
     # global water fixer specs
@@ -148,6 +150,7 @@ def test_GlobalEnergyFixer_rand():
     conf = {'post_conf': {'skebs': {'activate': False}}}
     conf['post_conf']['tracer_fixer'] = {'activate': False}
     conf['post_conf']['global_mass_fixer'] = {'activate': False}
+    conf['post_conf']['global_water_fixer'] = {'activate': False}
     
     # global energy fixer specs
     conf['post_conf']['global_energy_fixer'] = {
