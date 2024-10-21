@@ -5,6 +5,7 @@ Content:
     - PostBlock
     - TracerFixer
     - GlobalMassFixer
+    - GlobalWaterFixer
     - GlobalEnergyFixer
     - SKEBS
     
@@ -46,7 +47,7 @@ class PostBlock(nn.Module):
         self.operations = nn.ModuleList()
 
         # The general order of postblock processes:
-        # (1) negative tracer fixer --> global mass fixer --> SKEB --> global energy fixer
+        # (1) tracer fixer --> mass fixer --> SKEB / water fixer --> energy fixer
         
         # negative tracer fixer
         if post_conf['tracer_fixer']['activate']:
@@ -64,6 +65,13 @@ class PostBlock(nn.Module):
             if post_conf['global_mass_fixer']['activate_outside_model'] is False:
                 logger.info('GlobalMassFixer registered')
                 opt = GlobalMassFixer(post_conf)
+                self.operations.append(opt)
+                
+        # global water fixer
+        if post_conf['global_water_fixer']['activate']:
+            if post_conf['global_water_fixer']['activate_outside_model'] is False:
+                logger.info('GlobalWaterFixer registered')
+                opt = GlobalWaterFixer(post_conf)
                 self.operations.append(opt)
 
         # global energy fixer
@@ -169,7 +177,6 @@ class GlobalMassFixer(nn.Module):
             self.core_compute = physics_pressure_level(lon_demo, lat_demo, p_level_demo, 
                                                        midpoint=post_conf['global_mass_fixer']['midpoint'])
             self.N_levels = len(p_level_demo)
-            self.N_seconds = int(post_conf['data']['lead_time_periods']) * 3600
             self.ind_fix = len(p_level_demo) - int(post_conf['global_mass_fixer']['fix_level_num']) + 1
             
         else:
@@ -184,18 +191,140 @@ class GlobalMassFixer(nn.Module):
             self.core_compute = physics_pressure_level(lon2d, lat2d, p_level, 
                                                        midpoint=post_conf['global_mass_fixer']['midpoint'])
             self.N_levels = len(p_level)
-            self.N_seconds = int(post_conf['data']['lead_time_periods']) * 3600
             self.ind_fix = len(p_level) - int(post_conf['global_mass_fixer']['fix_level_num']) + 1
             
         # ------------------------------------------------------------------------------------ #
         # identify variables of interest
         self.q_ind_start = int(post_conf['global_mass_fixer']['q_inds'][0])
         self.q_ind_end = int(post_conf['global_mass_fixer']['q_inds'][-1]) + 1
-        self.precip_ind = int(post_conf['global_mass_fixer']['precip_ind'])
-        self.evapor_ind = int(post_conf['global_mass_fixer']['evapor_ind'])
+        
         # ------------------------------------------------------------------------------------ #
         # setup a scaler
         if post_conf['global_mass_fixer']['denorm']:
+            self.state_trans = load_transforms(post_conf, scaler_only=True)
+        else:
+            self.state_trans = None
+            
+    def forward(self, x):
+        # ------------------------------------------------------------------------------ #
+        # get tensors
+
+        # x_input (batch, var, time, lat, lon)
+        x_input = x['x']
+        y_pred = x["y_pred"]
+
+        # detach x_input
+        x_input = x_input.detach().to(y_pred.device)
+
+        # other needed inputs
+        N_vars = y_pred.shape[1]
+        
+        # if denorm is needed
+        if self.state_trans:
+            x_input = self.state_trans.inverse_transform_input(x_input)
+            y_pred = self.state_trans.inverse_transform(y_pred)
+            
+        q_input = x_input[:, self.q_ind_start:self.q_ind_end, -1, ...]
+        
+        # y_pred (batch, var, time, lat, lon) 
+        # pick the first time-step, y_pred is expected to have the next step only
+        q_pred = y_pred[:, self.q_ind_start:self.q_ind_end, 0, ...]
+        
+        # ------------------------------------------------------------------------------ #
+        # global dry air mass conservation
+
+        # total mass from q_input
+        mass_dry_sum_t0 = self.core_compute.total_dry_air_mass(q_input)
+
+        # total mass from q_pred
+        mass_dry_sum_t1_hold = self.core_compute.weighted_sum(
+            self.core_compute.integral_sliced(1-q_pred, 0, self.ind_fix) / GRAVITY, 
+            axis=(-2, -1))
+        
+        mass_dry_sum_t1_fix = self.core_compute.weighted_sum(
+            self.core_compute.integral_sliced(1-q_pred, self.ind_fix-1, self.N_levels) / GRAVITY, 
+            axis=(-2, -1))
+
+        q_correct_ratio = (mass_dry_sum_t0 - mass_dry_sum_t1_hold) / mass_dry_sum_t1_fix
+        q_correct_ratio = torch.clamp(q_correct_ratio, min=0.9, max=1.1)
+        
+        # broadcast: (batch, 1, 1, 1, 1)
+        q_correct_ratio = q_correct_ratio.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+
+        # ===================================================================== #
+        # q fixes based on the ratio
+        # fix lower atmosphere
+        q_pred_fix = 1 - (1 - q_pred[:, self.ind_fix-1:, ...]) * q_correct_ratio
+        # extract unmodified part from q_pred
+        q_pred_hold = q_pred[:, :self.ind_fix-1, ...]
+        
+        # concat upper and lower q vals
+        # (batch, level, lat, lon)
+        q_pred = torch.cat([q_pred_hold, q_pred_fix], dim=1)
+        
+        # ===================================================================== #
+        # return fixed q and precip back to y_pred
+
+        # expand fixed vars to (batch level, time, lat, lon)
+        q_pred = q_pred.unsqueeze(2)
+        y_pred = concat_fix(y_pred, q_pred, self.q_ind_start, self.q_ind_end, N_vars)
+        
+        if self.state_trans:
+            y_pred = self.state_trans.transform_array(y_pred)
+        
+        # give it back to x
+        x["y_pred"] = y_pred
+
+        # return dict, 'x' is not touched
+        return x
+
+class GlobalWaterFixer(nn.Module):
+    
+    def __init__(self, post_conf):
+        super().__init__()
+
+        # ------------------------------------------------------------------------------------ #
+        # initialize physics computation
+
+        # provide example data if it is a unit test
+        if post_conf['global_water_fixer']['simple_demo']:
+            y_demo = np.array([90, 70, 50, 30, 10, -10, -30, -50, -70, -90])
+            x_demo = np.array([0, 20, 40, 60, 80, 100, 120, 140, 160, 180, 
+                               200, 220, 240, 260, 280, 300, 320, 340])
+            
+            lon_demo, lat_demo = np.meshgrid(x_demo, y_demo)
+            lon_demo = torch.from_numpy(lon_demo)
+            lat_demo = torch.from_numpy(lat_demo)
+
+            p_level_demo = torch.from_numpy(np.array([100, 30000, 50000, 70000, 80000, 90000, 100000]))
+            self.core_compute = physics_pressure_level(lon_demo, lat_demo, p_level_demo, 
+                                                       midpoint=post_conf['global_water_fixer']['midpoint'])
+            self.N_levels = len(p_level_demo)
+            self.N_seconds = int(post_conf['data']['lead_time_periods']) * 3600
+            
+        else:
+            # the actual setup for model runs
+            ds_physics = get_forward_data(post_conf['data']['save_loc_physics'])
+            
+            lon_lat_level_names = post_conf['global_water_fixer']['lon_lat_level_name']
+            lon2d = torch.from_numpy(ds_physics[lon_lat_level_names[0]].values).float()
+            lat2d = torch.from_numpy(ds_physics[lon_lat_level_names[1]].values).float()
+            p_level = torch.from_numpy(ds_physics[lon_lat_level_names[2]].values).float()
+            
+            self.core_compute = physics_pressure_level(lon2d, lat2d, p_level, 
+                                                       midpoint=post_conf['global_water_fixer']['midpoint'])
+            self.N_levels = len(p_level)
+            self.N_seconds = int(post_conf['data']['lead_time_periods']) * 3600
+            
+        # ------------------------------------------------------------------------------------ #
+        # identify variables of interest
+        self.q_ind_start = int(post_conf['global_water_fixer']['q_inds'][0])
+        self.q_ind_end = int(post_conf['global_water_fixer']['q_inds'][-1]) + 1
+        self.precip_ind = int(post_conf['global_water_fixer']['precip_ind'])
+        self.evapor_ind = int(post_conf['global_water_fixer']['evapor_ind'])
+        # ------------------------------------------------------------------------------------ #
+        # setup a scaler
+        if post_conf['global_water_fixer']['denorm']:
             self.state_trans = load_transforms(post_conf, scaler_only=True)
         else:
             self.state_trans = None
@@ -229,39 +358,6 @@ class GlobalMassFixer(nn.Module):
         evapor = y_pred[:, self.evapor_ind, 0, ...]
         
         # ------------------------------------------------------------------------------ #
-        # global dry air mass conservation
-
-        # total mass from q_input
-        mass_dry_sum_t0 = self.core_compute.total_dry_air_mass(q_input)
-
-        # total mass from q_pred
-        mass_dry_sum_t1_hold = self.core_compute.weighted_sum(
-            self.core_compute.integral_sliced(1-q_pred, 0, self.ind_fix) / GRAVITY, 
-            axis=(-2, -1))
-        
-        mass_dry_sum_t1_fix = self.core_compute.weighted_sum(
-            self.core_compute.integral_sliced(1-q_pred, self.ind_fix-1, self.N_levels) / GRAVITY, 
-            axis=(-2, -1))
-
-        q_correct_ratio = (mass_dry_sum_t0 - mass_dry_sum_t1_hold) / mass_dry_sum_t1_fix
-        q_correct_ratio = torch.clamp(q_correct_ratio, min=0.9, max=1.1)
-        
-        # broadcast: (batch, 1, 1, 1, 1)
-        q_correct_ratio = q_correct_ratio.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-
-        # ===================================================================== #
-        # q fixes based on the ratio
-        # fix lower atmosphere
-        q_pred_fix = 1 - (1 - q_pred[:, self.ind_fix-1:, ...]) * q_correct_ratio
-        # extract unmodified part from q_pred
-        q_pred_hold = q_pred[:, :self.ind_fix-1, ...]
-        
-        # concat upper and lower q vals
-        # (batch, level, lat, lon)
-        q_pred = torch.cat([q_pred_hold, q_pred_fix], dim=1)
-        # ===================================================================== #
-
-        # ------------------------------------------------------------------------------ #
         # global water balance
         precip_flux = precip * RHO_WATER / self.N_seconds
         evapor_flux = evapor * RHO_WATER / self.N_seconds
@@ -294,13 +390,8 @@ class GlobalMassFixer(nn.Module):
         precip = precip * P_correct_ratio
 
         # ===================================================================== #
-        # return fixed q and precip back to y_pred
-
-        # expand fixed vars to (batch level, time, lat, lon)
-        q_pred = q_pred.unsqueeze(2)
+        # return fixed precip back to y_pred
         precip = precip.unsqueeze(1).unsqueeze(2)
-        
-        y_pred = concat_fix(y_pred, q_pred, self.q_ind_start, self.q_ind_end, N_vars)
         y_pred = concat_fix(y_pred, precip, self.precip_ind, self.precip_ind, N_vars)
         
         if self.state_trans:
@@ -308,7 +399,7 @@ class GlobalMassFixer(nn.Module):
         
         # give it back to x
         x["y_pred"] = y_pred
-
+        
         # return dict, 'x' is not touched
         return x
 

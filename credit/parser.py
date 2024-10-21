@@ -311,7 +311,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
     conf['model'].setdefault('post_conf', {'activate': False})
 
     # set defaults for post modules
-    post_list = ['skebs', 'tracer_fixer', 'global_mass_fixer', 'global_energy_fixer']
+    post_list = ['skebs', 'tracer_fixer', 'global_mass_fixer', 'global_water_fixer', 'global_energy_fixer']
     for post_module in post_list:
         conf['model']['post_conf'].setdefault(post_module, {'activate': False})
 
@@ -321,7 +321,6 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
                         for post_module in post_list])
     if post_conf['activate'] and not activate_any:
         raise("post_conf is set activate, but no post modules specified")
-    
     
     if conf['model']['post_conf']['activate']:
         # copy only model configs to post_conf subdictionary
@@ -406,10 +405,10 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         conf['model']['post_conf']['global_mass_fixer'].setdefault('denorm', True)
         conf['model']['post_conf']['global_mass_fixer'].setdefault('simple_demo', False)
         conf['model']['post_conf']['global_mass_fixer'].setdefault('midpoint', False)
-
+        
         assert 'fix_level_num' in conf['model']['post_conf']['global_mass_fixer'], (
             'Must specifiy what level to fix on specific total water')
-
+        
         if conf['model']['post_conf']['global_mass_fixer']['simple_demo'] is False:
             assert 'lon_lat_level_name' in conf['model']['post_conf']['global_mass_fixer'], (
                 'Must specifiy var names for lat/lon/level in physics reference file')
@@ -417,21 +416,45 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         q_inds = [
             i_var for i_var, var in enumerate(varname_output) 
             if var in conf['model']['post_conf']['global_mass_fixer']['specific_total_water_name']
+        ]        
+        conf['model']['post_conf']['global_mass_fixer']['q_inds'] = q_inds
+        
+    # --------------------------------------------------------------------- #
+    # global water fixer
+    flag_water = conf['model']['post_conf']['activate'] and conf['model']['post_conf']['global_water_fixer']['activate']
+    
+    if flag_water:
+        # when global water fixer is on, get tensor indices of q, precip, evapor 
+        # these variables must be outputs
+        
+        # global water fixer defaults
+        conf['model']['post_conf']['global_water_fixer'].setdefault('activate_outside_model', False)
+        conf['model']['post_conf']['global_water_fixer'].setdefault('denorm', True)
+        conf['model']['post_conf']['global_water_fixer'].setdefault('simple_demo', False)
+        conf['model']['post_conf']['global_water_fixer'].setdefault('midpoint', False)
+        
+        if conf['model']['post_conf']['global_water_fixer']['simple_demo'] is False:
+            assert 'lon_lat_level_name' in conf['model']['post_conf']['global_water_fixer'], (
+                'Must specifiy var names for lat/lon/level in physics reference file')
+        
+        q_inds = [
+            i_var for i_var, var in enumerate(varname_output) 
+            if var in conf['model']['post_conf']['global_water_fixer']['specific_total_water_name']
         ]
 
         precip_inds = [
             i_var for i_var, var in enumerate(varname_output) 
-            if var in conf['model']['post_conf']['global_mass_fixer']['precipitation_name']
+            if var in conf['model']['post_conf']['global_water_fixer']['precipitation_name']
         ]
 
         evapor_inds = [
             i_var for i_var, var in enumerate(varname_output) 
-            if var in conf['model']['post_conf']['global_mass_fixer']['evaporation_name']
+            if var in conf['model']['post_conf']['global_water_fixer']['evaporation_name']
         ]
         
-        conf['model']['post_conf']['global_mass_fixer']['q_inds'] = q_inds
-        conf['model']['post_conf']['global_mass_fixer']['precip_ind'] = precip_inds[0]
-        conf['model']['post_conf']['global_mass_fixer']['evapor_ind'] = evapor_inds[0]
+        conf['model']['post_conf']['global_water_fixer']['q_inds'] = q_inds
+        conf['model']['post_conf']['global_water_fixer']['precip_ind'] = precip_inds[0]
+        conf['model']['post_conf']['global_water_fixer']['evapor_ind'] = evapor_inds[0]
         
     # --------------------------------------------------------------------- #
     # global energy fixer
@@ -447,7 +470,7 @@ def CREDIT_main_parser(conf, parse_training=True, parse_predict=True, print_summ
         conf['model']['post_conf']['global_energy_fixer'].setdefault('simple_demo', False)
         conf['model']['post_conf']['global_energy_fixer'].setdefault('midpoint', False)
         
-        if conf['model']['post_conf']['global_mass_fixer']['simple_demo'] is False:
+        if conf['model']['post_conf']['global_energy_fixer']['simple_demo'] is False:
             assert 'lon_lat_level_name' in conf['model']['post_conf']['global_energy_fixer'], (
                 'Must specifiy var names for lat/lon/level in physics reference file')
         

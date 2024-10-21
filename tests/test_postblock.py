@@ -1,6 +1,6 @@
 import torch
 from credit.postblock import PostBlock
-from credit.postblock import SKEBS, TracerFixer, GlobalMassFixer, GlobalEnergyFixer
+from credit.postblock import SKEBS, TracerFixer, GlobalMassFixer, GlobalWaterFixer, GlobalEnergyFixer
 
 def test_SKEBS_rand():
     image_width = 100
@@ -70,8 +70,6 @@ def test_GlobalMassFixer_rand():
         'simple_demo': True, 
         'fix_level_num': 3,
         'q_inds': [0, 1, 2, 3, 4, 5, 6],
-        'precip_ind': 7,
-        'evapor_ind': 8
     }
     
     # data specs
@@ -96,6 +94,50 @@ def test_GlobalMassFixer_rand():
     # verify `y_pred_fix` and `y_pred` has the same size
     assert y_pred_fix.shape == y_pred.shape
 
+def test_GlobalWaterFixer_rand():
+    '''
+    This function provides a I/O size test on 
+    GlobalWaterFixer at credit.postblock
+    '''
+    # initialize post_conf, turn-off other blocks
+    conf = {'post_conf': {'skebs': {'activate': False}}}
+    conf['post_conf']['tracer_fixer'] = {'activate': False}
+    conf['post_conf']['global_energy_fixer'] = {'activate': False}
+    
+    # global water fixer specs
+    conf['post_conf']['global_water_fixer'] = {
+        'activate': True, 
+        'activate_outside_model': False,
+        'denorm': False, 
+        'midpoint': False,
+        'simple_demo': True, 
+        'fix_level_num': 3,
+        'q_inds': [0, 1, 2, 3, 4, 5, 6],
+        'precip_ind': 7,
+        'evapor_ind': 8
+    }
+    
+    # data specs
+    conf['post_conf']['data'] = {'lead_time_periods': 6}
+    
+    # initialize postblock
+    postblock = PostBlock(**conf)
+
+    # verify that GlobalWaterFixer is registered in the postblock
+    assert any([isinstance(module, GlobalWaterFixer) for module in postblock.modules()])
+    
+    # input tensor
+    x = torch.randn((1, 7, 2, 10, 18))
+    # output tensor
+    y_pred = torch.randn((1, 9, 1, 10, 18))
+    
+    input_dict = {"y_pred": y_pred, "x": x}
+    
+    # corrected output
+    y_pred_fix = postblock(input_dict)
+
+    # verify `y_pred_fix` and `y_pred` has the same size
+    assert y_pred_fix.shape == y_pred.shape
 
 def test_GlobalEnergyFixer_rand():
     '''
