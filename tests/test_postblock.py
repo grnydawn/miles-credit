@@ -29,6 +29,7 @@ def test_TracerFixer_rand():
     # initialize post_conf, turn-off other blocks
     conf = {"post_conf": {"skebs": {'activate': False}}}
     conf['post_conf']['global_mass_fixer'] = {'activate': False}
+    conf['post_conf']['global_water_fixer'] = {'activate': False}
     conf['post_conf']['global_energy_fixer'] = {'activate': False}
 
     # tracer fixer specs
