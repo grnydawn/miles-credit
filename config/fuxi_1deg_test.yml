@@ -165,43 +165,7 @@ model:
         pad_lon: 40
         
     post_conf: 
-        activate: True
-        
-        skebs:
-            activate: False
-        
-        tracer_fixer:
-            activate: True
-            denorm: True
-            tracer_name: ['specific_total_water', 'total_precipitation', 'TCC']
-            tracer_thres: [0, 0, 0]
-            
-        global_mass_fixer:
-            activate: True
-            simple_demo: False
-            denorm: True
-            midpoint: False
-            fix_level_num: 14
-            lon_lat_level_name: ['lon2d', 'lat2d', 'p_level']
-            specific_total_water_name: ['specific_total_water']
-            precipitation_name: ['total_precipitation']
-            evaporation_name: ['evaporation']
-            
-        global_energy_fixer:
-            activate: True
-            simple_demo: False
-            denorm: True
-            midpoint: False
-            lon_lat_level_name: ['lon2d', 'lat2d', 'p_level']
-            air_temperature_name: ['T']
-            specific_total_water_name: ['specific_total_water']
-            u_wind_name: ['U']
-            v_wind_name: ['V']
-            lon_lat_level_name: ['lon2d', 'lat2d', 'p_level']
-            surface_geopotential_name: ['geopotential_at_surface']
-            TOA_net_radiation_flux_name: ['top_net_solar_radiation', 'top_net_thermal_radiation']
-            surface_net_radiation_flux_name: ['surface_net_solar_radiation', 'surface_net_thermal_radiation']
-            surface_energy_flux_name: ['surface_sensible_heat_flux', 'surface_latent_heat_flux',]
+        activate: False
     
 loss: 
     # the main training loss
