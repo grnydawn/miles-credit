@@ -96,7 +96,7 @@ def create_pressure_grid(surface_pressure, model_a, model_b):
     assert (
         model_a.size == model_b.size
     ), "Model pressure coefficient arrays do not match."
-    if len(surface_pressure.shape) == 3:
+    if surface_pressure.ndim == 3:
         # Generate the 3D pressure field for a time series of surface pressure grids
         pressure_3d = np.zeros(
             (
