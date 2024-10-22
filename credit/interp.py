@@ -1,45 +1,47 @@
 import numpy as np
 from numba import njit
 import xarray as xr
+from tqdm import tqdm
 
 
 def full_state_pressure_interpolation(
-    state_dataset,
-    pressure_levels,
-    model_a,
-    model_b,
-    interp_fields=("U", "V", "T", "Q"),
-    temperature_var="T",
-    q_var="Q",
-    surface_pressure_var="SP",
-    surface_geopotential_var="Z_GDS4_SFC",
-    geopotential_var="Z",
-    time_var="time",
-    lat_var="latitude",
-    lon_var="longitude",
-    pres_var="pressure",
-):
+    state_dataset: xr.Dataset,
+    pressure_levels: np.ndarray,
+    model_a: np.ndarray,
+    model_b: np.ndarray,
+    interp_fields: tuple[str] = ("U", "V", "T", "Q"),
+    temperature_var: str ="T",
+    q_var: str ="Q",
+    surface_pressure_var: str ="SP",
+    surface_geopotential_var: str ="Z_GDS4_SFC",
+    geopotential_var: str ="Z",
+    time_var: str = "time",
+    lat_var: str = "latitude",
+    lon_var: str = "longitude",
+    pres_var: str = "pressure",
+    verbose: int = 1
+) -> xr.Dataset:
     """
     Interpolate full model state variables from model levels to pressure levels.
 
     Args:
-        state_dataset:
-        pressure_levels:
-        model_a:
-        model_b:
-        interp_fields:
-        temperature_var:
-        q_var:
-        surface_pressure_var:
-        surface_geopotential_var:
-        geopotential_var:
-        time_var:
-        lat_var:
-        lon_var:
-        pres_var:
-
+        state_dataset (xr.Dataset): state variables being interpolated
+        pressure_levels (np.ndarray): pressure levels for interpolation in Pa.
+        model_a (np.ndarray): model level a coefficients.
+        model_b (np.ndarray): model level b coefficients.
+        interp_fields (tuple[str]): fields to be interpolated.
+        temperature_var (str): temperature variable to be interpolated (units K).
+        q_var (str): mixing ratio/specific humidity variable to be interpolated (units kg/kg).
+        surface_pressure_var (str): surface pressure variable (units Pa).
+        surface_geopotential_var (str): surface geoptential variable (units m^2/s^2).
+        geopotential_var (str): geopotential variable being derived (units m^2/s^2).
+        time_var (str): time coordinate
+        lat_var (str): latitude coordinate
+        lon_var (str): longitude coordinate
+        pres_var (str): pressure coordinate
+        verbose (int): verbosity level. If verbose > 0, print progress.
     Returns:
-
+        pressure_ds (xr.Dataset): Dataset containing pressure interpolated variables.
     """
     pres_dims = (time_var, pres_var, lat_var, lon_var)
     coords = {
@@ -57,7 +59,11 @@ def full_state_pressure_interpolation(
         },
         coords=coords,
     )
-    for t, time in enumerate(state_dataset[time_var]):
+    pressure_ds[geopotential_var] = xr.DataArray(coords=coords, dims=pres_dims, name=geopotential_var)
+    disable = False
+    if verbose == 0:
+        disable = True
+    for t, time in tqdm(enumerate(state_dataset[time_var]), disable=disable):
         pressure_grid = create_pressure_grid(
             state_dataset[surface_pressure_var][t].values, model_a, model_b
         )
