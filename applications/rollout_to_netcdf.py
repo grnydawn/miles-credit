@@ -827,9 +827,9 @@ if __name__ == "__main__":
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
     # ======================================================== #
-    if conf['data']['scaler_type'] in ['std_new', 'std_cached']:
-        conf = CREDIT_main_parser(conf, parse_training=False, parse_predict=True, print_summary=False)
-        predict_data_check(conf, print_summary=False)
+    # handling config args
+    conf = CREDIT_main_parser(conf, parse_training=False, parse_predict=True, print_summary=False)
+    predict_data_check(conf, print_summary=False)
     # ======================================================== #
 
     # create a save location for rollout
@@ -879,16 +879,14 @@ if __name__ == "__main__":
 
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
-    
-
-    local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])
 
     with mp.Pool(num_cpus) as p:
         if conf["predict"]["mode"] in ["fsdp", "ddp"]:  # multi-gpu inference
-            _ = predict(world_rank, world_size, conf, p=p)
+            _ = predict(int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf, p=p)
         else:  # single device inference
             _ = predict(0, 1, conf, p=p)
 
     # Ensure all processes are finished
     p.close()
     p.join()
+    
