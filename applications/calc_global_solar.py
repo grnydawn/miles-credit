@@ -108,14 +108,24 @@ def main():
         if not os.path.exists(args.output):
             os.makedirs(args.output)
         date_format = "%Y-%m-%d_%H%M"
-        out_time = pd.Timestamp.utcnow().strftime(date_format)
         start_date_str = start_date_ts.strftime(date_format)
         end_date_str = end_date_ts.strftime(date_format)
         filename = f"solar_irradiance_{start_date_str}_{end_date_str}.nc"
         print("Saving")
         solar_grid.to_netcdf(
             os.path.join(args.output, filename),
-            encoding={"tsi": {"zlib": True, "complevel": 1, "shuffle": True}},
+            encoding={
+                "tsi": {
+                    "zlib": True,
+                    "complevel": 1,
+                    "shuffle": True,
+                    "chunksizes": (
+                        1,
+                        solar_grid["tsi"].shape[1],
+                        solar_grid["tsi"].shape[2],
+                    ),
+                }
+            },
         )
     return
 
