@@ -547,7 +547,6 @@ class CrossFormer(BaseModel):
 
         return (k1 + 2 * k2 + 2 * k3 + k4) / 6
 
-
 if __name__ == "__main__":
     image_height = 640  # 640, 192
     image_width = 1280  # 1280, 288

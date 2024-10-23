@@ -1,3 +1,4 @@
+
 import torch
 import torch.nn.functional as F
 
@@ -16,6 +17,7 @@ class TensorPadding:
         self.mode = mode
         self.pad_NS = pad_lat
         self.pad_WE = pad_lon
+
 
     def pad(self, x):
         """
@@ -62,8 +64,8 @@ class TensorPadding:
             shift_size = int(x.shape[-1] // 2)
             xroll = torch.roll(x, shifts=shift_size, dims=-1)
             # pad poles
-            xroll_flip_top = torch.flip(xroll[..., : self.pad_NS[0], :], (-2,))
-            xroll_flip_bot = torch.flip(xroll[..., -self.pad_NS[1] :, :], (-2,))
+            xroll_flip_top = torch.flip(xroll[..., :self.pad_NS[0], :], (-2,))
+            xroll_flip_bot = torch.flip(xroll[..., -self.pad_NS[1]:, :], (-2,))
             x = torch.cat([xroll_flip_top, x, xroll_flip_bot], dim=-2)
 
         if any(p > 0 for p in self.pad_WE):
@@ -132,10 +134,11 @@ class TensorPadding:
         """
         # unpad along latitude (north-south)
         if any(p > 0 for p in self.pad_NS):
-            x = x[..., self.pad_NS[0] : -self.pad_NS[1], :]
+            x = x[..., self.pad_NS[0]:-self.pad_NS[1], :]
 
         # unpad along longitude (west-east)
         if any(p > 0 for p in self.pad_WE):
-            x = x[..., :, self.pad_WE[0] : -self.pad_WE[1]]
+            x = x[..., :, self.pad_WE[0]:-self.pad_WE[1]]
 
         return x
+

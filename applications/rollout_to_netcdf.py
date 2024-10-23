@@ -672,6 +672,7 @@ if __name__ == "__main__":
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
 
+
     local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])
 
     with mp.Pool(num_cpus) as p:
