@@ -67,12 +67,14 @@ class dataConverter:
 
     def tensor_to_dataArray(self, pred, forecast_datetimes):
         """
-        pred: Tensor
-            w/ shape (B, C, T, lat, lon)
-        forecast_datetimes: array-like
-        lat: array-like
-        lon: array-like
-        conf: dictionary
+        Convert tensor to DataArray
+
+        Args:
+            pred: Tensor with shape (B, C, T, lat, lon)
+            forecast_datetimes: array-like
+            lat: array-like
+            lon: array-like
+            conf: dictionary
         """
 
         # subset upper air and surface variables

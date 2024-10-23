@@ -25,8 +25,8 @@ from credit.loss404 import VariableTotalLoss2D
 from credit.data404 import CONUS404Dataset
 from credit.transforms404 import NormalizeState, ToTensor
 from credit.scheduler import load_scheduler, annealed_probability
-from credit.trainer404 import Trainer
-from credit.metrics404 import LatWeightedMetrics
+from credit.trainers.trainer404 import Trainer
+from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
 from credit.seed import seed_everything
 from credit.models.checkpoint import FSDPOptimizerWrapper, TorchFSDPCheckpointIO

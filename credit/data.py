@@ -1128,10 +1128,7 @@ class ERA5_Dataset_Distributed(torch.utils.data.Dataset):
 
 class Predict_Dataset(torch.utils.data.IterableDataset):
     """
-    Same as ERA5_and_Forcing_Dataset() but work with rollout_to_netcdf_new.py
-
-    *ksha: dynamic forcing has been added to the rollout-only Dataset, but it has
-    not been tested. Once the new tsi is ready, this dataset class will be tested
+    Same as ERA5_and_Forcing_Dataset() but works with rollout_to_netcdf.py.
     """
 
     def __init__(
@@ -1448,10 +1445,10 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
 class ERA5Dataset(torch.utils.data.Dataset):
     def __init__(
         self,
-        filenames: list = [
+        filenames: list = (
             "/glade/derecho/scratch/wchapman/STAGING/TOTAL_2012-01-01_2012-12-31_staged.zarr",
             "/glade/derecho/scratch/wchapman/STAGING/TOTAL_2013-01-01_2013-12-31_staged.zarr",
-        ],
+        ),
         history_len: int = 1,
         forecast_len: int = 2,
         transform: Optional[Callable] = None,

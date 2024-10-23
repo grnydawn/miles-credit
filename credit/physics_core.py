@@ -24,14 +24,9 @@ class physics_pressure_level:
     """
     Pressure level physics
 
-    Attributes:
-        upper_air_pressure (torch.Tensor): pressure levels in Pa.
-        lon (torch.Tensor): longitude in degrees.
-        lat (torch.Tensor): latitude in degrees.
-        pressure_thickness (torch.Tensor): pressure thickness between levels.
-        dx, dy (torch.Tensor): grid spacings in longitude and latitude.
-        area (torch.Tensor): area of grid cells.
-        integral (function): vertical integration method (midpoint or trapezoidal).
+    All inputs must be in the same torch device.
+
+    Full order of dimensions:  (batch, time, level, latitude, longitude)
     """
 
     def __init__(
@@ -42,19 +37,14 @@ class physics_pressure_level:
         midpoint: bool = False,
     ):
         """
-        Initialize the class with longitude, latitude, and pressure levels.
-
-        All inputs must be in the same torch device.
-
-        Full order of dimensions:  (batch, time, level, latitude, longitude)
-
-        Args:
-            lon (torch.Tensor): Longitude in degrees.
-            lat (torch.Tensor): Latitude in degrees.
-            upper_air_pressure (torch.Tensor): Pressure levels in Pa.
-            midpoint (bool): True if vertical level quantities are midpoint values
-                      otherwise False
-
+        Attributes:
+            upper_air_pressure (torch.Tensor): pressure levels in Pa.
+            lon (torch.Tensor): longitude in degrees.
+            lat (torch.Tensor): latitude in degrees.
+            pressure_thickness (torch.Tensor): pressure thickness between levels.
+            dx, dy (torch.Tensor): grid spacings in longitude and latitude.
+            area (torch.Tensor): area of grid cells.
+            integral (function): vertical integration method (midpoint or trapezoidal).
         """
         self.lon = lon
         self.lat = lat

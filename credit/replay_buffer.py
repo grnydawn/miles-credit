@@ -15,7 +15,7 @@ import optuna
 from glob import glob
 from credit.transforms import load_transforms
 from credit.data import ERA5Dataset
-from credit.trainer import Trainer as BaseTrainer
+from credit.trainers.base_trainer import BaseTrainer
 from overrides import overrides
 import random
 

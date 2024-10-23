@@ -141,15 +141,15 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
 
 
 def load_dataset_and_sampler_zscore_only(
-    conf,
-    all_ERA_files,
-    surface_files,
-    dyn_forcing_files,
-    diagnostic_files,
-    world_size,
-    rank,
-    is_train,
-    seed=42,
+    conf: dict,
+    all_ERA_files: list,
+    surface_files: list,
+    dyn_forcing_files: list,
+    diagnostic_files: list,
+    world_size: int,
+    rank: int,
+    is_train: bool,
+    seed: int = 42,
 ):
     """
     Load the Z-score only dataset and sampler for training or validation.
@@ -753,7 +753,7 @@ class Objective(BaseObjective):
 
 
 if __name__ == "__main__":
-    description = "Train a segmengation model on a hologram data set"
+    description = "Train a global AI NWP model on a reanalysis dataset."
     parser = ArgumentParser(description=description)
     parser.add_argument(
         "-c",

@@ -41,37 +41,14 @@ class BaseTrainer(ABC):
     This class provides a framework for training, validating, and saving model checkpoints.
     It supports both single-GPU and distributed training. Subclasses must implement
     the `train_one_epoch` and `validate` methods.
-
-    Attributes:
-        model (torch.nn.Module): The model to be trained.
-        rank (int): The rank of the process in distributed training.
-        device (torch.device): The device on which to train the model (CPU or GPU).
-
-    Methods:
-        train_one_epoch(epoch, conf, trainloader, optimizer, criterion, scaler, scheduler, metrics):
-            Abstract method to train the model for one epoch.
-
-        validate(epoch, conf, valid_loader, criterion, metrics):
-            Abstract method to validate the model on the validation set.
-
-        save_checkpoint(save_loc, state_dict):
-            Save a checkpoint of the model, optimizer, and other states.
-
-        save_fsdp_checkpoint(save_loc, state_dict):
-            Save a checkpoint of the model for Fully Sharded Data Parallel (FSDP) training.
-
-        fit(conf, train_loader, valid_loader, optimizer, train_criterion, valid_criterion, scaler, scheduler, metrics, rollout_scheduler=None, trial=False):
-            Perform the full training loop, including validation, and save the best results.
     """
 
     def __init__(self, model: torch.nn.Module, rank: int, module: bool = False):
         """
-        Initialize the Trainer.
-
-        Args:
-            model (torch.nn.Module): The model to train.
-            rank (int): The rank of the current process.
-            module (bool): Whether to use model.module instead of model directly.
+        Attributes:
+            model (torch.nn.Module): The model to be trained.
+            rank (int): The rank of the process in distributed training.
+            device (torch.device): The device on which to train the model (CPU or GPU).
         """
         super(BaseTrainer, self).__init__()
         self.model = model.module if module else model

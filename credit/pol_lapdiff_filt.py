@@ -68,12 +68,12 @@ def create_sigmoid_ramp_function(array_length, ramp_length):
     """
     Creates an array of specified length with a sigmoid ramp up and down.
 
-    Parameters:
-    - array_length: The length of the output array.
-    - ramp_length: The length of the ramp up and down.
+    Args:
+        array_length: The length of the output array.
+        ramp_length: The length of the ramp up and down.
 
     Returns:
-    - An array of the specified length with the described ramp up and down using a sigmoid function.
+        An array of the specified length with the described ramp up and down using a sigmoid function.
     """
 
     # Calculate the positions for ramp start and end
@@ -130,12 +130,17 @@ class Diffusion_and_Pole_Filter:
         Initialize the Diffusion_and_Pole_Filter object with provided parameters.
 
         Parameters:
-        - nlat, nlon: The number of latitude and longitude points in the grid.
-        - device: The computing device, default is 'cpu'.
-        - lmax, mmax: The maximum spherical harmonic degree and order.
-        - grid: Type of grid used for spherical harmonics, default is 'legendre-gauss'.
-        - radius, omega, gravity: Physical constants for Earth's radius, rotation rate, and gravity.
-        - havg, hamp: Average height and amplitude for height calculations.
+            nlat: The number of latitude points in the grid.
+            nlon: The number of longitude points in the grid.
+            device: The computing device, default is 'cpu'.
+            lmax: maximum spherical harmonic degree
+            mmax: The maximum spherical harmonic order.
+            grid: Type of grid used for spherical harmonics, default is 'legendre-gauss'.
+            radius: radius of the earth
+            omega: rotation rate
+            gravity:  gravity.
+            havg: average height
+            hamp: Average amplitude for height calculations.
         """
         self.nlat = nlat
         self.nlon = nlon
@@ -228,13 +233,16 @@ class Diffusion_and_Pole_Filter:
     def getgrad(self, chispec):
         """
         compute vector gradient on grid given complex spectral coefficients.
-        @param chispec: rank 1 or 2 or 3 tensor complex array with shape
-        (ntrunc+1)*(ntrunc+2)/2 or ((ntrunc+1)*(ntrunc+2)/2,nt) containing
+
+        Args:
+            chispec: rank 1 or 2 or 3 tensor complex array with shape
+        `(ntrunc+1)*(ntrunc+2)/2 or ((ntrunc+1)*(ntrunc+2)/2,nt)` containing
         complex spherical harmonic coefficients (where ntrunc is the
         triangular truncation limit and nt is the number of spectral arrays
         to be transformed). If chispec is rank 1, nt is assumed to be 1.
 
-        @return: C{B{uchi, vchi}} - rank 2 or 3 numpy float32 arrays containing
+        Returns:
+            C{B{uchi, vchi}} - rank 2 or 3 numpy float32 arrays containing
         gridded zonal and meridional components of the vector gradient.
         Shapes are either (nlat,nlon) or (nlat,nlon,nt).
         """
@@ -317,30 +325,30 @@ class Diffusion_and_Pole_Filter:
         enhanced by considering the field's divergence and vorticity, ensuring that the
         final vector field adheres more closely to the expected physical behavior.
 
-        Parameters:
-        - U (Tensor): The x-component of the velocity or vector field. This tensor should
-          represent one of the two dimensions of the field, with spatial dimensions that
-          match those of the V component.
-        - V (Tensor): The y-component of the velocity or vector field. This tensor complements
-          the U component by representing the second dimension of the field.
-        - ind_pol (list/int): Index or indices specifying the poles to be filtered out from
-          the vector field. These indices target specific features or regions within the
-          field for suppression.
-        - device (torch.device): The computational device (CPU or GPU) where the operations
-          will be performed. This parameter ensures that tensors are appropriately allocated
-          for efficient computation.
-        - sigmoid_ramp_array (Tensor): An array used to modulate the intensity of the Laplacian
-          correction applied to the vector field. This array typically represents a spatially
-          varying factor that adjusts the correction strength across different regions of the field.
-        - substeps (int): The number of iterations for the correction process. This parameter
-          controls the depth of the refinement process, with more substeps leading to a more
-          pronounced adjustment of the vector field.
+        Args:
+            U (Tensor): The x-component of the velocity or vector field. This tensor should
+            represent one of the two dimensions of the field, with spatial dimensions that
+            match those of the V component.
+            V (Tensor): The y-component of the velocity or vector field. This tensor complements the U component
+            by representing the second dimension of the field.
+            ind_pol (list/int): Index or indices specifying the poles to be filtered out from
+            the vector field. These indices target specific features or regions within the
+            field for suppression.
+            device (torch.device): The computational device (CPU or GPU) where the operation
+            will be performed. This parameter ensures that tensors are appropriately allocated
+            for efficient computation.
+            sigmoid_ramp_array (Tensor): An array used to modulate the intensity of the Laplacian
+            correction applied to the vector field. This array typically represents a spatially
+            varying factor that adjusts the correction strength across different regions of the field.
+            substeps (int): The number of iterations for the correction process. This parameter
+            controls the depth of the refinement process, with more substeps leading to a more
+            pronounced adjustment of the vector field.
 
         Returns:
-        - Tuple[Tensor, Tensor]: A tuple containing the modified x and y components (U, V) of the
-          vector field after the pole filtering and Laplacian-based correction have been applied.
-          These components will have undergone adjustments to suppress specified poles and to
-          refine their characteristics based on divergence, vorticity, and Laplacian considerations.
+            Tuple[Tensor, Tensor]: A tuple containing the modified x and y components (U, V) of the
+            vector field after the pole filtering and Laplacian-based correction have been applied.
+            These components will have undergone adjustments to suppress specified poles and to
+            refine their characteristics based on divergence, vorticity, and Laplacian considerations.
         """
         U = polfiltT(U.clone().detach(), self.indpol).to(self.device)
         V = polfiltT(V.clone().detach(), self.indpol).to(self.device)
@@ -382,12 +390,12 @@ class Diffusion_and_Pole_Filter:
         its divergence, vorticity, and Laplacian properties through a series of
         spectral domain operations.
 
-        Parameters:
-        - T (Tensor): scalar-component of the velocity or vector field.
-        - ind_pol (list/int): Index/indices specifying poles for the filtering process.
+        Args:
+            T (Tensor): scalar-component of the velocity or vector field.
+            ind_pol (list/int): Index/indices specifying poles for the filtering process.
 
         Returns:
-        - Tuple of Tensors: The modified T components of the scalar field.
+            Tuple of Tensors: The modified T components of the scalar field.
         """
         T = polfiltT(T.clone().detach(), self.indpol)
 
@@ -411,12 +419,12 @@ class Diffusion_and_Pole_Filter:
         its divergence, vorticity, and Laplacian properties through a series of
         spectral domain operations.
 
-        Parameters:
-        - T (Tensor): scalar-component of the velocity or vector field.
-        - ind_pol (list/int): Index/indices specifying poles for the filtering process.
+        Args:
+            T (Tensor): scalar-component of the velocity or vector field.
+            ind_pol (list/int): Index/indices specifying poles for the filtering process.
 
         Returns:
-        - Tuple of Tensors: The modified T components of the scalar field.
+            Tuple of Tensors: The modified T components of the scalar field.
         """
         T = polfiltT(T.clone().detach(), self.indpol)
 
@@ -487,7 +495,7 @@ if __name__ == "__main__":
     nlat = U.shape[0]
     nlon = U.shape[1]
     BB2_tensor = torch.tensor(BB2).clone().detach().to(device)
-    # instantiae this with the original model:
+    # instantiate this with the original model:
     DPF = Diffusion_and_Pole_Filter(nlat=nlat, nlon=nlon, device=device)
 
     # this fixes the divergent modes ... might eb doing too much to Q

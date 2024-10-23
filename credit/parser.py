@@ -865,7 +865,7 @@ def CREDIT_main_parser(
 
 def training_data_check(conf, print_summary=False):
     """
-    Note: this function is designed for model training, NOT for rollout
+    Note: this function is designed for model training, NOT for rollout.
 
     The following items are covered:
         - All yearly files (upper-air, surface, dynamic forcing, diagnostic)
@@ -876,7 +876,7 @@ def training_data_check(conf, print_summary=False):
         - All files (upper-air, surface, dynamic forcing, diagnostic, forcing, static, mean, std, lat_weights)
           have the same coordinate names and coordinate values
           Note: this part checks lat, lon, level coordinates, and it ignores 'time' coordinates.
-    ----------------------------------------------------------------------------------
+
     Where is it applied?
         - applications/train.py
         - applications/train_multistep.py
@@ -1264,7 +1264,7 @@ def predict_data_check(conf, print_summary=False):
         - All files (upper-air, surface, dynamic forcing, forcing, static, mean, std, lat_weights)
           have the same coordinate names and coordinate values
           Note: this part checks lat, lon, level coordinates, and it ignores 'time' coordinates.
-    ----------------------------------------------------------------------------------
+
     Where is it applied?
         - applications/rollout_to_netcdf_new.py
 

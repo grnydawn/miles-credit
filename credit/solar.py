@@ -120,13 +120,13 @@ def get_tsi(timestamps: Sequence, tsi_data: xr.DataArray) -> np.array:
     TSI values are interpolated from the provided yearly TSI data.
 
     Args:
-    timestamps: Timestamps for which to compute TSI values.
-    tsi_data: A DataArray with a single dimension `time` that has coordinates in
-      units of years since 0000-1-1. E.g. 2023.5 corresponds to the middle of
-      the year 2023.
+        timestamps: Timestamps for which to compute TSI values.
+        tsi_data: A DataArray with a single dimension `time` that has coordinates in
+        units of years since 0000-1-1. E.g. 2023.5 corresponds to the middle of
+        the year 2023.
 
     Returns:
-    An Array containing interpolated TSI data.
+        An Array containing interpolated TSI data.
     """
     timestamps = pd.DatetimeIndex(timestamps, tz="utc")
     timestamps_date = pd.DatetimeIndex(timestamps.date, tz="utc")

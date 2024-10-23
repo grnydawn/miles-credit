@@ -349,7 +349,7 @@ class OptimizerWrapper:
             clip_value (float or int): maximum allowed value of the gradients. Gradients are clipped in the range
 
         Note:
-            In PyTorch Torch 2.0 and above, you can pass in foreach=True as kwargs to clip_grad_value_ to use the
+            In PyTorch 2.0 and above, you can pass in foreach=True as kwargs to `clip_grad_value_` to use the
             faster implementation. Please refer to the PyTorch documentation for more details.
         """
         nn.utils.clip_grad_value_(self.parameters, clip_value, *args, **kwargs)
@@ -371,7 +371,7 @@ class OptimizerWrapper:
             error_if_nonfinite (bool): if True, an error is raised if the total norm is non-finite. Default: False
 
         Note:
-            In PyTorch Torch 2.0 and above, you can pass in foreach=True as kwargs to clip_grad_norm_ to use the
+            In PyTorch 2.0 and above, you can pass in foreach=True as kwargs to `clip_grad_norm_` to use the
             faster implementation. Please refer to the PyTorch documentation for more details.
         """
         norm = nn.utils.clip_grad_norm_(

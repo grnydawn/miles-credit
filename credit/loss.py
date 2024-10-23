@@ -63,11 +63,6 @@ class LogCoshLoss(torch.nn.Module):
     Args:
         reduction (str): Specifies the reduction to apply to the output:
             'mean' | 'none'. 'mean': the output is averaged; 'none': no reduction is applied.
-
-    Methods:
-        forward(y_t, y_prime_t): Computes the Log-Cosh loss between the
-            target and predicted values.
-
     """
 
     def __init__(self, reduction="mean"):
@@ -102,11 +97,6 @@ class XTanhLoss(torch.nn.Module):
     Args:
         reduction (str): Specifies the reduction to apply to the output:
             'mean' | 'none'. 'mean': the output is averaged; 'none': no reduction is applied.
-
-    Methods:
-        forward(y_t, y_prime_t): Computes the X-Tanh loss between the
-            target and predicted values.
-
     """
 
     def __init__(self, reduction="mean"):
@@ -140,11 +130,6 @@ class XSigmoidLoss(torch.nn.Module):
     Args:
         reduction (str): Specifies the reduction to apply to the output:
             'mean' | 'none'. 'mean': the output is averaged; 'none': no reduction is applied.
-
-    Methods:
-        forward(y_t, y_prime_t): Computes the X-Sigmoid loss between the
-            target and predicted values.
-
     """
 
     def __init__(self, reduction="mean"):
@@ -179,11 +164,6 @@ class MSLELoss(nn.Module):
     Args:
         reduction (str): Specifies the reduction to apply to the output:
             'mean' | 'none'. 'mean': the output is averaged; 'none': no reduction is applied.
-
-    Methods:
-        forward(prediction, target): Computes the MSLE loss between the
-            predicted and target values.
-
     """
 
     def __init__(self, reduction="mean"):
@@ -219,11 +199,6 @@ class SpectralLoss2D(torch.nn.Module):
         wavenum_init (int): The initial wavenumber to start considering in the loss calculation.
         reduction (str): Specifies the reduction to apply to the output:
             'mean' | 'none'. 'mean': the output is averaged; 'none': no reduction is applied.
-
-    Methods:
-        forward(output, target, weights=None, fft_dim=-1): Computes the spectral loss between the
-            predicted and target values.
-
     """
 
     def __init__(self, wavenum_init=20, reduction="none"):
@@ -300,11 +275,6 @@ class PSDLoss(nn.Module):
 
     Args:
         wavenum_init (int): The initial wavenumber to start considering in the loss calculation.
-
-    Methods:
-        forward(target, pred, weights=None): Computes the PSD loss between the
-            predicted and target values.
-
     """
 
     def __init__(self, wavenum_init=20):

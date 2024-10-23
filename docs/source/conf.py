@@ -7,14 +7,14 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
 project = "miles-credit"
-copyright = "2024, NSF National Center for Atmospheric Research"
-author = "NSF National Center for Atmospheric Research"
+copyright = "2024, University Corporation for Atmospheric Research"
+author = "University Corporation for Atmospheric Research"
 release = "2024.1.0"
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
-extensions = ["sphinx.ext.napoleon"]
+extensions = ["sphinx.ext.napoleon", "autoapi.extension"]
 
 templates_path = ["_templates"]
 exclude_patterns = []
@@ -25,3 +25,4 @@ exclude_patterns = []
 
 html_theme = "sphinx_book_theme"
 html_static_path = ["_static"]
+autoapi_dirs = ["../../credit", "../../applications"]

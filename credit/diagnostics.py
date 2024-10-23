@@ -378,20 +378,20 @@ def interpolate_spectral_frequencies(
     method: str = "linear",
     **interp_kwargs: t.Optional[dict[str, t.Any]],
 ) -> xr.DataArray:
-    """Interpolate frequencies in `spectrum` to common values.
+    """
+    Interpolate frequencies in `spectrum` to common values.
 
     Args:
-    spectrum: Data as produced by ZonalEnergySpectrum.compute.
-    wavenumber_dim: Dimension that indexes wavenumber, e.g. 'zonal_wavenumber'
-      if `spectrum` is produced by ZonalEnergySpectrum.
-    frequencies: Optional 1-D sequence of frequencies to interpolate to. By
-      default, use the most narrow range of frequencies in `spectrum`.
-    method: Interpolation method passed on to DataArray.interp.
-    **interp_kwargs: Additional kwargs passed on to DataArray.interp.
+        spectrum: Data as produced by ZonalEnergySpectrum.compute.
+        wavenumber_dim: Dimension that indexes wavenumber, e.g. 'zonal_wavenumber'
+            if `spectrum` is produced by ZonalEnergySpectrum.
+        frequencies: Optional 1-D sequence of frequencies to interpolate to. By
+          default, use the most narrow range of frequencies in `spectrum`.
+        method: Interpolation method passed on to DataArray.interp.
+        interp_kwargs: Additional kwargs passed on to DataArray.interp.
 
     Returns:
-    New DataArray with dimension "frequency" replacing the "wavenumber" dim in
-      `spectrum`.
+        New DataArray with dimension "frequency" replacing the "wavenumber" dim in `spectrum`.
     """
 
     if set(spectrum.frequency.dims) != set((wavenumber_dim, "latitude")):
