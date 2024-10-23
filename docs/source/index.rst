@@ -15,8 +15,9 @@ allows users to train, run, and evaluate AI numerical weather prediction models.
    :maxdepth: 2
    :hidden:
    :caption: Contents:
-   Getting Started <getting-started>
-   
+
+   Getting Started <getting-started.md>
+
 
 
 Indices and tables

@@ -17,6 +17,7 @@ dependencies:
   - ruff
   - wandb
   - pre_commit
+  - myst-parser
 
 ## Earth sciences and visualization
   - xarray
@@ -48,5 +49,6 @@ dependencies:
     - torch_geometric
     - haversine
     - torchsummary
+    - sphinx-autoapi
     - .
 

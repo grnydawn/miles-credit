@@ -30,6 +30,7 @@ dependencies:
   - xesmf
   - mpi4py
   - mpich
+  - myst-parser
   - pip:
     - einops
     - echo-opt
@@ -42,4 +43,5 @@ dependencies:
     - haversine
     - torch-harmonics
     - torch_geometric
+    - sphinx-autoapi
     - .
