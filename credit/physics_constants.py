@@ -22,11 +22,35 @@ GRAVITY = 9.80665 # m/s^2
 # density of water
 RHO_WATER = 1000.0 # kg/m^3
 
+# ========================================================= #
 # latent heat caused by the phase change of water (0 deg C)
 LH_WATER = 2.501e6  # J/kg
+LH_ICE = 333700 # J/kg
 
-# heat capacity on constant pressure for dry air
+# ========================================================= #
+# heat capacity on constant pressure
+# dry air
 CP_DRY = 1004.64 # J/kg K
-
-# heat capacity on constant pressure for water vapor
+# water vapor
 CP_VAPOR = 1810.0 # J/kg K
+# liquid
+CP_LIQUID = 4188.0 # J/kg K
+# ice
+CP_ICE = 2117.27 # J/kg K
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
