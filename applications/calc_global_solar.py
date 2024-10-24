@@ -121,8 +121,8 @@ def main():
                     "shuffle": True,
                     "chunksizes": (
                         1,
-                        solar_grid["tsi"].shape[1],
-                        solar_grid["tsi"].shape[2],
+                        solar_grid.shape[1],
+                        solar_grid.shape[2],
                     ),
                 }
             },
