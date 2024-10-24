@@ -1,3 +1,11 @@
+'''
+A collection of constants
+
+Reference:
+
+Harrop, B.E., Pritchard, M.S., Parishani, H., Gettelman, A., Hagos, S., Lauritzen, P.H., Leung, L.R., Lu, J., Pressel, K.G. and Sakaguchi, K., 2022. Conservation of dry air, water, and energy in CAM and its potential impact on tropical rainfall. Journal of Climate, 35(9), pp.2895-2917.
+'''
+
 
 # Earth's radius
 RAD_EARTH = 6371000 # m
