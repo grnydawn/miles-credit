@@ -457,7 +457,7 @@ class Trainer(BaseTrainer):
                     
                     # backup init state
                     if flag_mass_conserve:
-                        if forecast_hour == 1:
+                        if forecast_step == 1:
                             x_init = x.clone()
                     
                     # mass conserve using initialization as reference
