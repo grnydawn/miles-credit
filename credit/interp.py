@@ -2,6 +2,7 @@ import numpy as np
 from numba import njit
 import xarray as xr
 from tqdm import tqdm
+from .physics_constants import RDGAS, RVGAS
 
 
 def full_state_pressure_interpolation(
@@ -10,16 +11,16 @@ def full_state_pressure_interpolation(
     model_a: np.ndarray,
     model_b: np.ndarray,
     interp_fields: tuple[str] = ("U", "V", "T", "Q"),
-    temperature_var: str ="T",
-    q_var: str ="Q",
-    surface_pressure_var: str ="SP",
-    surface_geopotential_var: str ="Z_GDS4_SFC",
-    geopotential_var: str ="Z",
+    temperature_var: str = "T",
+    q_var: str = "Q",
+    surface_pressure_var: str = "SP",
+    surface_geopotential_var: str = "Z_GDS4_SFC",
+    geopotential_var: str = "Z",
     time_var: str = "time",
     lat_var: str = "latitude",
     lon_var: str = "longitude",
     pres_var: str = "pressure",
-    verbose: int = 1
+    verbose: int = 1,
 ) -> xr.Dataset:
     """
     Interpolate full model state variables from model levels to pressure levels.
@@ -59,7 +60,9 @@ def full_state_pressure_interpolation(
         },
         coords=coords,
     )
-    pressure_ds[geopotential_var] = xr.DataArray(coords=coords, dims=pres_dims, name=geopotential_var)
+    pressure_ds[geopotential_var] = xr.DataArray(
+        coords=coords, dims=pres_dims, name=geopotential_var
+    )
     disable = False
     if verbose == 0:
         disable = True
@@ -175,25 +178,25 @@ def geopotential_from_model_vars(
     Returns:
         model_geoptential (np.ndarray): geopotential on model levels in shape (levels, y, x)
     """
-    Rd = 287.0
+    gamma = RVGAS / RDGAS - 1.0
     half_a = 0.5 * (model_a[:-1] + model_a[1:])
     half_b = 0.5 * (model_b[:-1] + model_b[1:])
     model_pressure = create_pressure_grid(surface_pressure, model_a, model_b)
     half_pressure = create_pressure_grid(surface_pressure, half_a, half_b)
     model_geopotential = np.zeros(model_pressure.shape, dtype=surface_pressure.dtype)
     half_geopotential = np.zeros(half_pressure.shape, dtype=surface_pressure.dtype)
-    virtual_temperature = temperature * (1.0 + 0.608 * mixing_ratio)
+    virtual_temperature = temperature * (1.0 + gamma * mixing_ratio)
     m = model_geopotential.shape[-3] - 1
     h = half_geopotential.shape[-3] - 1
-    model_geopotential[m] = surface_geopotential + Rd * virtual_temperature[m] * np.log(
-        surface_pressure / model_pressure[m]
-    )
+    model_geopotential[m] = surface_geopotential + RDGAS * virtual_temperature[
+        m
+    ] * np.log(surface_pressure / model_pressure[m])
     for i in range(1, model_geopotential.shape[-3]):
-        half_geopotential[h] = model_geopotential[m] + Rd * virtual_temperature[
+        half_geopotential[h] = model_geopotential[m] + RDGAS * virtual_temperature[
             m
         ] * np.log(model_pressure[m] / half_pressure[h])
         m -= 1
-        model_geopotential[m] = half_geopotential[h] + Rd * virtual_temperature[
+        model_geopotential[m] = half_geopotential[h] + RDGAS * virtual_temperature[
             m
         ] * np.log(half_pressure[h] / model_pressure[m])
         h -= 1
