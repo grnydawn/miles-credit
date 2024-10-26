@@ -57,6 +57,7 @@ def test_BridgescalerScaleState():
             ),
             "variables": ["U", "V", "T", "Q"],
             "surface_variables": ["SP", "t2m", "Z500", "T500", "U500", "V500", "Q500"],
+            "level_ids": data.coords["level"].values,
         },
         "model": {"levels": 15},
     }
