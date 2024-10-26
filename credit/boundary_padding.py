@@ -2,6 +2,7 @@
 import torch
 import torch.nn.functional as F
 
+
 class TensorPadding:
     def __init__(self, mode="earth", pad_lat=(40, 40), pad_lon=(40, 40), **kwargs):
         """
@@ -12,11 +13,11 @@ class TensorPadding:
             pad_lat (list[int]): Padding sizes for the North-South (latitude) dimension [top, bottom].
             pad_lon (list[int]): Padding sizes for the West-East (longitude) dimension [left, right].
         """
-        
+
         self.mode = mode
         self.pad_NS = pad_lat
         self.pad_WE = pad_lon
-        
+
 
     def pad(self, x):
         """
@@ -28,9 +29,9 @@ class TensorPadding:
         Returns:
             torch.Tensor: The padded tensor.
         """
-        if self.mode == 'mirror':
+        if self.mode == "mirror":
             return self._mirror_padding(x)
-        elif self.mode == 'earth':
+        elif self.mode == "earth":
             return self._earth_padding(x)
 
     def unpad(self, x):
@@ -43,9 +44,9 @@ class TensorPadding:
         Returns:
             torch.Tensor: The unpadded tensor.
         """
-        if self.mode == 'mirror':
+        if self.mode == "mirror":
             return self._mirror_unpad(x)
-        elif self.mode == 'earth':
+        elif self.mode == "earth":
             return self._earth_unpad(x)
 
     def _earth_padding(self, x):
@@ -68,7 +69,7 @@ class TensorPadding:
             x = torch.cat([xroll_flip_top, x, xroll_flip_bot], dim=-2)
 
         if any(p > 0 for p in self.pad_WE):
-            x = F.pad(x, (self.pad_WE[0], self.pad_WE[1], 0, 0, 0, 0), mode='circular')
+            x = F.pad(x, (self.pad_WE[0], self.pad_WE[1], 0, 0, 0, 0), mode="circular")
 
         return x
 
@@ -109,12 +110,16 @@ class TensorPadding:
         # pad along longitude (west-east)
         if any(p > 0 for p in self.pad_WE):
             pad_lon_left, pad_lon_right = self.pad_WE
-            x = F.pad(x, pad=(self.pad_WE[0], self.pad_WE[1], 0, 0, 0, 0), mode='circular')
+            x = F.pad(
+                x, pad=(self.pad_WE[0], self.pad_WE[1], 0, 0, 0, 0), mode="circular"
+            )
 
         # pad along latitude (north-south)
         if any(p > 0 for p in self.pad_NS):
-            x = F.pad(x, pad=(0, 0, self.pad_NS[0], self.pad_NS[1], 0, 0), mode='reflect')
-            
+            x = F.pad(
+                x, pad=(0, 0, self.pad_NS[0], self.pad_NS[1], 0, 0), mode="reflect"
+            )
+
         return x
 
     def _mirror_unpad(self, x):
@@ -130,7 +135,7 @@ class TensorPadding:
         # unpad along latitude (north-south)
         if any(p > 0 for p in self.pad_NS):
             x = x[..., self.pad_NS[0]:-self.pad_NS[1], :]
-            
+
         # unpad along longitude (west-east)
         if any(p > 0 for p in self.pad_WE):
             x = x[..., :, self.pad_WE[0]:-self.pad_WE[1]]

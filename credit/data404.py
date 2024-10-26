@@ -12,14 +12,13 @@ import torch.utils.data
 
 
 def get_forward_data(filename) -> xr.DataArray:
-    """Lazily opens a Zarr store
-    """
+    """Lazily opens a Zarr store"""
     dataset = xr.open_zarr(filename, consolidated=True)
     return dataset
 
 
 Array = Union[np.ndarray, xr.DataArray]
-IMAGE_ATTR_NAMES = ('historical_ERA5_images', 'target_ERA5_images')
+IMAGE_ATTR_NAMES = ("historical_ERA5_images", "target_ERA5_images")
 
 
 class Sample(TypedDict):
@@ -36,25 +35,25 @@ class Sample(TypedDict):
     which would provide runtime checks, but the deal-breaker with Tuples is that they're immutable
     so we cannot change the values in the transforms.
     """
+
     x: Array
     y: Array
 
 
 def flatten(array):
-
-    """ flattens a list-of-lists
-    """
-    return reduce(lambda a, b: a+b, array)
+    """flattens a list-of-lists"""
+    return reduce(lambda a, b: a + b, array)
 
 
 def lazymerge(zlist, rename=None):
-    """ merges zarr stores opened lazily with get_forward_data()
-    """
+    """merges zarr stores opened lazily with get_forward_data()"""
     zarrs = [get_forward_data(z) for z in zlist]
     if rename is not None:
         oldname = flatten([list(z.keys()) for z in zarrs])
         # ^^ this will break on multi-var zarr stores
-        zarrs = [z.rename_vars({old: new}) for z, old, new in zip(zarrs, oldname, rename)]
+        zarrs = [
+            z.rename_vars({old: new}) for z, old, new in zip(zarrs, oldname, rename)
+        ]
     return xr.merge(zarrs)
 
 
@@ -86,16 +85,16 @@ class CONUS404Dataset(torch.utils.data.Dataset):
 
     """
 
-    zarrpath:     str = "/glade/campaign/ral/risc/DATA/conus404/zarr"
-    varnames:     List[str] = field(default_factory=list)
-    history_len:  int = 2
+    zarrpath: str = "/glade/campaign/ral/risc/DATA/conus404/zarr"
+    varnames: List[str] = field(default_factory=list)
+    history_len: int = 2
     forecast_len: int = 1
-    transform:    Optional[Callable] = None
-    seed:         int = 22
+    transform: Optional[Callable] = None
+    seed: int = 22
     skip_periods: int = None
-    one_shot:     bool = False
-    start:        str = None
-    finish:       str = None
+    one_shot: bool = False
+    start: str = None
+    finish: str = None
 
     def __post_init__(self):
         super().__init__()
@@ -114,7 +113,7 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         # get file paths
         zdict = {}
         for v in self.varnames:
-            zdict[v] = sorted(glob(os.path.join(self.zarrpath, v, v+".*.zarr")))
+            zdict[v] = sorted(glob(os.path.join(self.zarrpath, v, v + ".*.zarr")))
 
         # check that lists align
         zlen = [len(z) for z in zdict.values()]
@@ -164,7 +163,9 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         if self.one_shot:
             self.foremask = foreind[-1]
         else:
-            self.foremask = foreind[slice(self.history_len, self.sample_len, self.stride)]
+            self.foremask = foreind[
+                slice(self.history_len, self.sample_len, self.stride)
+            ]
 
     def __len__(self):
         return len(self.zindex)
@@ -187,8 +188,8 @@ class CONUS404Dataset(torch.utils.data.Dataset):
         seg = self.segments[index]
         subset = self.zarrs[seg].isel({time: slice(first, last)}).load()
         sample = Sample(
-            x=subset.isel({time: self.histmask}),
-            y=subset.isel({time: self.foremask}))
+            x=subset.isel({time: self.histmask}), y=subset.isel({time: self.foremask})
+        )
 
         if do_transform:
             if self.transform:
@@ -219,14 +220,14 @@ def testC4loader():
     zdirs = {
         "worktest": "/glade/work/mcginnis/ML/GWC/testdata/zarr",
         "scratch": "/glade/derecho/scratch/mcginnis/conus404/zarr",
-        "campaign": "/glade/campaign/ral/risc/DATA/conus404/zarr"
-        }
+        "campaign": "/glade/campaign/ral/risc/DATA/conus404/zarr",
+    }
     for zk in zdirs.keys():
         src = zdirs[zk]
-        print("######## "+zk+" ########")
+        print("######## " + zk + " ########")
         svars = os.listdir(src)
-        for i in range(1, len(svars)+1):
+        for i in range(1, len(svars) + 1):
             testvars = svars[slice(0, i)]
             print(testvars)
-            cmd = 'c4 = CONUS404Dataset("'+src+'",varnames='+str(testvars)+')'
-            print(cmd+"\t"+str(timeit(cmd, globals=globals(), number=1)))
+            cmd = 'c4 = CONUS404Dataset("' + src + '",varnames=' + str(testvars) + ")"
+            print(cmd + "\t" + str(timeit(cmd, globals=globals(), number=1)))

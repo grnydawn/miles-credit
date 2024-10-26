@@ -88,5 +88,5 @@ The launch script may be found in the save location that you set in the configat
 The predict field in the config file allows one to speficy start and end dates to roll-out a trained model. To generate a forecast,
 
 ```bash
-python applications/predict.py -c config/vit.yml
+python applications/rollout_to_netcdf.py -c config/vit.yml
 ```
