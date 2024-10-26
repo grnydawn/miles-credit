@@ -34,6 +34,6 @@ jobs:
         shell: bash -l {0}
         run: |
           micromamba install pytest
-          pip install pytest-cov
-          pytest --cov .
-
+          pip install pytest-cov coverage
+          coverage run -m pytest tests
+          coverage report
