@@ -3,14 +3,14 @@ from numba import njit
 import xarray as xr
 from tqdm import tqdm
 from .physics_constants import RDGAS, RVGAS
+import os
 
 
 def full_state_pressure_interpolation(
     state_dataset: xr.Dataset,
-    pressure_levels: np.ndarray,
-    model_a: np.ndarray,
-    model_b: np.ndarray,
+    pressure_levels: np.ndarray = np.array([500.0, 850.0]),
     interp_fields: tuple[str] = ("U", "V", "T", "Q"),
+    pres_ending: str = "_PRES",
     temperature_var: str = "T",
     q_var: str = "Q",
     surface_pressure_var: str = "SP",
@@ -20,6 +20,8 @@ def full_state_pressure_interpolation(
     lat_var: str = "latitude",
     lon_var: str = "longitude",
     pres_var: str = "pressure",
+    level_var: str = "level",
+    model_level_file: str = "../credit/metadata/ERA5_Lev_Info.nc",
     verbose: int = 1,
 ) -> xr.Dataset:
     """
@@ -27,10 +29,9 @@ def full_state_pressure_interpolation(
 
     Args:
         state_dataset (xr.Dataset): state variables being interpolated
-        pressure_levels (np.ndarray): pressure levels for interpolation in Pa.
-        model_a (np.ndarray): model level a coefficients.
-        model_b (np.ndarray): model level b coefficients.
+        pressure_levels (np.ndarray): pressure levels for interpolation in hPa.
         interp_fields (tuple[str]): fields to be interpolated.
+        pres_ending (str): ending string to attach to pressure interpolated variables.
         temperature_var (str): temperature variable to be interpolated (units K).
         q_var (str): mixing ratio/specific humidity variable to be interpolated (units kg/kg).
         surface_pressure_var (str): surface pressure variable (units Pa).
@@ -40,10 +41,17 @@ def full_state_pressure_interpolation(
         lat_var (str): latitude coordinate
         lon_var (str): longitude coordinate
         pres_var (str): pressure coordinate
+        level_var (str): name of level coordinate
+        model_level_file (str): relative path to file containing model levels.
         verbose (int): verbosity level. If verbose > 0, print progress.
     Returns:
         pressure_ds (xr.Dataset): Dataset containing pressure interpolated variables.
     """
+    path_to_file = os.path.abspath(os.path.dirname(__file__))
+    model_level_file = os.path.join(path_to_file, model_level_file)
+    with xr.open_dataset(model_level_file) as mod_lev_ds:
+        model_a = mod_lev_ds["a_model"][state_dataset[level_var]].values
+        model_b = mod_lev_ds["b_model"][state_dataset[level_var]].values
     pres_dims = (time_var, pres_var, lat_var, lon_var)
     coords = {
         time_var: state_dataset[time_var],
@@ -53,14 +61,17 @@ def full_state_pressure_interpolation(
     }
     pressure_ds = xr.Dataset(
         data_vars={
-            f: xr.DataArray(
-                coords=coords, dims=pres_dims, name=f, attrs=state_dataset[f].attrs
+            f + pres_ending: xr.DataArray(
+                coords=coords,
+                dims=pres_dims,
+                name=f + pres_ending,
+                attrs=state_dataset[f].attrs,
             )
             for f in interp_fields
         },
         coords=coords,
     )
-    pressure_ds[geopotential_var] = xr.DataArray(
+    pressure_ds[geopotential_var + pres_ending] = xr.DataArray(
         coords=coords, dims=pres_dims, name=geopotential_var
     )
     disable = False
@@ -79,11 +90,17 @@ def full_state_pressure_interpolation(
             model_b,
         )
         for interp_field in interp_fields:
-            pressure_ds[interp_field][t] = interp_hybrid_to_pressure_levels(
-                state_dataset[interp_field][t].values, pressure_grid, pressure_levels
+            pressure_ds[interp_field + pres_ending][t] = (
+                interp_hybrid_to_pressure_levels(
+                    state_dataset[interp_field][t].values,
+                    pressure_grid / 100.0,
+                    pressure_levels,
+                )
             )
-        pressure_ds[geopotential_var][t] = interp_hybrid_to_pressure_levels(
-            geopotential_grid, pressure_grid, pressure_levels
+        pressure_ds[geopotential_var + pres_ending][t] = (
+            interp_hybrid_to_pressure_levels(
+                geopotential_grid, pressure_grid / 100.0, pressure_levels
+            )
         )
     return pressure_ds
 
@@ -132,11 +149,12 @@ def create_pressure_grid(surface_pressure, model_a, model_b):
 def interp_hybrid_to_pressure_levels(model_var, model_pressure, interp_pressures):
     """
     Interpolate data field from hybrid sigma-pressure vertical coordinates to pressure levels.
+    `model_pressure` and `interp_pressure` should have consistent units with each other.
 
     Args:
         model_var (np.ndarray): 3D field on hybrid sigma-pressure levels with shape (levels, y, x).
-        model_pressure (np.ndarray): 3D pressure field with shape (levels, y, x) in units Pa
-        interp_pressures: (np.ndarray): pressure levels for interpolation in units Pa.
+        model_pressure (np.ndarray): 3D pressure field with shape (levels, y, x) in units Pa or hPa
+        interp_pressures: (np.ndarray): pressure levels for interpolation in units Pa or hPa.
 
     Returns:
         pressure_var (np.ndarray): 3D field on pressure levels with shape (len(interp_pressures), y, x).

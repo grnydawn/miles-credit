@@ -544,7 +544,7 @@ class BridgescalerScaleState(object):
             self.level_ids = conf["data"]["level_ids"]
         else:
             self.level_ids = np.array(
-                [10, 30, 40, 50, 60, 70, 80, 90, 95, 100, 105, 110, 120, 130, 136],
+                [10, 30, 40, 50, 60, 70, 80, 90, 95, 100, 105, 110, 120, 130, 136, 137],
                 dtype=np.int64,
             )
         self.n_levels = int(conf["model"]["levels"])
@@ -889,7 +889,7 @@ class ToTensor:
                 else:
                     try:
                         arr = DSD[sv].squeeze()
-                    except:
+                    except KeyError:
                         continue
                 arrs.append(arr)
 
@@ -1341,7 +1341,7 @@ class ToTensor_BridgeScaler:
                 else:
                     try:
                         arr = DSD[sv].squeeze()
-                    except:
+                    except KeyError:
                         continue
                 arrs.append(arr)
 

@@ -13,15 +13,19 @@ import logging
 import traceback
 import xarray as xr
 from credit.data import drop_var_from_dataset
-
+from credit.interp import full_state_pressure_interpolation
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
-
-def load_metadata(conf):
+def load_metadata(conf: dict):
     """
     Load metadata attributes from yaml file in credit/metadata directory
+
+    Args:
+        conf (dict): Configuration dictionary
+
     """
     # set priorities for user-specified metadata
     if conf["predict"]["metadata"]:
@@ -72,8 +76,29 @@ def split_and_reshape(tensor, conf):
 
 
 def make_xarray(pred, forecast_datetime, lat, lon, conf):
+    """
+    Convert prediction tensor to xarray DataArrays for later saving.
+
+    Args:
+        pred (torch.Tensor): full tensor containing output of the AI NWP model
+        forecast_datetime (pd.Timestamp or datetime.datetime): valid time of the forecast
+        lat: latitude coordinate array
+        lon: longitude coordinate array
+        conf (dict): config dictionary for training/rollout
+
+    Returns:
+        xr.DataArray: upper air predictions, xr.DataArray: surface variable predictions
+    """
     # subset upper air and surface variables
     tensor_upper_air, tensor_single_level = split_and_reshape(pred, conf)
+
+    if "level_ids" in conf["data"].keys():
+        level_ids = conf["data"]["level_ids"]
+    else:
+        level_ids = np.array(
+            [10, 30, 40, 50, 60, 70, 80, 90, 95, 100, 105, 110, 120, 130, 136, 137],
+            dtype=np.int64,
+        )
 
     # save upper air variables
     darray_upper_air = xr.DataArray(
@@ -82,7 +107,7 @@ def make_xarray(pred, forecast_datetime, lat, lon, conf):
         coords=dict(
             vars=conf["data"]["variables"],
             time=[forecast_datetime],
-            level=range(conf["model"]["levels"]),
+            level=level_ids,
             lat=lat,
             lon=lon,
         ),
@@ -100,13 +125,30 @@ def make_xarray(pred, forecast_datetime, lat, lon, conf):
             lon=lon,
         ),
     )
-    # return x-arrays as outputs
+    # return DataArrays as outputs
     return darray_upper_air, darray_single_level
 
 
 def save_netcdf_increment(
-    darray_upper_air, darray_single_level, nc_filename, forecast_hour, meta_data, conf
+    darray_upper_air: xr.DataArray,
+    darray_single_level: xr.DataArray,
+    nc_filename: str,
+    forecast_hour: int,
+    meta_data: dict,
+    conf: dict,
 ):
+    """
+    Save CREDIT model prediction output to netCDF file. Also performs pressure level
+    interpolation on the output if you wish.
+
+    Args:
+        darray_upper_air (xr.DataArray): upper air variable predictions
+        darray_single_level (xr.DataArray): surface variable predictions
+        nc_filename (str): file description to go into output filenames
+        forecast_hour (int):  how many hours since the initialization of the model.
+        meta_data (dict): metadata dictionary for output variables
+        conf (dict): configuration dictionary for training and/or rollout
+    """
     try:
         """
         Save increment to a unique NetCDF file using Dask for parallel processing.
@@ -124,8 +166,21 @@ def save_netcdf_increment(
         # Add CF convention version
         ds_merged.attrs["Conventions"] = "CF-1.11"
 
-        # Add model config file parameters (x)
-        # ds_merged.attrs.update(conf)
+        if "interp_pressure" in conf["predict"].keys():
+            if "surface_geopotential_var" in conf["predict"]["interp_pressure"].keys():
+                surface_geopotential_var = conf["predict"]["interp_pressure"][
+                    "surface_geopotential_var"
+                ]
+            else:
+                surface_geopotential_var = "Z_GDS4_SFC"
+            with xr.open_dataset(conf["data"]["save_loc_static"]) as static_ds:
+                ds_merged[surface_geopotential_var] = static_ds[
+                    surface_geopotential_var
+                ]
+            pressure_interp = full_state_pressure_interpolation(
+                ds_merged, **conf["predict"]["interp_pressure"]
+            )
+            ds_merged = xr.merge([ds_merged, pressure_interp])
 
         logger.info(f"Trying to save forecast hour {forecast_hour} to {nc_filename}")
 
@@ -135,7 +190,6 @@ def save_netcdf_increment(
         unique_filename = os.path.join(
             save_location, f"pred_{nc_filename}_{forecast_hour:03d}.nc"
         )
-
         # ---------------------------------------------------- #
         # If conf['predict']['save_vars'] provided --> drop useless vars
         if "save_vars" in conf["predict"]:
@@ -158,12 +212,18 @@ def save_netcdf_increment(
                             ds_merged.time.encoding[metadata_time] = meta_data["time"][
                                 metadata_time
                             ]
-
-        # Convert to Dask array if not already
-        ds_merged = ds_merged.chunk({"time": 1})
-
+        encoding_dict = {}
+        if "ua_var_encoding" in conf["predict"].keys():
+            for ua_var in conf["data"]["variables"]:
+                encoding_dict[ua_var] = conf["predict"]["ua_var_encoding"]
+        if "surface_var_encoding" in conf["predict"].keys():
+            for surface_var in conf["data"]["variables"]:
+                encoding_dict[surface_var] = conf["predict"]["surface_var_encoding"]
+        if "pressure_var_encoding" in conf["predict"].keys():
+            for pres_var in conf["data"]["variables"]:
+                encoding_dict[pres_var] = conf["predict"]["pressure_var_encoding"]
         # Use Dask to write the dataset in parallel
-        ds_merged.to_netcdf(unique_filename, mode="w")
+        ds_merged.to_netcdf(unique_filename, encoding=encoding_dict)
 
         logger.info(f"Saved forecast hour {forecast_hour} to {unique_filename}")
     except Exception:
