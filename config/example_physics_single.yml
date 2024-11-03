@@ -208,7 +208,6 @@ model:
             specific_total_water_name: ['specific_total_water']
             u_wind_name: ['U']
             v_wind_name: ['V']
-            lon_lat_level_name: ['lon2d', 'lat2d', 'p_level']
             surface_geopotential_name: ['geopotential_at_surface']
             TOA_net_radiation_flux_name: ['top_net_solar_radiation', 'top_net_thermal_radiation']
             surface_net_radiation_flux_name: ['surface_net_solar_radiation', 'surface_net_thermal_radiation']

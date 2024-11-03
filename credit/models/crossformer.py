@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 def cast_tuple(val, length=1):
     return val if isinstance(val, tuple) else ((val,) * length)
 
+
 def apply_spectral_norm(model):
     for module in model.modules():
         if isinstance(module, (nn.Conv2d, nn.Linear, nn.ConvTranspose2d)):
@@ -26,20 +27,30 @@ def apply_spectral_norm(model):
 
 # cube embedding
 
+
 class CubeEmbedding(nn.Module):
     """
     Args:
         img_size: T, Lat, Lon
         patch_size: T, Lat, Lon
     """
-    def __init__(self, img_size, patch_size, in_chans, embed_dim, norm_layer=nn.LayerNorm):
+
+    def __init__(
+        self, img_size, patch_size, in_chans, embed_dim, norm_layer=nn.LayerNorm
+    ):
         super().__init__()
-        patches_resolution = [img_size[0] // patch_size[0], img_size[1] // patch_size[1], img_size[2] // patch_size[2]]
+        patches_resolution = [
+            img_size[0] // patch_size[0],
+            img_size[1] // patch_size[1],
+            img_size[2] // patch_size[2],
+        ]
 
         self.img_size = img_size
         self.patches_resolution = patches_resolution
         self.embed_dim = embed_dim
-        self.proj = nn.Conv3d(in_chans, embed_dim, kernel_size=patch_size, stride=patch_size)
+        self.proj = nn.Conv3d(
+            in_chans, embed_dim, kernel_size=patch_size, stride=patch_size
+        )
         if norm_layer is not None:
             self.norm = norm_layer(embed_dim)
         else:
@@ -66,7 +77,9 @@ class UpBlock(nn.Module):
 
         blk = []
         for i in range(num_residuals):
-            blk.append(nn.Conv2d(out_chans, out_chans, kernel_size=3, stride=1, padding=1))
+            blk.append(
+                nn.Conv2d(out_chans, out_chans, kernel_size=3, stride=1, padding=1)
+            )
             blk.append(nn.GroupNorm(num_groups, out_chans))
             blk.append(nn.SiLU())
 
@@ -84,25 +97,28 @@ class UpBlock(nn.Module):
 
 # cross embed layer
 
+
 class CrossEmbedLayer(nn.Module):
-    def __init__(
-        self,
-        dim_in,
-        dim_out,
-        kernel_sizes,
-        stride=2
-    ):
+    def __init__(self, dim_in, dim_out, kernel_sizes, stride=2):
         super().__init__()
         kernel_sizes = sorted(kernel_sizes)
         num_scales = len(kernel_sizes)
 
         # calculate the dimension at each scale
-        dim_scales = [int(dim_out / (2 ** i)) for i in range(1, num_scales)]
+        dim_scales = [int(dim_out / (2**i)) for i in range(1, num_scales)]
         dim_scales = [*dim_scales, dim_out - sum(dim_scales)]
 
         self.convs = nn.ModuleList([])
         for kernel, dim_scale in zip(kernel_sizes, dim_scales):
-            self.convs.append(nn.Conv2d(dim_in, dim_scale, kernel, stride=stride, padding=(kernel - stride) // 2))
+            self.convs.append(
+                nn.Conv2d(
+                    dim_in,
+                    dim_scale,
+                    kernel,
+                    stride=stride,
+                    padding=(kernel - stride) // 2,
+                )
+            )
 
     def forward(self, x):
         fmaps = tuple(map(lambda conv: conv(x), self.convs))
@@ -110,6 +126,7 @@ class CrossEmbedLayer(nn.Module):
 
 
 # dynamic positional bias
+
 
 class DynamicPositionBias(nn.Module):
     def __init__(self, dim):
@@ -125,7 +142,7 @@ class DynamicPositionBias(nn.Module):
             nn.LayerNorm(dim),
             nn.ReLU(),
             nn.Linear(dim, 1),
-            Rearrange('... () -> ...')
+            Rearrange("... () -> ..."),
         )
 
     def forward(self, x):
@@ -133,6 +150,7 @@ class DynamicPositionBias(nn.Module):
 
 
 # transformer classes
+
 
 class LayerNorm(nn.Module):
     def __init__(self, dim, eps=1e-5):
@@ -148,14 +166,14 @@ class LayerNorm(nn.Module):
 
 
 class FeedForward(nn.Module):
-    def __init__(self, dim, mult=4, dropout=0.):
+    def __init__(self, dim, mult=4, dropout=0.0):
         super(FeedForward, self).__init__()
         self.layers = nn.Sequential(
             LayerNorm(dim),
             nn.Conv2d(dim, dim * mult, 1),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Conv2d(dim * mult, dim, 1)
+            nn.Conv2d(dim * mult, dim, 1),
         )
 
     def forward(self, x):
@@ -163,19 +181,15 @@ class FeedForward(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(
-        self,
-        dim,
-        attn_type,
-        window_size,
-        dim_head=32,
-        dropout=0.
-    ):
+    def __init__(self, dim, attn_type, window_size, dim_head=32, dropout=0.0):
         super().__init__()
-        assert attn_type in {'short', 'long'}, 'attention type must be one of local or distant'
+        assert attn_type in {
+            "short",
+            "long",
+        }, "attention type must be one of local or distant"
         heads = dim // dim_head
         self.heads = heads
-        self.scale = dim_head ** -0.5
+        self.scale = dim_head**-0.5
         inner_dim = dim_head * heads
 
         self.attn_type = attn_type
@@ -195,16 +209,21 @@ class Attention(nn.Module):
         # calculate and store indices for retrieving bias
 
         pos = torch.arange(window_size)
-        grid = torch.stack(torch.meshgrid(pos, pos, indexing='ij'))
-        grid = rearrange(grid, 'c i j -> (i j) c')
+        grid = torch.stack(torch.meshgrid(pos, pos, indexing="ij"))
+        grid = rearrange(grid, "c i j -> (i j) c")
         rel_pos = grid[:, None] - grid[None, :]
         rel_pos += window_size - 1
         rel_pos_indices = (rel_pos * torch.tensor([2 * window_size - 1, 1])).sum(dim=-1)
 
-        self.register_buffer('rel_pos_indices', rel_pos_indices, persistent=False)
+        self.register_buffer("rel_pos_indices", rel_pos_indices, persistent=False)
 
     def forward(self, x):
-        *_, height, width, heads, wsz, device = *x.shape, self.heads, self.window_size, x.device
+        *_, height, width, heads, wsz, device = (
+            *x.shape,
+            self.heads,
+            self.window_size,
+            x.device,
+        )
 
         # prenorm
 
@@ -212,10 +231,10 @@ class Attention(nn.Module):
 
         # rearrange for short or long distance attention
 
-        if self.attn_type == 'short':
-            x = rearrange(x, 'b d (h s1) (w s2) -> (b h w) d s1 s2', s1=wsz, s2=wsz)
-        elif self.attn_type == 'long':
-            x = rearrange(x, 'b d (l1 h) (l2 w) -> (b h w) d l1 l2', l1=wsz, l2=wsz)
+        if self.attn_type == "short":
+            x = rearrange(x, "b d (h s1) (w s2) -> (b h w) d s1 s2", s1=wsz, s2=wsz)
+        elif self.attn_type == "long":
+            x = rearrange(x, "b d (l1 h) (l2 w) -> (b h w) d l1 l2", l1=wsz, l2=wsz)
 
         # queries / keys / values
 
@@ -223,16 +242,18 @@ class Attention(nn.Module):
 
         # split heads
 
-        q, k, v = map(lambda t: rearrange(t, 'b (h d) x y -> b h (x y) d', h=heads), (q, k, v))
+        q, k, v = map(
+            lambda t: rearrange(t, "b (h d) x y -> b h (x y) d", h=heads), (q, k, v)
+        )
         q = q * self.scale
 
-        sim = einsum('b h i d, b h j d -> b h i j', q, k)
+        sim = einsum("b h i d, b h j d -> b h i j", q, k)
 
         # add dynamic positional bias
 
         pos = torch.arange(-wsz, wsz + 1, device=device)
-        rel_pos = torch.stack(torch.meshgrid(pos, pos, indexing='ij'))
-        rel_pos = rearrange(rel_pos, 'c i j -> (i j) c')
+        rel_pos = torch.stack(torch.meshgrid(pos, pos, indexing="ij"))
+        rel_pos = rearrange(rel_pos, "c i j -> (i j) c")
         biases = self.dpb(rel_pos.float())
         rel_pos_bias = biases[self.rel_pos_indices]
 
@@ -245,16 +266,26 @@ class Attention(nn.Module):
 
         # merge heads
 
-        out = einsum('b h i j, b h j d -> b h i d', attn, v)
-        out = rearrange(out, 'b h (x y) d -> b (h d) x y', x=wsz, y=wsz)
+        out = einsum("b h i j, b h j d -> b h i d", attn, v)
+        out = rearrange(out, "b h (x y) d -> b (h d) x y", x=wsz, y=wsz)
         out = self.to_out(out)
 
         # rearrange back for long or short distance attention
 
-        if self.attn_type == 'short':
-            out = rearrange(out, '(b h w) d s1 s2 -> b d (h s1) (w s2)', h=height // wsz, w=width // wsz)
-        elif self.attn_type == 'long':
-            out = rearrange(out, '(b h w) d l1 l2 -> b d (l1 h) (l2 w)', h=height // wsz, w=width // wsz)
+        if self.attn_type == "short":
+            out = rearrange(
+                out,
+                "(b h w) d s1 s2 -> b d (h s1) (w s2)",
+                h=height // wsz,
+                w=width // wsz,
+            )
+        elif self.attn_type == "long":
+            out = rearrange(
+                out,
+                "(b h w) d l1 l2 -> b d (l1 h) (l2 w)",
+                h=height // wsz,
+                w=width // wsz,
+            )
 
         return out
 
@@ -268,19 +299,35 @@ class Transformer(nn.Module):
         global_window_size,
         depth=4,
         dim_head=32,
-        attn_dropout=0.,
-        ff_dropout=0.,
+        attn_dropout=0.0,
+        ff_dropout=0.0,
     ):
         super().__init__()
         self.layers = nn.ModuleList([])
 
         for _ in range(depth):
-            self.layers.append(nn.ModuleList([
-                Attention(dim, attn_type='short', window_size=local_window_size, dim_head=dim_head, dropout=attn_dropout),
-                FeedForward(dim, dropout=ff_dropout),
-                Attention(dim, attn_type='long', window_size=global_window_size, dim_head=dim_head, dropout=attn_dropout),
-                FeedForward(dim, dropout=ff_dropout)
-            ]))
+            self.layers.append(
+                nn.ModuleList(
+                    [
+                        Attention(
+                            dim,
+                            attn_type="short",
+                            window_size=local_window_size,
+                            dim_head=dim_head,
+                            dropout=attn_dropout,
+                        ),
+                        FeedForward(dim, dropout=ff_dropout),
+                        Attention(
+                            dim,
+                            attn_type="long",
+                            window_size=global_window_size,
+                            dim_head=dim_head,
+                            dropout=attn_dropout,
+                        ),
+                        FeedForward(dim, dropout=ff_dropout),
+                    ]
+                )
+            )
 
     def forward(self, x):
         for short_attn, short_ff, long_attn, long_ff in self.layers:
@@ -293,6 +340,7 @@ class Transformer(nn.Module):
 
 
 # classes
+
 
 class CrossFormer(BaseModel):
     def __init__(
@@ -314,13 +362,13 @@ class CrossFormer(BaseModel):
         local_window_size=10,
         cross_embed_kernel_sizes=((4, 8, 16, 32), (2, 4), (2, 4), (2, 4)),
         cross_embed_strides=(4, 2, 2, 2),
-        attn_dropout=0.,
-        ff_dropout=0.,
+        attn_dropout=0.0,
+        ff_dropout=0.0,
         use_spectral_norm=True,
         interp=True,
         padding_conf=None,
         post_conf=None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__()
 
@@ -341,12 +389,12 @@ class CrossFormer(BaseModel):
         self.use_spectral_norm = use_spectral_norm
         self.use_interp = interp
         if padding_conf is None:
-            padding_conf = {'activate': False}
-        self.use_padding =  padding_conf['activate']
+            padding_conf = {"activate": False}
+        self.use_padding = padding_conf["activate"]
         if post_conf is None:
             post_conf = {"activate": False}
-        self.use_post_block = post_conf['activate']
-        
+        self.use_post_block = post_conf["activate"]
+
         # input channels
         input_channels = channels * levels + surface_channels + input_only_channels
 
@@ -369,7 +417,9 @@ class CrossFormer(BaseModel):
 
         # dimensions
         last_dim = dim[-1]
-        first_dim = input_channels if (patch_height == 1 and patch_width == 1) else dim[0]
+        first_dim = (
+            input_channels if (patch_height == 1 and patch_width == 1) else dim[0]
+        )
         dims = [first_dim, *dim]
         dim_in_and_out = tuple(zip(dims[:-1], dims[1:]))
 
@@ -377,22 +427,22 @@ class CrossFormer(BaseModel):
         self.layers = nn.ModuleList([])
 
         # loop through hyperparameters
-        for (dim_in, dim_out), num_layers, global_wsize, local_wsize, kernel_sizes, stride in zip(
+        for (
+            dim_in,
+            dim_out,
+        ), num_layers, global_wsize, local_wsize, kernel_sizes, stride in zip(
             dim_in_and_out,
             depth,
             global_window_size,
             local_window_size,
             cross_embed_kernel_sizes,
-            cross_embed_strides
+            cross_embed_strides,
         ):
             # create CrossEmbedLayer
             cross_embed_layer = CrossEmbedLayer(
-                dim_in=dim_in,
-                dim_out=dim_out,
-                kernel_sizes=kernel_sizes,
-                stride=stride
+                dim_in=dim_in, dim_out=dim_out, kernel_sizes=kernel_sizes, stride=stride
             )
-            
+
             # create Transformer
             transformer_layer = Transformer(
                 dim=dim_out,
@@ -401,40 +451,37 @@ class CrossFormer(BaseModel):
                 depth=num_layers,
                 dim_head=dim_head,
                 attn_dropout=attn_dropout,
-                ff_dropout=ff_dropout
+                ff_dropout=ff_dropout,
             )
-            
+
             # append everything
-            self.layers.append(
-                nn.ModuleList([
-                    cross_embed_layer,
-                    transformer_layer
-                ])
-            )
-        
+            self.layers.append(nn.ModuleList([cross_embed_layer, transformer_layer]))
+
         if self.use_padding:
             self.padding_opt = TensorPadding(**padding_conf)
-            
+
         # define embedding layer using adjusted sizes
         # if the original sizes were good, adjusted sizes should == original sizes
         self.cube_embedding = CubeEmbedding(
             (frames, image_height, image_width),
             (frames, patch_height, patch_width),
             input_channels,
-            dim[0]
+            dim[0],
         )
-        
+
         # =================================================================================== #
 
         self.up_block1 = UpBlock(1 * last_dim, last_dim // 2, dim[0])
         self.up_block2 = UpBlock(2 * (last_dim // 2), last_dim // 4, dim[0])
         self.up_block3 = UpBlock(2 * (last_dim // 4), last_dim // 8, dim[0])
-        self.up_block4 = nn.ConvTranspose2d(2 * (last_dim // 8), output_channels, kernel_size=4, stride=2, padding=1)
+        self.up_block4 = nn.ConvTranspose2d(
+            2 * (last_dim // 8), output_channels, kernel_size=4, stride=2, padding=1
+        )
 
         if self.use_spectral_norm:
             logger.info("Adding spectral norm to all conv and linear layers")
             apply_spectral_norm(self)
-            
+
         if self.use_post_block:
             self.postblock = PostBlock(post_conf)
 
@@ -442,7 +489,7 @@ class CrossFormer(BaseModel):
         x_copy = None
         if self.use_post_block:  # copy tensor to feed into postBlock later
             x_copy = x.clone().detach()
-            
+
         if self.use_padding:
             x = self.padding_opt.pad(x)
 
@@ -471,21 +518,22 @@ class CrossFormer(BaseModel):
             x = self.padding_opt.unpad(x)
 
         if self.use_interp:
-            x = F.interpolate(x, size=(self.image_height, self.image_width), mode="bilinear")
-            
+            x = F.interpolate(
+                x, size=(self.image_height, self.image_width), mode="bilinear"
+            )
+
         x = x.unsqueeze(2)
-        
+
         if self.use_post_block:
             x = {
                 "y_pred": x,
                 "x": x_copy,
             }
             x = self.postblock(x)
-            
+
         return x
 
     def rk4(self, x):
-
         def integrate_step(x, k, factor):
             return self.forward(x + k * factor)
 
@@ -509,7 +557,13 @@ if __name__ == "__main__":
     input_only_channels = 3
     frame_patch_size = 2
 
-    input_tensor = torch.randn(1, channels * levels + surface_channels + input_only_channels, frames, image_height, image_width).to("cuda")
+    input_tensor = torch.randn(
+        1,
+        channels * levels + surface_channels + input_only_channels,
+        frames,
+        image_height,
+        image_width,
+    ).to("cuda")
 
     model = CrossFormer(
         image_height=image_height,
@@ -526,8 +580,8 @@ if __name__ == "__main__":
         local_window_size=5,
         cross_embed_kernel_sizes=((4, 8, 16, 32), (2, 4), (2, 4), (2, 4)),
         cross_embed_strides=(4, 2, 2, 2),
-        attn_dropout=0.,
-        ff_dropout=0.,
+        attn_dropout=0.0,
+        ff_dropout=0.0,
     ).to("cuda")
 
     num_params = sum(p.numel() for p in model.parameters())
