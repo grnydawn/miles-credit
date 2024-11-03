@@ -192,7 +192,13 @@ class GlobalMassFixer(nn.Module):
                                                        midpoint=post_conf['global_mass_fixer']['midpoint'])
             self.N_levels = len(p_level)
             self.ind_fix = len(p_level) - int(post_conf['global_mass_fixer']['fix_level_num']) + 1
-            
+
+        if post_conf['global_mass_fixer']['midpoint']:
+            self.ind_fix_start = self.ind_fix
+        else:
+            self.ind_fix_start = self.ind_fix-1
+
+        
         # ------------------------------------------------------------------------------------ #
         # identify variables of interest
         self.q_ind_start = int(post_conf['global_mass_fixer']['q_inds'][0])
@@ -242,7 +248,7 @@ class GlobalMassFixer(nn.Module):
             axis=(-2, -1))
         
         mass_dry_sum_t1_fix = self.core_compute.weighted_sum(
-            self.core_compute.integral_sliced(1-q_pred, self.ind_fix-1, self.N_levels) / GRAVITY, 
+            self.core_compute.integral_sliced(1-q_pred, self.ind_fix_start, self.N_levels) / GRAVITY, 
             axis=(-2, -1))
 
         q_correct_ratio = (mass_dry_sum_t0 - mass_dry_sum_t1_hold) / mass_dry_sum_t1_fix
@@ -254,9 +260,9 @@ class GlobalMassFixer(nn.Module):
         # ===================================================================== #
         # q fixes based on the ratio
         # fix lower atmosphere
-        q_pred_fix = 1 - (1 - q_pred[:, self.ind_fix-1:, ...]) * q_correct_ratio
+        q_pred_fix = 1 - (1 - q_pred[:, self.ind_fix_start:, ...]) * q_correct_ratio
         # extract unmodified part from q_pred
-        q_pred_hold = q_pred[:, :self.ind_fix-1, ...]
+        q_pred_hold = q_pred[:, :self.ind_fix_start, ...]
         
         # concat upper and lower q vals
         # (batch, level, lat, lon)
