@@ -235,7 +235,7 @@ class physics_pressure_level:
         Compute the weighted sum of a given quantity for PyTorch tensors.
 
         Args:
-            data: the quantity to be summed (PyTorch tensor)
+            q: the quantity to be summed (PyTorch tensor)
             axis: dims to compute the sum (can be int or tuple of ints)
             keepdims: whether to keep the reduced dimensions or not
 

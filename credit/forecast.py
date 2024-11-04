@@ -39,7 +39,7 @@ def load_forecasts(conf):
 
 # Function to generate forecasts for specified duration
 def generate_forecasts(
-    start_date, lead_time_periods=1, days=10, duration=365, start_hours=[0]
+    start_date, lead_time_periods=1, days=10, duration=365, start_hours=(0)
 ):
     """
     lead_time_periods = 1 for hourly forecast; =6 for 6 hourly forecast
