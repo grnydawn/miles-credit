@@ -46,7 +46,7 @@ from credit.metrics import LatWeightedMetrics
 from credit.forecast import load_forecasts
 from credit.distributed import distributed_model_wrapper, setup
 from credit.models.checkpoint import load_model_state
-from credit.parser import CREDIT_main_parser, predict_data_check
+from credit.parser import credit_main_parser, predict_data_check
 from credit.output import load_metadata, make_xarray, save_netcdf_increment
 from credit.postblock import GlobalMassFixer, GlobalWaterFixer, GlobalEnergyFixer
 
@@ -895,7 +895,7 @@ if __name__ == "__main__":
 
     # ======================================================== #
     # handling config args
-    conf = CREDIT_main_parser(
+    conf = credit_main_parser(
         conf, parse_training=False, parse_predict=True, print_summary=False
     )
     predict_data_check(conf, print_summary=False)

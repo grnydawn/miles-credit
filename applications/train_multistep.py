@@ -31,7 +31,7 @@ from credit.datasets.era5_multistep import ERA5_and_Forcing_MultiStep
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler
 from credit.trainers import load_trainer
-from credit.parser import CREDIT_main_parser, training_data_check
+from credit.parser import credit_main_parser, training_data_check
 
 from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
@@ -689,7 +689,7 @@ if __name__ == "__main__":
 
     # ======================================================== #
     # handling config args
-    conf = CREDIT_main_parser(
+    conf = credit_main_parser(
         conf, parse_training=True, parse_predict=False, print_summary=False
     )
     training_data_check(conf, print_summary=False)
