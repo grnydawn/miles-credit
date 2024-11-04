@@ -1,11 +1,12 @@
-'''
-output.py 
+"""
+output.py
 -------------------------------------------------------
 Content:
     - load_metadata()
     - make_xarray()
     - save_netcdf_increment()
-'''
+"""
+
 import os
 import yaml
 import logging
@@ -13,7 +14,6 @@ import traceback
 import xarray as xr
 from credit.data import drop_var_from_dataset
 from credit.interp import full_state_pressure_interpolation
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +23,14 @@ def load_metadata(conf):
     Load metadata attributes from yaml file in credit/metadata directory
     """
     # set priorities for user-specified metadata
-    if conf['predict']['metadata']:
-        meta_file = conf['predict']['metadata']
+    if conf["predict"]["metadata"]:
+        meta_file = conf["predict"]["metadata"]
         with open(meta_file) as f:
             meta_data = yaml.load(f, Loader=yaml.SafeLoader)
     else:
         print("conf['predict']['metadata'] not given. Skip.")
         meta_data = False
-        
+
     return meta_data
 
 
@@ -53,7 +53,9 @@ def split_and_reshape(tensor, conf):
 
     # get number of channels
     channels = len(conf["data"]["variables"])
-    single_level_channels = len(conf["data"]["surface_variables"]) + len(conf["data"]["diagnostic_variables"])
+    single_level_channels = len(conf["data"]["surface_variables"]) + len(
+        conf["data"]["diagnostic_variables"]
+    )
 
     # subset upper air variables
     tensor_upper_air = tensor[:, : int(channels * levels), :, :]
@@ -64,7 +66,7 @@ def split_and_reshape(tensor, conf):
     )
 
     # subset surface variables
-    tensor_single_level = tensor[:, -int(single_level_channels):, :, :]
+    tensor_single_level = tensor[:, -int(single_level_channels) :, :, :]
 
     # return x, surf for B, c, lat, lon output
     return tensor_upper_air, tensor_single_level
@@ -74,42 +76,33 @@ def make_xarray(pred, forecast_datetime, lat, lon, conf):
     """
     Create two xarray.DataArray objects for upper air and surface variables.
 
-    Parameters:
-    -----------
-    pred : torch.Tensor or np.ndarray
-        Prediction tensor containing both upper air and surface variables.
-    forecast_datetime : datetime
-        The forecast initialization datetime.
-    lat : np.ndarray or list
-        Latitude values.
-    lon : np.ndarray or list
-        Longitude values.
-    conf : dict
-        Configuration dictionary containing details about the data structure 
+    Args
+        pred (torch.Tensor or np.ndarray): Prediction tensor containing both upper air and surface variables.
+    forecast_datetime (datetime): The forecast initialization datetime.
+    lat (np.ndarray or list): Latitude values.
+    lon (np.ndarray or list): Longitude values.
+    conf (dict): Configuration dictionary containing details about the data structure
         and variables.
 
     Returns:
-    --------
-    darray_upper_air : xarray.DataArray
-        DataArray containing upper air variables with dimensions 
-        [time, vars, level, latitude, longitude].
-    darray_single_level : xarray.DataArray
-        DataArray containing surface variables with dimensions 
+        darray_upper_air (xarray.DataArray): DataArray containing upper air variables with dimensions
+            [time, vars, level, latitude, longitude].
+    darray_single_level (xarray.DataArray): DataArray containing surface variables with dimensions
         [time, vars, latitude, longitude].
     """
-    
+
     # subset upper air and surface variables
     tensor_upper_air, tensor_single_level = split_and_reshape(pred, conf)
 
     # -------------------------------------------- #
-    # level inds 
+    # level inds
     if "level_ids" in conf["data"].keys():
         level_ids = conf["data"]["level_ids"]
     else:
         level_ids = range(conf["model"]["levels"])
-    
+
     # save upper air variables
-    varname_upper = conf['data']['variables']
+    varname_upper = conf["data"]["variables"]
 
     # make xr.DatasArray
     darray_upper_air = xr.DataArray(
@@ -125,8 +118,10 @@ def make_xarray(pred, forecast_datetime, lat, lon, conf):
     )
 
     # save surface variables
-    varname_single_level = conf['data']['surface_variables'] + conf['data']['diagnostic_variables']
-    
+    varname_single_level = (
+        conf["data"]["surface_variables"] + conf["data"]["diagnostic_variables"]
+    )
+
     # make xr.DatasArray
     darray_single_level = xr.DataArray(
         tensor_single_level.squeeze(2),
@@ -138,7 +133,7 @@ def make_xarray(pred, forecast_datetime, lat, lon, conf):
             longitude=lon,
         ),
     )
-    
+
     # return x-arrays as outputs
     return darray_upper_air, darray_single_level
 
