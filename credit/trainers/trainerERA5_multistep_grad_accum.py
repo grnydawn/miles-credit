@@ -21,6 +21,7 @@ import torch
 from credit.models.checkpoint import TorchFSDPCheckpointIO
 from credit.scheduler import update_on_epoch
 from credit.trainers.utils import cleanup
+from credit.postblock import GlobalMassFixer, GlobalWaterFixer, GlobalEnergyFixer
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,19 @@ class Trainer(BaseTrainer):
         model (torch.nn.Module): The model to be trained.
         rank (int): The rank of the process in distributed training.
         module (bool): If True, use model with module parallelism (default: False).
+
+    Methods:
+        train_one_epoch(epoch, conf, trainloader, optimizer, criterion, scaler,
+                        scheduler, metrics):
+            Perform training for one epoch and return training metrics.
+
+        validate(epoch, conf, valid_loader, criterion, metrics):
+            Validate the model on the validation dataset and return validation metrics.
+
+        fit_deprecated(conf, train_loader, valid_loader, optimizer, train_criterion,
+                       valid_criterion, scaler, scheduler, metrics, trial=False):
+            Perform the full training loop across multiple epochs, including validation
+            and checkpointing.
     """
 
     def __init__(self, model: torch.nn.Module, rank: int, module: bool = False):
@@ -98,6 +112,33 @@ class Trainer(BaseTrainer):
         ):
             scheduler.step()
 
+        # ====================================================== #
+        # postblock opts outside of model
+        post_conf = conf["model"]["post_conf"]
+        flag_mass_conserve = False
+        flag_water_conserve = False
+        flag_energy_conserve = False
+
+        if post_conf["activate"]:
+            if post_conf["global_mass_fixer"]["activate"]:
+                if post_conf["global_mass_fixer"]["activate_outside_model"]:
+                    logger.info("Activate GlobalMassFixer outside of model")
+                    flag_mass_conserve = True
+                    opt_mass = GlobalMassFixer(post_conf)
+
+            if post_conf["global_water_fixer"]["activate"]:
+                if post_conf["global_water_fixer"]["activate_outside_model"]:
+                    logger.info("Activate GlobalWaterFixer outside of model")
+                    flag_water_conserve = True
+                    opt_water = GlobalWaterFixer(post_conf)
+
+            if post_conf["global_energy_fixer"]["activate"]:
+                if post_conf["global_energy_fixer"]["activate_outside_model"]:
+                    logger.info("Activate GlobalEnergyFixer outside of model")
+                    flag_energy_conserve = True
+                    opt_energy = GlobalEnergyFixer(post_conf)
+        # ====================================================== #
+
         # set up a custom tqdm
         if not isinstance(trainloader.dataset, IterableDataset):
             batches_per_epoch = (
@@ -156,6 +197,33 @@ class Trainer(BaseTrainer):
 
                         # predict with the model
                         y_pred = self.model(x)
+
+                        # ============================================= #
+                        # postblock opts outside of model
+
+                        # backup init state
+                        if flag_mass_conserve:
+                            if forecast_step == 1:
+                                x_init = x.clone()
+
+                        # mass conserve using initialization as reference
+                        if flag_mass_conserve:
+                            input_dict = {"y_pred": y_pred, "x": x_init}
+                            input_dict = opt_mass(input_dict)
+                            y_pred = input_dict["y_pred"]
+
+                        # water conserve use previous step output as reference
+                        if flag_water_conserve:
+                            input_dict = {"y_pred": y_pred, "x": x}
+                            input_dict = opt_water(input_dict)
+                            y_pred = input_dict["y_pred"]
+
+                        # energy conserve use previous step output as reference
+                        if flag_energy_conserve:
+                            input_dict = {"y_pred": y_pred, "x": x}
+                            input_dict = opt_energy(input_dict)
+                            y_pred = input_dict["y_pred"]
+                        # ============================================= #
 
                         # only load y-truth data if we intend to backprop (default is every step gets grads computed
                         if forecast_step in backprop_on_timestep:
@@ -337,6 +405,33 @@ class Trainer(BaseTrainer):
                 else len(valid_loader)
             )
 
+        # ====================================================== #
+        # postblock opts outside of model
+        post_conf = conf["model"]["post_conf"]
+        flag_mass_conserve = False
+        flag_water_conserve = False
+        flag_energy_conserve = False
+
+        if post_conf["activate"]:
+            if post_conf["global_mass_fixer"]["activate"]:
+                if post_conf["global_mass_fixer"]["activate_outside_model"]:
+                    logger.info("Activate GlobalMassFixer outside of model")
+                    flag_mass_conserve = True
+                    opt_mass = GlobalMassFixer(post_conf)
+
+            if post_conf["global_water_fixer"]["activate"]:
+                if post_conf["global_water_fixer"]["activate_outside_model"]:
+                    logger.info("Activate GlobalWaterFixer outside of model")
+                    flag_water_conserve = True
+                    opt_water = GlobalWaterFixer(post_conf)
+
+            if post_conf["global_energy_fixer"]["activate"]:
+                if post_conf["global_energy_fixer"]["activate_outside_model"]:
+                    logger.info("Activate GlobalEnergyFixer outside of model")
+                    flag_energy_conserve = True
+                    opt_energy = GlobalEnergyFixer(post_conf)
+        # ====================================================== #
+
         batch_group_generator = tqdm.tqdm(
             range(valid_batches_per_epoch), total=valid_batches_per_epoch, leave=True
         )
@@ -373,6 +468,33 @@ class Trainer(BaseTrainer):
 
                     # logger.info('k = {}; x.shape() = {}'.format(forecast_step, x.shape))
                     y_pred = self.model(x)
+
+                    # ============================================= #
+                    # postblock opts outside of model
+
+                    # backup init state
+                    if flag_mass_conserve:
+                        if forecast_step == 1:
+                            x_init = x.clone()
+
+                    # mass conserve using initialization as reference
+                    if flag_mass_conserve:
+                        input_dict = {"y_pred": y_pred, "x": x_init}
+                        input_dict = opt_mass(input_dict)
+                        y_pred = input_dict["y_pred"]
+
+                    # water conserve use previous step output as reference
+                    if flag_water_conserve:
+                        input_dict = {"y_pred": y_pred, "x": x}
+                        input_dict = opt_water(input_dict)
+                        y_pred = input_dict["y_pred"]
+
+                    # energy conserve use previous step output as reference
+                    if flag_energy_conserve:
+                        input_dict = {"y_pred": y_pred, "x": x}
+                        input_dict = opt_energy(input_dict)
+                        y_pred = input_dict["y_pred"]
+                    # ============================================= #
 
                     # ================================================================================== #
                     # scope of reaching the final forecast_len

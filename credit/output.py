@@ -14,18 +14,13 @@ import traceback
 import xarray as xr
 from credit.data import drop_var_from_dataset
 from credit.interp import full_state_pressure_interpolation
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
 
-def load_metadata(conf: dict):
+def load_metadata(conf):
     """
     Load metadata attributes from yaml file in credit/metadata directory
-
-    Args:
-        conf (dict): Configuration dictionary
-
     """
     # set priorities for user-specified metadata
     if conf["predict"]["metadata"]:
@@ -58,7 +53,9 @@ def split_and_reshape(tensor, conf):
 
     # get number of channels
     channels = len(conf["data"]["variables"])
-    single_level_channels = len(conf["data"]["surface_variables"])
+    single_level_channels = len(conf["data"]["surface_variables"]) + len(
+        conf["data"]["diagnostic_variables"]
+    )
 
     # subset upper air variables
     tensor_upper_air = tensor[:, : int(channels * levels), :, :]
@@ -77,55 +74,67 @@ def split_and_reshape(tensor, conf):
 
 def make_xarray(pred, forecast_datetime, lat, lon, conf):
     """
-    Convert prediction tensor to xarray DataArrays for later saving.
+    Create two xarray.DataArray objects for upper air and surface variables.
 
-    Args:
-        pred (torch.Tensor): full tensor containing output of the AI NWP model
-        forecast_datetime (pd.Timestamp or datetime.datetime): valid time of the forecast
-        lat: latitude coordinate array
-        lon: longitude coordinate array
-        conf (dict): config dictionary for training/rollout
+    Args
+        pred (torch.Tensor or np.ndarray): Prediction tensor containing both upper air and surface variables.
+    forecast_datetime (datetime): The forecast initialization datetime.
+    lat (np.ndarray or list): Latitude values.
+    lon (np.ndarray or list): Longitude values.
+    conf (dict): Configuration dictionary containing details about the data structure
+        and variables.
 
     Returns:
-        xr.DataArray: upper air predictions, xr.DataArray: surface variable predictions
+        darray_upper_air (xarray.DataArray): DataArray containing upper air variables with dimensions
+            [time, vars, level, latitude, longitude].
+    darray_single_level (xarray.DataArray): DataArray containing surface variables with dimensions
+        [time, vars, latitude, longitude].
     """
+
     # subset upper air and surface variables
     tensor_upper_air, tensor_single_level = split_and_reshape(pred, conf)
 
+    # -------------------------------------------- #
+    # level inds
     if "level_ids" in conf["data"].keys():
         level_ids = conf["data"]["level_ids"]
     else:
-        level_ids = np.array(
-            [10, 30, 40, 50, 60, 70, 80, 90, 95, 100, 105, 110, 120, 130, 136, 137],
-            dtype=np.int64,
-        )
+        level_ids = range(conf["model"]["levels"])
 
     # save upper air variables
+    varname_upper = conf["data"]["variables"]
+
+    # make xr.DatasArray
     darray_upper_air = xr.DataArray(
         tensor_upper_air,
-        dims=["time", "vars", "level", "lat", "lon"],
+        dims=["time", "vars", "level", "latitude", "longitude"],
         coords=dict(
-            vars=conf["data"]["variables"],
+            vars=varname_upper,
             time=[forecast_datetime],
             level=level_ids,
-            lat=lat,
-            lon=lon,
+            latitude=lat,
+            longitude=lon,
         ),
     )
 
     # save surface variables
-    # !!! need to add diagnostic vars !!!
+    varname_single_level = (
+        conf["data"]["surface_variables"] + conf["data"]["diagnostic_variables"]
+    )
+
+    # make xr.DatasArray
     darray_single_level = xr.DataArray(
         tensor_single_level.squeeze(2),
-        dims=["time", "vars", "lat", "lon"],
+        dims=["time", "vars", "latitude", "longitude"],
         coords=dict(
-            vars=conf["data"]["surface_variables"],
+            vars=varname_single_level,
             time=[forecast_datetime],
-            lat=lat,
-            lon=lon,
+            latitude=lat,
+            longitude=lon,
         ),
     )
-    # return DataArrays as outputs
+
+    # return x-arrays as outputs
     return darray_upper_air, darray_single_level
 
 

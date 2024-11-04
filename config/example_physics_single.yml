@@ -178,10 +178,20 @@ model:
             
         global_mass_fixer:
             activate: True
+            activate_outside_model: False
             simple_demo: False
             denorm: True
             midpoint: False
             fix_level_num: 14
+            lon_lat_level_name: ['lon2d', 'lat2d', 'p_level']
+            specific_total_water_name: ['specific_total_water']
+
+        global_water_fixer:
+            activate: True
+            activate_outside_model: False
+            simple_demo: False
+            denorm: True
+            midpoint: False
             lon_lat_level_name: ['lon2d', 'lat2d', 'p_level']
             specific_total_water_name: ['specific_total_water']
             precipitation_name: ['total_precipitation']
@@ -189,6 +199,7 @@ model:
             
         global_energy_fixer:
             activate: True
+            activate_outside_model: True
             simple_demo: False
             denorm: True
             midpoint: False
@@ -224,13 +235,14 @@ predict:
         start_month: 1       # month of the first initialization
         start_day: 1         # day of the first initialization
         start_hours: [0, 12] # hour-of-day for each initialization, 0 for 00Z, 12 for 12Z
-        duration: 30         # number of days to initialize, starting from the (year, mon, day) above
+        duration: 2         # number of days to initialize, starting from the (year, mon, day) above
                              # duration should be divisible by the number of GPUs 
                              # (e.g., duration: 384 for 365-day rollout using 32 GPUs)
         days: 2              # forecast lead time as days (1 means 24-hour forecast)
         
-    save_forecast: '/glade/derecho/scratch/$USER/CREDIT/fuxi_6h/'
-    save_vars: ['SP','t2m','V500','U500','T500','Z500','Q500']
+    save_forecast: '/glade/derecho/scratch/$USER/CREDIT/fuxi_conserve/'
+    
+    # save_vars: ['SP','t2m','V500','U500','T500','Z500','Q500']
     
     # turn-off low-pass filter
     use_laplace_filter: False

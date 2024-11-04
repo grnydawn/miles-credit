@@ -30,7 +30,7 @@ from credit.loss import VariableTotalLoss2D
 from credit.data import ERA5Dataset, ERA5_and_Forcing_Dataset, Dataset_BridgeScaler
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
-from credit.parser import CREDIT_main_parser, training_data_check
+from credit.parser import credit_main_parser, training_data_check
 from credit.trainers import load_trainer
 
 from credit.metrics import LatWeightedMetrics
@@ -141,15 +141,15 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
 
 
 def load_dataset_and_sampler_zscore_only(
-    conf: dict,
-    all_ERA_files: list,
-    surface_files: list,
-    dyn_forcing_files: list,
-    diagnostic_files: list,
-    world_size: int,
-    rank: int,
-    is_train: bool,
-    seed: int = 42,
+    conf,
+    all_ERA_files,
+    surface_files,
+    dyn_forcing_files,
+    diagnostic_files,
+    world_size,
+    rank,
+    is_train,
+    seed=42,
 ):
     """
     Load the Z-score only dataset and sampler for training or validation.
@@ -753,7 +753,7 @@ class Objective(BaseObjective):
 
 
 if __name__ == "__main__":
-    description = "Train a global AI NWP model on a reanalysis dataset."
+    description = "Train a segmengation model on a hologram data set"
     parser = ArgumentParser(description=description)
     parser.add_argument(
         "-c",
@@ -808,11 +808,11 @@ if __name__ == "__main__":
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
     # ======================================================== #
-    if conf["data"]["scaler_type"] == "std_new" or "std_cached":
-        conf = CREDIT_main_parser(
-            conf, parse_training=True, parse_predict=False, print_summary=False
-        )
-        training_data_check(conf, print_summary=False)
+    # handling config args
+    conf = credit_main_parser(
+        conf, parse_training=True, parse_predict=False, print_summary=False
+    )
+    training_data_check(conf, print_summary=False)
     # ======================================================== #
 
     # Create directories if they do not exist and copy yml file
