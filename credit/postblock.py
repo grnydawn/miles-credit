@@ -17,7 +17,7 @@ import numpy as np
 
 from credit.data import get_forward_data
 from credit.transforms import load_transforms
-from credit.physics_core import physics_pressure_level
+from credit.physics_core import physics_pressure_level, physics_hybrid_sigma_level
 from credit.physics_constants import (
     GRAVITY,
     RHO_WATER,
