@@ -180,8 +180,9 @@ class GlobalMassFixer(nn.Module):
 
             p_level_demo = torch.from_numpy(np.array([100, 30000, 50000, 70000, 80000, 90000, 100000]))
             self.flag_sigma_level = False
+            self.flag_midpoint = post_conf['global_mass_fixer']['midpoint']
             self.core_compute = physics_pressure_level(lon_demo, lat_demo, p_level_demo, 
-                                                       midpoint=post_conf['global_mass_fixer']['midpoint'])
+                                                       midpoint=self.flag_midpoint)
             self.N_levels = len(p_level_demo)
             self.ind_fix = len(p_level_demo) - int(post_conf['global_mass_fixer']['fix_level_num']) + 1
             
@@ -380,8 +381,9 @@ class GlobalWaterFixer(nn.Module):
 
             p_level_demo = torch.from_numpy(np.array([100, 30000, 50000, 70000, 80000, 90000, 100000]))
             self.flag_sigma_level = False
+            self.flag_midpoint = post_conf['global_mass_fixer']['midpoint']
             self.core_compute = physics_pressure_level(lon_demo, lat_demo, p_level_demo, 
-                                                       midpoint=post_conf['global_water_fixer']['midpoint'])
+                                                       midpoint=self.flag_midpoint)
             self.N_levels = len(p_level_demo)
             self.N_seconds = int(post_conf['data']['lead_time_periods']) * 3600
             
@@ -575,11 +577,12 @@ class GlobalEnergyFixer(nn.Module):
                 np.array([100, 30000, 50000, 70000, 80000, 90000, 100000])
             )
             self.flag_sigma_level = False
+            self.flag_midpoint = post_conf['global_mass_fixer']['midpoint']
             self.core_compute = physics_pressure_level(
                 lon_demo,
                 lat_demo,
                 p_level_demo,
-                midpoint=post_conf["global_energy_fixer"]["midpoint"],
+                midpoint=self.flag_midpoint,
             )
             self.N_seconds = int(post_conf["data"]["lead_time_periods"]) * 3600
 
