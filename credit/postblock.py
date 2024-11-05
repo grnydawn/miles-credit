@@ -179,6 +179,7 @@ class GlobalMassFixer(nn.Module):
             lat_demo = torch.from_numpy(lat_demo)
 
             p_level_demo = torch.from_numpy(np.array([100, 30000, 50000, 70000, 80000, 90000, 100000]))
+            self.flag_sigma_level = False
             self.core_compute = physics_pressure_level(lon_demo, lat_demo, p_level_demo, 
                                                        midpoint=post_conf['global_mass_fixer']['midpoint'])
             self.N_levels = len(p_level_demo)
@@ -378,6 +379,7 @@ class GlobalWaterFixer(nn.Module):
             lat_demo = torch.from_numpy(lat_demo)
 
             p_level_demo = torch.from_numpy(np.array([100, 30000, 50000, 70000, 80000, 90000, 100000]))
+            self.flag_sigma_level = False
             self.core_compute = physics_pressure_level(lon_demo, lat_demo, p_level_demo, 
                                                        midpoint=post_conf['global_water_fixer']['midpoint'])
             self.N_levels = len(p_level_demo)
@@ -572,6 +574,7 @@ class GlobalEnergyFixer(nn.Module):
             p_level_demo = torch.from_numpy(
                 np.array([100, 30000, 50000, 70000, 80000, 90000, 100000])
             )
+            self.flag_sigma_level = False
             self.core_compute = physics_pressure_level(
                 lon_demo,
                 lat_demo,
