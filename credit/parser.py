@@ -420,8 +420,8 @@ def credit_main_parser(
         )
 
         # # debug only
-        # conf['model']['post_conf']['varname_input'] = varname_input
-        # conf['model']['post_conf']['varname_output'] = varname_output
+        conf['model']['post_conf']['varname_input'] = varname_input
+        conf['model']['post_conf']['varname_output'] = varname_output
         # --------------------------------------------------------------------- #
 
     # SKEBS
@@ -508,7 +508,7 @@ def credit_main_parser(
                 i_var for i_var, var in enumerate(varname_output) 
                 if var in conf['model']['post_conf']['global_mass_fixer']['surface_pressure_name']
             ]        
-            conf['model']['post_conf']['global_mass_fixer']['sp_inds'] = sp_inds
+            conf['model']['post_conf']['global_mass_fixer']['sp_inds'] = sp_inds[0]
     
     # --------------------------------------------------------------------- #
     # global water fixer
@@ -573,7 +573,7 @@ def credit_main_parser(
                 i_var for i_var, var in enumerate(varname_output) 
                 if var in conf['model']['post_conf']['global_water_fixer']['surface_pressure_name']
             ]        
-            conf['model']['post_conf']['global_water_fixer']['sp_inds'] = sp_inds
+            conf['model']['post_conf']['global_water_fixer']['sp_inds'] = sp_inds[0]
     
     # --------------------------------------------------------------------- #
     # global energy fixer
@@ -679,7 +679,7 @@ def credit_main_parser(
                 i_var for i_var, var in enumerate(varname_output) 
                 if var in conf['model']['post_conf']['global_energy_fixer']['surface_pressure_name']
             ]        
-            conf['model']['post_conf']['global_energy_fixer']['sp_inds'] = sp_inds
+            conf['model']['post_conf']['global_energy_fixer']['sp_inds'] = sp_inds[0]
     
     # --------------------------------------------------------- #
     # conf['trainer'] section
