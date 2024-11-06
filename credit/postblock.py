@@ -266,6 +266,8 @@ class GlobalMassFixer(nn.Module):
 
         # y_pred (batch, var, time, lat, lon) 
         # pick the first time-step, y_pred is expected to have the next step only
+        # !!! Note: time dimension is collapsed throughout !!!
+        
         q_input = x_input[:, self.q_ind_start:self.q_ind_end, -1, ...]
         q_pred = y_pred[:, self.q_ind_start:self.q_ind_end, 0, ...]
 
@@ -302,7 +304,7 @@ class GlobalMassFixer(nn.Module):
         q_correct_ratio = (mass_dry_sum_t0 - mass_dry_sum_t1_hold) / mass_dry_sum_t1_fix
         #q_correct_ratio = torch.clamp(q_correct_ratio, min=0.9, max=1.1)
         
-        # broadcast: (batch, 1, 1, 1, 1)
+        # broadcast: (batch, 1, 1, 1)
         q_correct_ratio = q_correct_ratio.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
         
         # ===================================================================== #
@@ -346,7 +348,7 @@ class GlobalMassFixer(nn.Module):
             y_pred = concat_fix(y_pred, sp_pred, self.sp_ind, self.sp_ind, N_vars)
             
         # ===================================================================== #
-        # return fixed q and precip back to y_pred
+        # return fixed q back to y_pred
 
         # expand fixed vars to (batch, level, time, lat, lon)
         q_pred = q_pred.unsqueeze(2)
