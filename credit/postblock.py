@@ -726,7 +726,7 @@ class GlobalEnergyFixer(nn.Module):
 
         # packing latent heat + potential energy + kinetic energy
         E_qgk_t0 = LH_WATER * q_input + GPH_surf + ken_t0
-        E_qgk_t1 = LH_WATER * q_input + GPH_surf + ken_t1
+        E_qgk_t1 = LH_WATER * q_pred + GPH_surf + ken_t1
 
         # ------------------------------------------------------------------------------ #
         # energy source and sinks
