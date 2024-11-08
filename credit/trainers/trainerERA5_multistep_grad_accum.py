@@ -208,7 +208,6 @@ class Trainer(BaseTrainer):
                         # clamp
                         if flag_clamp:
                             x = torch.clamp(x, min=clamp_min, max=clamp_max)
-                            y = torch.clamp(y, min=clamp_min, max=clamp_max)
                         
                         # predict with the model
                         y_pred = self.model(x)
@@ -261,6 +260,11 @@ class Trainer(BaseTrainer):
                                 # concat on var dimension
                                 y = torch.cat((y, y_diag_batch), dim=1)
 
+                            # --------------------------------------------- #
+                            # clamp
+                            if flag_clamp:
+                                y = torch.clamp(y, min=clamp_min, max=clamp_max)
+                                
                             loss = criterion(y.to(y_pred.dtype), y_pred).mean()
 
                             # track the loss
@@ -494,8 +498,7 @@ class Trainer(BaseTrainer):
                     # clamp
                     if flag_clamp:
                         x = torch.clamp(x, min=clamp_min, max=clamp_max)
-                        y = torch.clamp(y, min=clamp_min, max=clamp_max)
-                            
+                        
                     y_pred = self.model(x)
 
                     # ============================================= #
@@ -546,6 +549,11 @@ class Trainer(BaseTrainer):
                             # concat on var dimension
                             y = torch.cat((y, y_diag_batch), dim=1)
 
+                        # --------------------------------------------- #
+                        # clamp
+                        if flag_clamp:
+                            y = torch.clamp(y, min=clamp_min, max=clamp_max)
+                        
                         # ----------------------------------------------------------------------- #
                         # calculate rolling loss
                         loss = criterion(y.to(y_pred.dtype), y_pred).mean()
