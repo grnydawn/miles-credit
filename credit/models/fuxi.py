@@ -226,7 +226,13 @@ class UTransformer(nn.Module):
     """
 
     def __init__(
-        self, embed_dim, num_groups, input_resolution, num_heads, window_size, depth
+        self, embed_dim, 
+        num_groups, 
+        input_resolution, 
+        num_heads, 
+        window_size, 
+        depth,
+        drop_path
     ):
         super().__init__()
         num_groups = to_2tuple(num_groups)
@@ -248,7 +254,13 @@ class UTransformer(nn.Module):
 
         # SwinT block
         self.layer = SwinTransformerV2Stage(
-            embed_dim, embed_dim, input_resolution, depth, num_heads, window_size[0]
+            embed_dim, 
+            embed_dim, 
+            input_resolution, 
+            depth, 
+            num_heads, 
+            window_size[0],
+            drop_path=drop_path
         )  # <--- window_size[0] get window_size[int] from tuple
 
         # up-sampling block
@@ -315,6 +327,7 @@ class Fuxi(BaseModel):
         window_size=7,
         use_spectral_norm=True,
         interp=True,
+        drop_path=0,
         padding_conf=None,
         post_conf=None,
         **kwargs,
@@ -363,7 +376,12 @@ class Fuxi(BaseModel):
 
         # Downsampling --> SwinTransformerV2 stacks --> Upsampling
         self.u_transformer = UTransformer(
-            dim, num_groups, input_resolution, num_heads, window_size, depth=depth
+            dim, num_groups, 
+            input_resolution, 
+            num_heads, 
+            window_size, 
+            depth=depth,
+            drop_path=drop_path
         )
 
         # dense layer applied on channel dmension
