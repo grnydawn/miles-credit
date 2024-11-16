@@ -232,6 +232,8 @@ class UTransformer(nn.Module):
         num_heads, 
         window_size, 
         depth,
+        proj_drop,
+        attn_drop,
         drop_path
     ):
         super().__init__()
@@ -260,6 +262,8 @@ class UTransformer(nn.Module):
             depth, 
             num_heads, 
             window_size[0],
+            proj_drop=proj_drop,
+            attn_drop=attn_drop,
             drop_path=drop_path
         )  # <--- window_size[0] get window_size[int] from tuple
 
@@ -327,6 +331,8 @@ class Fuxi(BaseModel):
         window_size=7,
         use_spectral_norm=True,
         interp=True,
+        proj_drop=0,
+        attn_drop=0,
         drop_path=0,
         padding_conf=None,
         post_conf=None,
@@ -379,7 +385,7 @@ class Fuxi(BaseModel):
         self.cube_embedding = CubeEmbedding(img_size, patch_size, in_chans, dim)
 
         # Downsampling --> SwinTransformerV2 stacks --> Upsampling
-        logger.info(f"Define UTransforme with drop path: {drop_path}")
+        logger.info(f"Define UTransforme with proj_drop={proj_drop}, attn_drop={attn_drop}, drop_path={drop_path}")
         
         self.u_transformer = UTransformer(
             dim, num_groups, 
@@ -387,6 +393,8 @@ class Fuxi(BaseModel):
             num_heads, 
             window_size, 
             depth=depth,
+            proj_drop=proj_drop,
+            attn_drop=attn_drop,
             drop_path=drop_path
         )
 
