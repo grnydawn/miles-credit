@@ -67,6 +67,15 @@ class Trainer(BaseTrainer):
         ):
             scheduler.step()
 
+        # ------------------------------------------------------- #
+        # clamp to remove outliers
+        if conf["data"]["data_clamp"] is None:
+            flag_clamp = False
+        else:
+            flag_clamp = True
+            clamp_min = float(conf["data"]["data_clamp"][0])
+            clamp_max = float(conf["data"]["data_clamp"][1])
+        
         # ====================================================== #
         # postblock opts outside of model
         post_conf = conf["model"]["post_conf"]
@@ -157,6 +166,12 @@ class Trainer(BaseTrainer):
                     # concat on var dimension
                     y = torch.cat((y, y_diag_batch), dim=1)
 
+                # --------------------------------------------- #
+                # clamp
+                if flag_clamp:
+                    x = torch.clamp(x, min=clamp_min, max=clamp_max)
+                    y = torch.clamp(y, min=clamp_min, max=clamp_max)
+                
                 # single step predict
                 y_pred = self.model(x)
 
@@ -340,6 +355,15 @@ class Trainer(BaseTrainer):
 
         results_dict = defaultdict(list)
 
+        # ------------------------------------------------------- #
+        # clamp to remove outliers
+        if conf["data"]["data_clamp"] is None:
+            flag_clamp = False
+        else:
+            flag_clamp = True
+            clamp_min = float(conf["data"]["data_clamp"][0])
+            clamp_max = float(conf["data"]["data_clamp"][1])
+        
         # ====================================================== #
         # postblock opts outside of model
         post_conf = conf["model"]["post_conf"]
@@ -424,6 +448,12 @@ class Trainer(BaseTrainer):
                     # concat on var dimension
                     y = torch.cat((y, y_diag_batch), dim=1)
 
+                # --------------------------------------------- #
+                # clamp
+                if flag_clamp:
+                    x = torch.clamp(x, min=clamp_min, max=clamp_max)
+                    y = torch.clamp(y, min=clamp_min, max=clamp_max)
+                
                 y_pred = self.model(x)
 
                 # ============================================= #
