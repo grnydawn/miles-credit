@@ -26,6 +26,7 @@ from torch.utils.data.distributed import DistributedSampler
 # credit
 from credit.models import load_model
 from credit.seed import seed_everything
+from credit.distributed import get_rank_info
 
 from credit.data import (
     concat_and_reshape,
@@ -951,11 +952,11 @@ if __name__ == "__main__":
     seed = 1000 if "seed" not in conf else conf["seed"]
     seed_everything(seed)
 
+    local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])
+
     with mp.Pool(num_cpus) as p:
         if conf["predict"]["mode"] in ["fsdp", "ddp"]:  # multi-gpu inference
-            _ = predict(
-                int(os.environ["RANK"]), int(os.environ["WORLD_SIZE"]), conf, p=p
-            )
+            _ = predict(world_rank, world_size, conf, p=p)
         else:  # single device inference
             _ = predict(0, 1, conf, p=p)
 
