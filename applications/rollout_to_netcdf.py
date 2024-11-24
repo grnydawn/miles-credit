@@ -497,7 +497,16 @@ def predict(rank, world_size, conf, p):
         + len(conf["data"]["forcing_variables"])
         + len(conf["data"]["static_variables"])
     )
-
+    
+    # ------------------------------------------------------- #
+    # clamp to remove outliers
+    if conf["data"]["data_clamp"] is None:
+        flag_clamp = False
+    else:
+        flag_clamp = True
+        clamp_min = float(conf["data"]["data_clamp"][0])
+        clamp_max = float(conf["data"]["data_clamp"][1])
+        
     # ====================================================== #
     # postblock opts outside of model
     post_conf = conf["model"]["post_conf"]
@@ -647,6 +656,13 @@ def predict(rank, world_size, conf, p):
 
             # -------------------------------------------------------------------------------------- #
             # start prediction
+
+            # --------------------------------------------- #
+            # clamp
+            if flag_clamp:
+                x = torch.clamp(x, min=clamp_min, max=clamp_max)
+                #y = torch.clamp(y, min=clamp_min, max=clamp_max)
+            
             y_pred = model(x)
 
             # ============================================= #

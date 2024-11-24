@@ -250,6 +250,9 @@ def credit_main_parser(
     )
 
     ## I/O data sizes
+
+    conf["data"].setdefault("data_clamp", None)
+    
     if parse_training:
         assert (
             "train_years" in conf["data"]
@@ -264,7 +267,7 @@ def credit_main_parser(
         assert (
             "forecast_len" in conf["data"]
         ), "Number of time frames for loss compute ('forecast_len') is missing from conf['data']"
-
+        
         if "valid_history_len" not in conf["data"]:
             # use "history_len" for "valid_history_len"
             conf["data"]["valid_history_len"] = conf["data"]["history_len"]
@@ -420,8 +423,8 @@ def credit_main_parser(
         )
 
         # # debug only
-        # conf['model']['post_conf']['varname_input'] = varname_input
-        # conf['model']['post_conf']['varname_output'] = varname_output
+        conf['model']['post_conf']['varname_input'] = varname_input
+        conf['model']['post_conf']['varname_output'] = varname_output
         # --------------------------------------------------------------------- #
 
     # SKEBS
@@ -478,6 +481,7 @@ def credit_main_parser(
         conf["model"]["post_conf"]["global_mass_fixer"].setdefault("denorm", True)
         conf["model"]["post_conf"]["global_mass_fixer"].setdefault("simple_demo", False)
         conf["model"]["post_conf"]["global_mass_fixer"].setdefault("midpoint", False)
+        conf['model']['post_conf']['global_mass_fixer'].setdefault('grid_type', 'pressure')
 
         assert (
             "fix_level_num" in conf["model"]["post_conf"]["global_mass_fixer"]
@@ -487,7 +491,11 @@ def credit_main_parser(
             assert (
                 "lon_lat_level_name" in conf["model"]["post_conf"]["global_mass_fixer"]
             ), "Must specifiy var names for lat/lon/level in physics reference file"
-
+        
+        if conf['model']['post_conf']['global_mass_fixer']['grid_type'] == 'sigma':
+            assert 'surface_pressure_name' in conf['model']['post_conf']['global_mass_fixer'], (
+                'Must specifiy surface pressure var name when using hybrid sigma-pressure coordinates')
+        
         q_inds = [
             i_var
             for i_var, var in enumerate(varname_output)
@@ -498,6 +506,13 @@ def credit_main_parser(
         ]
         conf["model"]["post_conf"]["global_mass_fixer"]["q_inds"] = q_inds
 
+        if conf['model']['post_conf']['global_mass_fixer']['grid_type'] == 'sigma':
+            sp_inds = [
+                i_var for i_var, var in enumerate(varname_output) 
+                if var in conf['model']['post_conf']['global_mass_fixer']['surface_pressure_name']
+            ]        
+            conf['model']['post_conf']['global_mass_fixer']['sp_inds'] = sp_inds[0]
+    
     # --------------------------------------------------------------------- #
     # global water fixer
     flag_water = (
@@ -518,12 +533,17 @@ def credit_main_parser(
             "simple_demo", False
         )
         conf["model"]["post_conf"]["global_water_fixer"].setdefault("midpoint", False)
+        conf['model']['post_conf']['global_water_fixer'].setdefault('grid_type', 'pressure')
 
         if conf["model"]["post_conf"]["global_water_fixer"]["simple_demo"] is False:
             assert (
                 "lon_lat_level_name" in conf["model"]["post_conf"]["global_water_fixer"]
             ), "Must specifiy var names for lat/lon/level in physics reference file"
 
+        if conf['model']['post_conf']['global_water_fixer']['grid_type'] == 'sigma':
+            assert 'surface_pressure_name' in conf['model']['post_conf']['global_water_fixer'], (
+                'Must specifiy surface pressure var name when using hybrid sigma-pressure coordinates')
+        
         q_inds = [
             i_var
             for i_var, var in enumerate(varname_output)
@@ -551,6 +571,13 @@ def credit_main_parser(
         conf["model"]["post_conf"]["global_water_fixer"]["precip_ind"] = precip_inds[0]
         conf["model"]["post_conf"]["global_water_fixer"]["evapor_ind"] = evapor_inds[0]
 
+        if conf['model']['post_conf']['global_water_fixer']['grid_type'] == 'sigma':
+            sp_inds = [
+                i_var for i_var, var in enumerate(varname_output) 
+                if var in conf['model']['post_conf']['global_water_fixer']['surface_pressure_name']
+            ]        
+            conf['model']['post_conf']['global_water_fixer']['sp_inds'] = sp_inds[0]
+    
     # --------------------------------------------------------------------- #
     # global energy fixer
     flag_energy = (
@@ -571,6 +598,7 @@ def credit_main_parser(
             "simple_demo", False
         )
         conf["model"]["post_conf"]["global_energy_fixer"].setdefault("midpoint", False)
+        conf['model']['post_conf']['global_energy_fixer'].setdefault('grid_type', 'pressure')
 
         if conf["model"]["post_conf"]["global_energy_fixer"]["simple_demo"] is False:
             assert (
@@ -578,6 +606,10 @@ def credit_main_parser(
                 in conf["model"]["post_conf"]["global_energy_fixer"]
             ), "Must specifiy var names for lat/lon/level in physics reference file"
 
+        if conf['model']['post_conf']['global_energy_fixer']['grid_type'] == 'sigma':
+            assert 'surface_pressure_name' in conf['model']['post_conf']['global_energy_fixer'], (
+                'Must specifiy surface pressure var name when using hybrid sigma-pressure coordinates')
+        
         T_inds = [
             i_var
             for i_var, var in enumerate(varname_output)
@@ -645,6 +677,13 @@ def credit_main_parser(
             surf_flux_inds
         )
 
+        if conf['model']['post_conf']['global_energy_fixer']['grid_type'] == 'sigma':
+            sp_inds = [
+                i_var for i_var, var in enumerate(varname_output) 
+                if var in conf['model']['post_conf']['global_energy_fixer']['surface_pressure_name']
+            ]        
+            conf['model']['post_conf']['global_energy_fixer']['sp_inds'] = sp_inds[0]
+    
     # --------------------------------------------------------- #
     # conf['trainer'] section
 
