@@ -78,8 +78,9 @@ class Trainer(BaseTrainer):
         Returns:
             dict: Dictionary containing training metrics and loss for the epoch.
         """
-
+        
         batches_per_epoch = conf["trainer"]["batches_per_epoch"]
+        grad_max_norm = conf["trainer"]["grad_max_norm"]
         amp = conf["trainer"]["amp"]
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
         forecast_length = conf["data"]["forecast_len"]
@@ -312,7 +313,8 @@ class Trainer(BaseTrainer):
 
                 if distributed:
                     torch.distributed.barrier()
-
+                    
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=grad_max_norm)
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad()
