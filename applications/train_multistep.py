@@ -58,7 +58,6 @@ def load_dataset_and_sampler(
     world_size,
     rank,
     is_train=True,
-    seed=42,
 ):
     """
     Load the dataset and sampler for training or validation.
@@ -72,11 +71,11 @@ def load_dataset_and_sampler(
         world_size (int): Number of processes participating in the job.
         rank (int): Rank of the current process.
         is_train (bool): Flag indicating whether the dataset is for training or validation.
-        seed (int, optional): Seed for random number generation. Defaults to 42.
 
     Returns:
         tuple: A tuple containing the dataset and the distributed sampler.
     """
+    seed = conf["seed"]
     # --------------------------------------------------- #
     # separate training set and validation set cases
     if is_train:
@@ -355,7 +354,7 @@ def main(rank, world_size, conf, backend, trial=False):
     torch.cuda.set_device(rank % torch.cuda.device_count())
 
     # Config settings
-    seed = 1000 if "seed" not in conf else conf["seed"]
+    seed = conf["seed"]
     seed_everything(seed)
 
     train_batch_size = conf["trainer"]["train_batch_size"]
@@ -722,8 +721,8 @@ if __name__ == "__main__":
             # track hyperparameters and run metadata
             config=conf,
         )
-
-    seed = 1000 if "seed" not in conf else conf["seed"]
+        
+    seed = conf["seed"]
     seed_everything(seed)
 
     local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])

@@ -46,6 +46,7 @@ class Trainer(BaseTrainer):
         # training hyperparameters
         batches_per_epoch = conf["trainer"]["batches_per_epoch"]
         grad_accum_every = conf["trainer"]["grad_accum_every"]
+        grad_max_norm = conf["trainer"]["grad_max_norm"]
         forecast_len = conf["data"]["forecast_len"]
         amp = conf["trainer"]["amp"]
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
@@ -121,6 +122,7 @@ class Trainer(BaseTrainer):
         results_dict = defaultdict(list)
 
         for i, batch in batch_group_generator:
+            
             # training log
             logs = {}
             # loss
@@ -264,7 +266,8 @@ class Trainer(BaseTrainer):
 
             if distributed:
                 torch.distributed.barrier()
-
+                
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=grad_max_norm)
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad()
