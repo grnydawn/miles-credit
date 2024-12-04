@@ -21,6 +21,7 @@ import torch
 from credit.models.checkpoint import TorchFSDPCheckpointIO
 from credit.scheduler import update_on_epoch
 from credit.trainers.utils import cleanup
+from credit.postblock import GlobalMassFixer, GlobalWaterFixer, GlobalEnergyFixer
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,19 @@ class Trainer(BaseTrainer):
         model (torch.nn.Module): The model to be trained.
         rank (int): The rank of the process in distributed training.
         module (bool): If True, use model with module parallelism (default: False).
+
+    Methods:
+        train_one_epoch(epoch, conf, trainloader, optimizer, criterion, scaler,
+                        scheduler, metrics):
+            Perform training for one epoch and return training metrics.
+
+        validate(epoch, conf, valid_loader, criterion, metrics):
+            Validate the model on the validation dataset and return validation metrics.
+
+        fit_deprecated(conf, train_loader, valid_loader, optimizer, train_criterion,
+                       valid_criterion, scaler, scheduler, metrics, trial=False):
+            Perform the full training loop across multiple epochs, including validation
+            and checkpointing.
     """
 
     def __init__(self, model: torch.nn.Module, rank: int, module: bool = False):
@@ -64,8 +78,9 @@ class Trainer(BaseTrainer):
         Returns:
             dict: Dictionary containing training metrics and loss for the epoch.
         """
-
+        
         batches_per_epoch = conf["trainer"]["batches_per_epoch"]
+        grad_max_norm = conf["trainer"]["grad_max_norm"]
         amp = conf["trainer"]["amp"]
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
         forecast_length = conf["data"]["forecast_len"]
@@ -97,6 +112,42 @@ class Trainer(BaseTrainer):
             and conf["trainer"]["scheduler"]["scheduler_type"] == "lambda"
         ):
             scheduler.step()
+
+        # ------------------------------------------------------- #
+        # clamp to remove outliers
+        if conf["data"]["data_clamp"] is None:
+            flag_clamp = False
+        else:
+            flag_clamp = True
+            clamp_min = float(conf["data"]["data_clamp"][0])
+            clamp_max = float(conf["data"]["data_clamp"][1])
+        
+        # ====================================================== #
+        # postblock opts outside of model
+        post_conf = conf["model"]["post_conf"]
+        flag_mass_conserve = False
+        flag_water_conserve = False
+        flag_energy_conserve = False
+
+        if post_conf["activate"]:
+            if post_conf["global_mass_fixer"]["activate"]:
+                if post_conf["global_mass_fixer"]["activate_outside_model"]:
+                    logger.info("Activate GlobalMassFixer outside of model")
+                    flag_mass_conserve = True
+                    opt_mass = GlobalMassFixer(post_conf)
+
+            if post_conf["global_water_fixer"]["activate"]:
+                if post_conf["global_water_fixer"]["activate_outside_model"]:
+                    logger.info("Activate GlobalWaterFixer outside of model")
+                    flag_water_conserve = True
+                    opt_water = GlobalWaterFixer(post_conf)
+
+            if post_conf["global_energy_fixer"]["activate"]:
+                if post_conf["global_energy_fixer"]["activate_outside_model"]:
+                    logger.info("Activate GlobalEnergyFixer outside of model")
+                    flag_energy_conserve = True
+                    opt_energy = GlobalEnergyFixer(post_conf)
+        # ====================================================== #
 
         # set up a custom tqdm
         if not isinstance(trainloader.dataset, IterableDataset):
@@ -154,8 +205,40 @@ class Trainer(BaseTrainer):
                             # concat on var dimension
                             x = torch.cat((x, x_forcing_batch), dim=1)
 
+                        # --------------------------------------------- #
+                        # clamp
+                        if flag_clamp:
+                            x = torch.clamp(x, min=clamp_min, max=clamp_max)
+                        
                         # predict with the model
                         y_pred = self.model(x)
+
+                        # ============================================= #
+                        # postblock opts outside of model
+
+                        # backup init state
+                        if flag_mass_conserve:
+                            if forecast_step == 1:
+                                x_init = x.clone()
+
+                        # mass conserve using initialization as reference
+                        if flag_mass_conserve:
+                            input_dict = {"y_pred": y_pred, "x": x_init}
+                            input_dict = opt_mass(input_dict)
+                            y_pred = input_dict["y_pred"]
+
+                        # water conserve use previous step output as reference
+                        if flag_water_conserve:
+                            input_dict = {"y_pred": y_pred, "x": x}
+                            input_dict = opt_water(input_dict)
+                            y_pred = input_dict["y_pred"]
+
+                        # energy conserve use previous step output as reference
+                        if flag_energy_conserve:
+                            input_dict = {"y_pred": y_pred, "x": x}
+                            input_dict = opt_energy(input_dict)
+                            y_pred = input_dict["y_pred"]
+                        # ============================================= #
 
                         # only load y-truth data if we intend to backprop (default is every step gets grads computed
                         if forecast_step in backprop_on_timestep:
@@ -178,6 +261,11 @@ class Trainer(BaseTrainer):
                                 # concat on var dimension
                                 y = torch.cat((y, y_diag_batch), dim=1)
 
+                            # --------------------------------------------- #
+                            # clamp
+                            if flag_clamp:
+                                y = torch.clamp(y, min=clamp_min, max=clamp_max)
+                                
                             loss = criterion(y.to(y_pred.dtype), y_pred).mean()
 
                             # track the loss
@@ -225,7 +313,8 @@ class Trainer(BaseTrainer):
 
                 if distributed:
                     torch.distributed.barrier()
-
+                    
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=grad_max_norm)
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad()
@@ -337,6 +426,42 @@ class Trainer(BaseTrainer):
                 else len(valid_loader)
             )
 
+        # ------------------------------------------------------- #
+        # clamp to remove outliers
+        if conf["data"]["data_clamp"] is None:
+            flag_clamp = False
+        else:
+            flag_clamp = True
+            clamp_min = float(conf["data"]["data_clamp"][0])
+            clamp_max = float(conf["data"]["data_clamp"][1])
+        
+        # ====================================================== #
+        # postblock opts outside of model
+        post_conf = conf["model"]["post_conf"]
+        flag_mass_conserve = False
+        flag_water_conserve = False
+        flag_energy_conserve = False
+
+        if post_conf["activate"]:
+            if post_conf["global_mass_fixer"]["activate"]:
+                if post_conf["global_mass_fixer"]["activate_outside_model"]:
+                    logger.info("Activate GlobalMassFixer outside of model")
+                    flag_mass_conserve = True
+                    opt_mass = GlobalMassFixer(post_conf)
+
+            if post_conf["global_water_fixer"]["activate"]:
+                if post_conf["global_water_fixer"]["activate_outside_model"]:
+                    logger.info("Activate GlobalWaterFixer outside of model")
+                    flag_water_conserve = True
+                    opt_water = GlobalWaterFixer(post_conf)
+
+            if post_conf["global_energy_fixer"]["activate"]:
+                if post_conf["global_energy_fixer"]["activate_outside_model"]:
+                    logger.info("Activate GlobalEnergyFixer outside of model")
+                    flag_energy_conserve = True
+                    opt_energy = GlobalEnergyFixer(post_conf)
+        # ====================================================== #
+
         batch_group_generator = tqdm.tqdm(
             range(valid_batches_per_epoch), total=valid_batches_per_epoch, leave=True
         )
@@ -371,8 +496,39 @@ class Trainer(BaseTrainer):
                         # concat on var dimension
                         x = torch.cat((x, x_forcing_batch), dim=1)
 
-                    # logger.info('k = {}; x.shape() = {}'.format(forecast_step, x.shape))
+                    # --------------------------------------------- #
+                    # clamp
+                    if flag_clamp:
+                        x = torch.clamp(x, min=clamp_min, max=clamp_max)
+                        
                     y_pred = self.model(x)
+
+                    # ============================================= #
+                    # postblock opts outside of model
+
+                    # backup init state
+                    if flag_mass_conserve:
+                        if forecast_step == 1:
+                            x_init = x.clone()
+
+                    # mass conserve using initialization as reference
+                    if flag_mass_conserve:
+                        input_dict = {"y_pred": y_pred, "x": x_init}
+                        input_dict = opt_mass(input_dict)
+                        y_pred = input_dict["y_pred"]
+
+                    # water conserve use previous step output as reference
+                    if flag_water_conserve:
+                        input_dict = {"y_pred": y_pred, "x": x}
+                        input_dict = opt_water(input_dict)
+                        y_pred = input_dict["y_pred"]
+
+                    # energy conserve use previous step output as reference
+                    if flag_energy_conserve:
+                        input_dict = {"y_pred": y_pred, "x": x}
+                        input_dict = opt_energy(input_dict)
+                        y_pred = input_dict["y_pred"]
+                    # ============================================= #
 
                     # ================================================================================== #
                     # scope of reaching the final forecast_len
@@ -395,6 +551,11 @@ class Trainer(BaseTrainer):
                             # concat on var dimension
                             y = torch.cat((y, y_diag_batch), dim=1)
 
+                        # --------------------------------------------- #
+                        # clamp
+                        if flag_clamp:
+                            y = torch.clamp(y, min=clamp_min, max=clamp_max)
+                        
                         # ----------------------------------------------------------------------- #
                         # calculate rolling loss
                         loss = criterion(y.to(y_pred.dtype), y_pred).mean()

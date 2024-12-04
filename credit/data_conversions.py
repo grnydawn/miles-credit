@@ -72,9 +72,6 @@ class dataConverter:
         Args:
             pred: Tensor with shape (B, C, T, lat, lon)
             forecast_datetimes: array-like
-            lat: array-like
-            lon: array-like
-            conf: dictionary
         """
 
         # subset upper air and surface variables

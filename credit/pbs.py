@@ -57,7 +57,6 @@ def launch_script(config_file, script_path, launch=True):
             shell=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            cwd=save_loc,
         ).communicate()[0]
         jobid = jobid.decode("utf-8").strip("\n")
         logger.info(jobid)
@@ -183,7 +182,6 @@ def launch_script_mpi(config_file, script_path, launch=True, backend="nccl"):
             shell=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            cwd=save_loc,
         ).communicate()[0]
         jobid = jobid.decode("utf-8").strip("\n")
         logger.info(jobid)

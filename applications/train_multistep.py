@@ -31,7 +31,7 @@ from credit.datasets.era5_multistep import ERA5_and_Forcing_MultiStep
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler
 from credit.trainers import load_trainer
-from credit.parser import CREDIT_main_parser, training_data_check
+from credit.parser import credit_main_parser, training_data_check
 
 from credit.metrics import LatWeightedMetrics
 from credit.pbs import launch_script, launch_script_mpi
@@ -58,22 +58,24 @@ def load_dataset_and_sampler(
     world_size,
     rank,
     is_train=True,
-    seed=42,
 ):
     """
     Load the dataset and sampler for training or validation.
 
     Args:
         conf (dict): Configuration dictionary containing dataset and training parameters.
-        files (list): List of file paths for the dataset.
+        all_ERA_files (list): List of file paths for the dataset.
+        surface_files (list): List of file paths for the surface data.
+        dyn_forcing_files (list): List of file paths for the dyn_forcing data.
+        diagnostic_files (list): List of file paths for the diagnostic data.
         world_size (int): Number of processes participating in the job.
         rank (int): Rank of the current process.
         is_train (bool): Flag indicating whether the dataset is for training or validation.
-        seed (int, optional): Seed for random number generation. Defaults to 42.
 
     Returns:
         tuple: A tuple containing the dataset and the distributed sampler.
     """
+    seed = conf["seed"]
     # --------------------------------------------------- #
     # separate training set and validation set cases
     if is_train:
@@ -352,7 +354,7 @@ def main(rank, world_size, conf, backend, trial=False):
     torch.cuda.set_device(rank % torch.cuda.device_count())
 
     # Config settings
-    seed = 1000 if "seed" not in conf else conf["seed"]
+    seed = conf["seed"]
     seed_everything(seed)
 
     train_batch_size = conf["trainer"]["train_batch_size"]
@@ -685,11 +687,11 @@ if __name__ == "__main__":
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
     # ======================================================== #
-    if conf["data"]["scaler_type"] == "std_new" or "std_cached":
-        conf = CREDIT_main_parser(
-            conf, parse_training=True, parse_predict=False, print_summary=False
-        )
-        training_data_check(conf, print_summary=False)
+    # handling config args
+    conf = credit_main_parser(
+        conf, parse_training=True, parse_predict=False, print_summary=False
+    )
+    training_data_check(conf, print_summary=False)
     # ======================================================== #
 
     # Create directories if they do not exist and copy yml file
@@ -719,8 +721,8 @@ if __name__ == "__main__":
             # track hyperparameters and run metadata
             config=conf,
         )
-
-    seed = 1000 if "seed" not in conf else conf["seed"]
+        
+    seed = conf["seed"]
     seed_everything(seed)
 
     local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])

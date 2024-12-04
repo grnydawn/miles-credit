@@ -28,7 +28,7 @@ from credit.models.checkpoint import TorchFSDPCheckpointIO
 from credit.scheduler import update_on_batch, update_on_epoch
 from credit.trainers.utils import cleanup, accum_log
 from credit.trainers.base_trainer import BaseTrainer
-
+from credit.postblock import GlobalMassFixer, GlobalWaterFixer, GlobalEnergyFixer
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class Trainer(BaseTrainer):
         # training hyperparameters
         batches_per_epoch = conf["trainer"]["batches_per_epoch"]
         grad_accum_every = conf["trainer"]["grad_accum_every"]
-        history_len = conf["data"]["history_len"]
+        grad_max_norm = conf["trainer"]["grad_max_norm"]
         forecast_len = conf["data"]["forecast_len"]
         amp = conf["trainer"]["amp"]
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
@@ -68,6 +68,42 @@ class Trainer(BaseTrainer):
         ):
             scheduler.step()
 
+        # ------------------------------------------------------- #
+        # clamp to remove outliers
+        if conf["data"]["data_clamp"] is None:
+            flag_clamp = False
+        else:
+            flag_clamp = True
+            clamp_min = float(conf["data"]["data_clamp"][0])
+            clamp_max = float(conf["data"]["data_clamp"][1])
+        
+        # ====================================================== #
+        # postblock opts outside of model
+        post_conf = conf["model"]["post_conf"]
+        flag_mass_conserve = False
+        flag_water_conserve = False
+        flag_energy_conserve = False
+
+        if post_conf["activate"]:
+            if post_conf["global_mass_fixer"]["activate"]:
+                if post_conf["global_mass_fixer"]["activate_outside_model"]:
+                    logger.info("Activate GlobalMassFixer outside of model")
+                    flag_mass_conserve = True
+                    opt_mass = GlobalMassFixer(post_conf)
+
+            if post_conf["global_water_fixer"]["activate"]:
+                if post_conf["global_water_fixer"]["activate_outside_model"]:
+                    logger.info("Activate GlobalWaterFixer outside of model")
+                    flag_water_conserve = True
+                    opt_water = GlobalWaterFixer(post_conf)
+
+            if post_conf["global_energy_fixer"]["activate"]:
+                if post_conf["global_energy_fixer"]["activate_outside_model"]:
+                    logger.info("Activate GlobalEnergyFixer outside of model")
+                    flag_energy_conserve = True
+                    opt_energy = GlobalEnergyFixer(post_conf)
+        # ====================================================== #
+
         # set up a custom tqdm
         if not isinstance(trainloader.dataset, IterableDataset):
             batches_per_epoch = (
@@ -86,6 +122,7 @@ class Trainer(BaseTrainer):
         results_dict = defaultdict(list)
 
         for i, batch in batch_group_generator:
+            
             # training log
             logs = {}
             # loss
@@ -131,8 +168,36 @@ class Trainer(BaseTrainer):
                     # concat on var dimension
                     y = torch.cat((y, y_diag_batch), dim=1)
 
+                # --------------------------------------------- #
+                # clamp
+                if flag_clamp:
+                    x = torch.clamp(x, min=clamp_min, max=clamp_max)
+                    y = torch.clamp(y, min=clamp_min, max=clamp_max)
+                
                 # single step predict
                 y_pred = self.model(x)
+
+                # ============================================= #
+                # postblock opts outside of model
+
+                # mass conserve
+                if flag_mass_conserve:
+                    input_dict = {"y_pred": y_pred, "x": x}
+                    input_dict = opt_mass(input_dict)
+                    y_pred = input_dict["y_pred"]
+
+                # water conserve
+                if flag_water_conserve:
+                    input_dict = {"y_pred": y_pred, "x": x}
+                    input_dict = opt_water(input_dict)
+                    y_pred = input_dict["y_pred"]
+
+                # energy conserve
+                if flag_energy_conserve:
+                    input_dict = {"y_pred": y_pred, "x": x}
+                    input_dict = opt_energy(input_dict)
+                    y_pred = input_dict["y_pred"]
+                # ============================================= #
 
                 y = y.to(device=self.device, dtype=y_pred.dtype)
 
@@ -201,7 +266,8 @@ class Trainer(BaseTrainer):
 
             if distributed:
                 torch.distributed.barrier()
-
+                
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=grad_max_norm)
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad()
@@ -273,11 +339,6 @@ class Trainer(BaseTrainer):
         self.model.eval()
 
         valid_batches_per_epoch = conf["trainer"]["valid_batches_per_epoch"]
-        history_len = (
-            conf["data"]["valid_history_len"]
-            if "valid_history_len" in conf["data"]
-            else conf["history_len"]
-        )
         forecast_len = (
             conf["data"]["valid_forecast_len"]
             if "valid_forecast_len" in conf["data"]
@@ -296,6 +357,42 @@ class Trainer(BaseTrainer):
         ), 'Single-step trainer "trainerERA5_v2" is used. This trainer supports `forecast_len=0` only'
 
         results_dict = defaultdict(list)
+
+        # ------------------------------------------------------- #
+        # clamp to remove outliers
+        if conf["data"]["data_clamp"] is None:
+            flag_clamp = False
+        else:
+            flag_clamp = True
+            clamp_min = float(conf["data"]["data_clamp"][0])
+            clamp_max = float(conf["data"]["data_clamp"][1])
+        
+        # ====================================================== #
+        # postblock opts outside of model
+        post_conf = conf["model"]["post_conf"]
+        flag_mass_conserve = False
+        flag_water_conserve = False
+        flag_energy_conserve = False
+
+        if post_conf["activate"]:
+            if post_conf["global_mass_fixer"]["activate"]:
+                if post_conf["global_mass_fixer"]["activate_outside_model"]:
+                    logger.info("Activate GlobalMassFixer outside of model")
+                    flag_mass_conserve = True
+                    opt_mass = GlobalMassFixer(post_conf)
+
+            if post_conf["global_water_fixer"]["activate"]:
+                if post_conf["global_water_fixer"]["activate_outside_model"]:
+                    logger.info("Activate GlobalWaterFixer outside of model")
+                    flag_water_conserve = True
+                    opt_water = GlobalWaterFixer(post_conf)
+
+            if post_conf["global_energy_fixer"]["activate"]:
+                if post_conf["global_energy_fixer"]["activate_outside_model"]:
+                    logger.info("Activate GlobalEnergyFixer outside of model")
+                    flag_energy_conserve = True
+                    opt_energy = GlobalEnergyFixer(post_conf)
+        # ====================================================== #
 
         # set up a custom tqdm
         if isinstance(valid_loader.dataset, IterableDataset):
@@ -316,8 +413,6 @@ class Trainer(BaseTrainer):
 
         for i, batch in batch_group_generator:
             with torch.no_grad():
-                commit_loss = 0.0
-
                 if "x_surf" in batch:
                     # combine x and x_surf
                     # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon)
@@ -356,7 +451,35 @@ class Trainer(BaseTrainer):
                     # concat on var dimension
                     y = torch.cat((y, y_diag_batch), dim=1)
 
+                # --------------------------------------------- #
+                # clamp
+                if flag_clamp:
+                    x = torch.clamp(x, min=clamp_min, max=clamp_max)
+                    y = torch.clamp(y, min=clamp_min, max=clamp_max)
+                
                 y_pred = self.model(x)
+
+                # ============================================= #
+                # postblock opts outside of model
+
+                # mass conserve
+                if flag_mass_conserve:
+                    input_dict = {"y_pred": y_pred, "x": x}
+                    input_dict = opt_mass(input_dict)
+                    y_pred = input_dict["y_pred"]
+
+                # water conserve
+                if flag_water_conserve:
+                    input_dict = {"y_pred": y_pred, "x": x}
+                    input_dict = opt_water(input_dict)
+                    y_pred = input_dict["y_pred"]
+
+                # energy conserve
+                if flag_energy_conserve:
+                    input_dict = {"y_pred": y_pred, "x": x}
+                    input_dict = opt_energy(input_dict)
+                    y_pred = input_dict["y_pred"]
+                # ============================================= #
 
                 loss = criterion(y.to(y_pred.dtype), y_pred)
 

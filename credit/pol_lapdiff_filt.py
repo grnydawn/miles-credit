@@ -18,14 +18,6 @@ def polfiltT(D, inddo):
             perd = 1 / freq[1:]
             val_1d, ind_1d = find_nearest(perd, value=100)
             Ck2 = 2.0 * torch.abs(Yfft[0 : int(ts_Udo.size()[0] / 2) + 1]) ** 2
-            var_actual = torch.var(ts_Udo)
-            a = Yfft[torch.arange(0, int(ts_Udo.size()[0] / 2) + 1)]
-            s = torch.sum(
-                a[1::] * torch.conj(a[1::])
-            )  # on't want to include the mean, since this is not in the variance calculation
-            var_spectrum = np.real(
-                2 * s
-            )  # multiply by two in order to conserve variance
             A = Ck2 / torch.sum(Ck2)
             A[ind_1d:] = 0.0
             Zlow = torch.clone(Z)
@@ -47,14 +39,6 @@ def polfiltT(D, inddo):
                 perd = 1 / freq[1:]
                 val_1d, ind_1d = find_nearest(perd, value=100)
                 Ck2 = 2.0 * torch.abs(Yfft[0 : int(ts_Udo.size()[0] / 2) + 1]) ** 2
-                var_actual = torch.var(ts_Udo)
-                a = Yfft[torch.arange(0, int(ts_Udo.size()[0] / 2) + 1)]
-                s = torch.sum(
-                    a[1::] * torch.conj(a[1::])
-                )  # on't want to include the mean, since this is not in the variance calculation
-                var_spectrum = np.real(
-                    2 * s
-                )  # multiply by two in order to conserve variance
                 A = Ck2 / torch.sum(Ck2)
                 A[ind_1d:] = 0.0
                 Zlow = torch.clone(Z)
@@ -199,10 +183,10 @@ class Diffusion_and_Pole_Filter:
             : self.nlon
         ]
 
-        l = torch.arange(0, self.lmax).reshape(self.lmax, 1).double()
-        l = l.expand(self.lmax, self.mmax)
-        self.lap = (-l * (l + 1) / self.radius**2).to(self.device)
-        self.invlap = (-(self.radius**2) / l / (l + 1)).to(self.device)
+        l_arr = torch.arange(0, self.lmax).reshape(self.lmax, 1).double()
+        l_arr = l_arr.expand(self.lmax, self.mmax)
+        self.lap = (-l_arr * (l_arr + 1) / self.radius**2).to(self.device)
+        self.invlap = (-(self.radius**2) / l_arr / (l_arr + 1)).to(self.device)
         self.invlap[0] = 0.0  # Adjusting the first element to avoid division by zero
         self.coriolis = 2 * self.omega * torch.sin(self.lats).reshape(self.nlat, 1)
 
@@ -265,10 +249,7 @@ class Diffusion_and_Pole_Filter:
         )
 
         if len(chispec.shape) == 1:
-            nt = 1
             chispec = torch.reshape(chispec, ((ntrunc + 1) * (ntrunc + 2) // 2, 1))
-        else:
-            nt = chispec.shape[1]
 
         divspec2 = self.lap * chispec
 
@@ -331,15 +312,6 @@ class Diffusion_and_Pole_Filter:
             match those of the V component.
             V (Tensor): The y-component of the velocity or vector field. This tensor complements the U component
             by representing the second dimension of the field.
-            ind_pol (list/int): Index or indices specifying the poles to be filtered out from
-            the vector field. These indices target specific features or regions within the
-            field for suppression.
-            device (torch.device): The computational device (CPU or GPU) where the operation
-            will be performed. This parameter ensures that tensors are appropriately allocated
-            for efficient computation.
-            sigmoid_ramp_array (Tensor): An array used to modulate the intensity of the Laplacian
-            correction applied to the vector field. This array typically represents a spatially
-            varying factor that adjusts the correction strength across different regions of the field.
             substeps (int): The number of iterations for the correction process. This parameter
             controls the depth of the refinement process, with more substeps leading to a more
             pronounced adjustment of the vector field.
@@ -392,7 +364,7 @@ class Diffusion_and_Pole_Filter:
 
         Args:
             T (Tensor): scalar-component of the velocity or vector field.
-            ind_pol (list/int): Index/indices specifying poles for the filtering process.
+            substeps: number of substeps
 
         Returns:
             Tuple of Tensors: The modified T components of the scalar field.

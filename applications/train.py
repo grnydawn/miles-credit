@@ -30,7 +30,7 @@ from credit.loss import VariableTotalLoss2D
 from credit.data import ERA5Dataset, ERA5_and_Forcing_Dataset, Dataset_BridgeScaler
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
-from credit.parser import CREDIT_main_parser, training_data_check
+from credit.parser import credit_main_parser, training_data_check
 from credit.trainers import load_trainer
 
 from credit.metrics import LatWeightedMetrics
@@ -53,7 +53,7 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
 
-def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
+def load_dataset_and_sampler(conf, files, world_size, rank, is_train):
     """
     Load the dataset and sampler for training or validation.
 
@@ -63,13 +63,13 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
         world_size (int): Number of processes participating in the job.
         rank (int): Rank of the current process.
         is_train (bool): Flag indicating whether the dataset is for training or validation.
-        seed (int, optional): Seed for random number generation. Defaults to 42.
 
     Returns:
         tuple: A tuple containing the dataset and the distributed sampler.
     """
 
     # convert $USER to the actual user name
+    seed = conf["seed"]
     conf["save_loc"] = os.path.expandvars(conf["save_loc"])
 
     # number of previous lead time inputs
@@ -141,15 +141,14 @@ def load_dataset_and_sampler(conf, files, world_size, rank, is_train, seed=42):
 
 
 def load_dataset_and_sampler_zscore_only(
-    conf: dict,
-    all_ERA_files: list,
-    surface_files: list,
-    dyn_forcing_files: list,
-    diagnostic_files: list,
-    world_size: int,
-    rank: int,
-    is_train: bool,
-    seed: int = 42,
+    conf,
+    all_ERA_files,
+    surface_files,
+    dyn_forcing_files,
+    diagnostic_files,
+    world_size,
+    rank,
+    is_train,
 ):
     """
     Load the Z-score only dataset and sampler for training or validation.
@@ -163,12 +162,11 @@ def load_dataset_and_sampler_zscore_only(
         world_size (int): Number of processes participating in the job.
         rank (int): Rank of the current process.
         is_train (bool): Flag indicating whether the dataset is for training or validation.
-        seed (int, optional): Seed for random number generation. Defaults to 42.
 
     Returns:
         tuple: A tuple containing the dataset and the distributed sampler.
     """
-
+    seed = conf["seed"]
     # --------------------------------------------------- #
     # separate training set and validation set cases
     if is_train:
@@ -460,7 +458,7 @@ def main(rank, world_size, conf, backend, trial=False):
     torch.cuda.set_device(rank % torch.cuda.device_count())
 
     # Config settings
-    seed = 1000 if "seed" not in conf else conf["seed"]
+    seed = conf["seed"]
     seed_everything(seed)
 
     train_batch_size = conf["trainer"]["train_batch_size"]
@@ -753,7 +751,7 @@ class Objective(BaseObjective):
 
 
 if __name__ == "__main__":
-    description = "Train a global AI NWP model on a reanalysis dataset."
+    description = "Train a segmengation model on a hologram data set"
     parser = ArgumentParser(description=description)
     parser.add_argument(
         "-c",
@@ -808,11 +806,11 @@ if __name__ == "__main__":
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
     # ======================================================== #
-    if conf["data"]["scaler_type"] == "std_new" or "std_cached":
-        conf = CREDIT_main_parser(
-            conf, parse_training=True, parse_predict=False, print_summary=False
-        )
-        training_data_check(conf, print_summary=False)
+    # handling config args
+    conf = credit_main_parser(
+        conf, parse_training=True, parse_predict=False, print_summary=False
+    )
+    training_data_check(conf, print_summary=False)
     # ======================================================== #
 
     # Create directories if they do not exist and copy yml file

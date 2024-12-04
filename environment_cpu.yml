@@ -18,7 +18,6 @@ dependencies:
   - pytorch
   - torchvision
   - cpuonly
-  - wandb
   - pyyaml
   - cartopy
   - dask
@@ -44,4 +43,6 @@ dependencies:
     - torch-harmonics
     - torch_geometric
     - sphinx-autoapi
+    - timm
+    - wandb
     - .
