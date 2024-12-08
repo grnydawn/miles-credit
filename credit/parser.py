@@ -318,6 +318,14 @@ def credit_main_parser(
     # --------------------------------------------------------- #
     # conf['model'] section
 
+    # spectral norm default to false
+    conf["model"].setdefault("use_spectral_norm", False)
+    
+    if (conf["model"]["type"] == "fuxi") and (conf["model"]["use_spectral_norm"] is False):
+        warnings.warn(
+                "FuXi may not work with 'use_spectral_norm: False' in fsdp training."
+            )
+    
     # use interpolation
     if "interp" not in conf["model"]:
         conf["model"]["interp"] = True
@@ -1202,7 +1210,7 @@ def training_data_check(conf, print_summary=False):
     # comparing all_vars against mean, std files
     ds_mean = get_forward_data(conf["data"]["mean_path"])
     varname_ds_mean = list(ds_mean.keys())
-
+    
     assert all(
         varname in varname_ds_mean for varname in all_vars
     ), "Variables are not fully covered by conf['data']['mean_path']"
@@ -1213,7 +1221,7 @@ def training_data_check(conf, print_summary=False):
     assert all(
         varname in varname_ds_std for varname in all_vars
     ), "Variables are not fully covered by conf['data']['std_path']"
-
+    
     if print_summary:
         print("Variable name checking passed")
         print("All input files and zscore files have the required variables")
@@ -1350,6 +1358,15 @@ def training_data_check(conf, print_summary=False):
         coord_name in coord_upper_air for coord_name in coord_latlon
     ), "conf['loss']['latitude_weights'] file coordinate names mismatched with upper-air files"
 
+
+    # model level consistency final checks
+    N_level_mean = len(ds_mean[varnames_upper_air[0]]
+    #N_level_data = conf["data"]["levels"]
+    N_level_model = conf["model"]["levels"]
+
+    assert (N_level_mean == N_level_model), (
+        "number of upper air levels mismatched between model config {} and input data {}".format(N_level_model, N_level_mean)
+    
     if print_summary:
         print("Coordinate checking passed")
         print(
@@ -1380,6 +1397,7 @@ def predict_data_check(conf, print_summary=False):
     # a rough estimate of how manys years of initializations are needed
     # !!! Can be improved !!!
     if "duration" in conf["predict"]["forecasts"]:
+        assert "start_year" in conf["predict"]["forecasts"], "Must specify which year to start predict."
         N_years = conf["predict"]["forecasts"]["duration"] // 365
         N_years = N_years + 1
     else:
@@ -1399,11 +1417,9 @@ def predict_data_check(conf, print_summary=False):
         file for file in all_ERA_files if any(year in file for year in pred_years)
     ]
 
-    for i_year, year in enumerate(pred_years):
-        assert (
-            year in pred_ERA_files[i_year]
-        ), "[Year {}] is missing from [upper-air files {}]".format(
-            year, conf["data"]["save_loc"]
+    if len(pred_years) != len(pred_ERA_files[i_year]):
+        warnings.warn(
+            "Provided initializations in upper air files may not cover all forecasted dates"
         )
 
     ## surface files
@@ -1414,11 +1430,9 @@ def predict_data_check(conf, print_summary=False):
             file for file in surface_files if any(year in file for year in pred_years)
         ]
 
-        for i_year, year in enumerate(pred_years):
-            assert (
-                year in pred_surface_files[i_year]
-            ), "[Year {}] is missing from [surface files {}]".format(
-                year, conf["data"]["save_loc_surface"]
+        if len(pred_years) != len(pred_surface_files[i_year]):
+            warnings.warn(
+                "Provided initializations in surface files may not cover all forecasted dates"
             )
 
     ## dynamic forcing files
@@ -1431,11 +1445,9 @@ def predict_data_check(conf, print_summary=False):
             if any(year in file for year in pred_years)
         ]
 
-        for i_year, year in enumerate(pred_years):
-            assert (
-                year in pred_dyn_forcing_files[i_year]
-            ), "[Year {}] is missing from [dynamic forcing files {}]".format(
-                year, conf["data"]["save_loc_dynamic_forcing"]
+        if len(pred_years) != len(pred_dyn_forcing_files[i_year]):
+            warnings.warn(
+                "Provided initializations in surface files may not cover all forecasted dates"
             )
 
     if print_summary:
