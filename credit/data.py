@@ -1136,9 +1136,6 @@ class ERA5_Dataset_Distributed(torch.utils.data.Dataset):
 class Predict_Dataset_Iter(torch.utils.data.IterableDataset):
     """
     Same as ERA5_and_Forcing_Dataset() but work with rollout_to_netcdf_new.py
-
-    *ksha: dynamic forcing has been added to the rollout-only Dataset, but it has
-    not been tested. Once the new tsi is ready, this dataset class will be tested
     """
 
     def __init__(
