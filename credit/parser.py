@@ -824,8 +824,12 @@ def credit_main_parser(
         if "grad_accum_every" not in conf["trainer"]:
             conf["trainer"]["grad_accum_every"] = 1
 
-        if "grad_max_norm" not in conf["trainer"]:
-            conf["trainer"]["grad_max_norm"] = 1.0
+        # gradient clipping
+        conf["trainer"].setdefault("grad_max_norm", None)
+        
+        if conf["trainer"]["grad_max_norm"] == 0:
+            conf["trainer"]["grad_max_norm"] = None
+            
 
     # --------------------------------------------------------- #
     # conf['loss'] section
