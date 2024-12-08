@@ -1364,7 +1364,8 @@ def training_data_check(conf, print_summary=False):
     N_level_model = conf["model"]["levels"]
 
     assert (N_level_mean == N_level_model), (
-        "number of upper air levels mismatched between model config {} and input data {}".format(N_level_model, N_level_mean)
+        "number of upper air levels mismatched between model config {} and input data {}".format(
+            N_level_model, N_level_mean))
     
     if print_summary:
         print("Coordinate checking passed")
