@@ -1360,8 +1360,7 @@ def training_data_check(conf, print_summary=False):
 
 
     # model level consistency final checks
-    N_level_mean = len(ds_mean[varnames_upper_air[0]]
-    #N_level_data = conf["data"]["levels"]
+    N_level_mean = len(ds_mean[varnames_upper_air[0]].values)
     N_level_model = conf["model"]["levels"]
 
     assert (N_level_mean == N_level_model), (
