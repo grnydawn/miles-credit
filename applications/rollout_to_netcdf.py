@@ -284,7 +284,14 @@ def predict(rank, world_size, conf, p):
             else:
                 # no y_surf
                 y = reshape_only(batch["y"]).to(device).float()
-
+                
+            # adding diagnostic vars to y
+            if "y_diag" in batch:
+                y_diag_batch = (
+                    batch["y_diag"].to(device).permute(0, 2, 1, 3, 4)
+                )
+                y = torch.cat((y, y_diag_batch), dim=1).to(device).float()
+                
             # -------------------------------------------------------------------------------------- #
             # start prediction
 
