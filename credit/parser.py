@@ -751,20 +751,6 @@ def credit_main_parser(
             "train_batch_size" in conf["trainer"]
         ), "Training set batch size ('train_batch_size') is missing from onf['trainer']"
 
-        # ------------------------------------------------------------------------- #
-        # fsdp works with train_batch_size: 1 only
-        if (
-            conf["trainer"]["mode"] == "fsdp"
-            and conf["trainer"]["train_batch_size"] > 1
-        ):
-            warnings.warn("'mode: fsdp' is compatible with 'train_batch_size: 1' only ")
-        if (
-            conf["trainer"]["mode"] == "fsdp"
-            and conf["trainer"]["valid_batch_size"] > 1
-        ):
-            warnings.warn("'mode: fsdp' is compatible with 'valid_batch_size: 1' only ")
-        # ------------------------------------------------------------------------- #
-
         if "load_scaler" not in conf["trainer"]:
             conf["trainer"]["load_scaler"] = False
 
