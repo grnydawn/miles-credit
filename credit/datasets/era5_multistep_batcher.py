@@ -2,223 +2,17 @@ import torch
 import logging
 import numpy as np
 from functools import partial
-from typing import Any, Callable, Dict, List, Optional, Tuple
 from credit.data import (
     drop_var_from_dataset,
-    get_forward_data,
-    Sample,
-    find_key_for_number,
-    extract_month_day_hour,
-    find_common_indices,
+    get_forward_data
 )
+from credit.datasets.era5_multistep import worker
 
 
 logger = logging.getLogger(__name__)
 
 
-def worker(
-    tuple_index: Tuple[int, int],
-    ERA5_indices: Dict[str, List[int]],
-    all_files: List[Any],
-    surface_files: Optional[List[Any]],
-    dyn_forcing_files: Optional[List[Any]],
-    diagnostic_files: Optional[List[Any]],
-    xarray_forcing: Optional[Any],
-    xarray_static: Optional[Any],
-    history_len: int,
-    forecast_len: int,
-    skip_periods: int,
-    transform: Optional[Callable],
-) -> Dict[str, Any]:
-    """
-    Processes a given index to extract and transform data for a specific time slice.
-
-    Parameters:
-    - tuple_index (Tuple[int, int]): Tuple containing the current index and sub-index for processing.
-    - ERA5_indices (Dict[str, List[int]]): Dictionary containing ERA5 indices metadata.
-    - all_files (List[Any]): List of xarray datasets containing upper air data.
-    - surface_files (Optional[List[Any]]): List of xarray datasets containing surface data.
-    - dyn_forcing_files (Optional[List[Any]]): List of xarray datasets containing dynamic forcing data.
-    - diagnostic_files (Optional[List[Any]]): List of xarray datasets containing diagnostic data.
-    - history_len (int): Length of the history sequence.
-    - forecast_len (int): Length of the forecast sequence.
-    - skip_periods (int): Number of periods to skip between samples.
-    - xarray_forcing (Optional[Any]): xarray dataset containing forcing data.
-    - xarray_static (Optional[Any]): xarray dataset containing static data.
-
-    - transform (Optional[Callable]): Transformation function to apply to the data.
-
-    Returns:
-    - Dict[str, Any]: A dictionary containing historical ERA5 images, target ERA5 images, datetime index, and additional information.
-    """
-
-    index, ind_start_current_step = tuple_index
-
-    try:
-        # select the ind_file based on the iter index
-        ind_file = find_key_for_number(ind_start_current_step, ERA5_indices)
-
-        # get the ind within the current file
-        ind_start = ERA5_indices[ind_file][1]
-        ind_start_in_file = ind_start_current_step - ind_start
-
-        # handle out-of-bounds
-        ind_largest = len(all_files[int(ind_file)]["time"]) - (
-            history_len + forecast_len + 1
-        )
-        if ind_start_in_file > ind_largest:
-            ind_start_in_file = ind_largest
-
-        # ========================================================================== #
-        # subset xarray on time dimension & load it to the memory
-
-        ind_end_in_file = ind_start_in_file + history_len + forecast_len
-
-        # ERA5_subset: a xarray dataset that contains training input and target (for the current batch)
-        ERA5_subset = all_files[int(ind_file)].isel(
-            time=slice(ind_start_in_file, ind_end_in_file + 1)
-        )
-
-        if surface_files:
-            # subset surface variables
-            surface_subset = surface_files[int(ind_file)].isel(
-                time=slice(ind_start_in_file, ind_end_in_file + 1)
-            )
-
-            # merge upper-air and surface here:
-            ERA5_subset = ERA5_subset.merge(surface_subset)
-
-        # ==================================================== #
-        # split ERA5_subset into training inputs and targets
-        #   + merge with forcing and static
-
-        # the ind_end of the ERA5_subset
-        # ind_end_time = len(ERA5_subset['time'])
-
-        # datetiem information as int number (used in some normalization methods)
-        datetime_as_number = ERA5_subset.time.values.astype("datetime64[s]").astype(int)
-
-        # ==================================================== #
-        # xarray dataset as input
-        # historical_ERA5_images: the final input
-
-        historical_ERA5_images = ERA5_subset.isel(
-            time=slice(0, history_len, skip_periods)
-        ).load()  # <-- load into memory
-
-        # ========================================================================== #
-        # merge dynamic forcing inputs
-        if dyn_forcing_files:
-            dyn_forcing_subset = dyn_forcing_files[int(ind_file)].isel(
-                time=slice(ind_start_in_file, ind_end_in_file + 1)
-            )
-            dyn_forcing_subset = dyn_forcing_subset.isel(
-                time=slice(0, history_len, skip_periods)
-            ).load()  # <-- load into memory
-
-            historical_ERA5_images = historical_ERA5_images.merge(dyn_forcing_subset)
-
-        # ========================================================================== #
-        # merge forcing inputs
-        if xarray_forcing:
-            # =============================================================================== #
-            # matching month, day, hour between forcing and upper air [time]
-            # this approach handles leap year forcing file and non-leap-year upper air file
-            month_day_forcing = extract_month_day_hour(np.array(xarray_forcing["time"]))
-            month_day_inputs = extract_month_day_hour(
-                np.array(historical_ERA5_images["time"])
-            )  # <-- upper air
-            # indices to subset
-            ind_forcing, _ = find_common_indices(month_day_forcing, month_day_inputs)
-            forcing_subset_input = xarray_forcing.isel(
-                time=ind_forcing
-            ).load()  # <-- load into memory
-            # forcing and upper air have different years but the same mon/day/hour
-            # safely replace forcing time with upper air time
-            forcing_subset_input["time"] = historical_ERA5_images["time"]
-            # =============================================================================== #
-
-            # merge
-            historical_ERA5_images = historical_ERA5_images.merge(forcing_subset_input)
-
-        # ========================================================================== #
-        # merge static inputs
-        if xarray_static:
-            # expand static var on time dim
-            N_time_dims = len(ERA5_subset["time"])
-            static_subset_input = xarray_static.expand_dims(dim={"time": N_time_dims})
-            # assign coords 'time'
-            static_subset_input = static_subset_input.assign_coords(
-                {"time": ERA5_subset["time"]}
-            )
-
-            # slice + load to the GPU
-            static_subset_input = static_subset_input.isel(
-                time=slice(0, history_len, skip_periods)
-            ).load()  # <-- load into memory
-
-            # update
-            static_subset_input["time"] = historical_ERA5_images["time"]
-
-            # merge
-            historical_ERA5_images = historical_ERA5_images.merge(static_subset_input)
-
-        # ==================================================== #
-        # xarray dataset as target
-        # target_ERA5_images: the final target
-
-        # get the next forecast step
-        target_ERA5_images = ERA5_subset.isel(
-            time=slice(history_len, history_len + skip_periods, skip_periods)
-        ).load()  # <-- load into memory
-
-        # merge diagnoisc input here:
-        if diagnostic_files:
-            # subset diagnostic variables
-            diagnostic_subset = diagnostic_files[int(ind_file)].isel(
-                time=slice(ind_start_in_file, ind_end_in_file + 1)
-            )
-
-            # get the next forecast step
-            diagnostic_subset = diagnostic_subset.isel(
-                time=slice(history_len, history_len + skip_periods, skip_periods)
-            ).load()  # <-- load into memory
-
-            # merge into the target dataset
-            target_ERA5_images = target_ERA5_images.merge(diagnostic_subset)
-
-        # create a dict object with input/output tensors
-        sample = Sample(
-            historical_ERA5_images=historical_ERA5_images,
-            target_ERA5_images=target_ERA5_images,
-            datetime_index=datetime_as_number,
-        )
-
-        # data normalization
-        if transform:
-            sample = transform(sample)
-
-        sample["index"] = index
-        # stop_forecast = ((ind_start_current_step - index) == forecast_len)
-        # sample['forecast_step'] = ind_start_current_step - index + 1
-        # sample['stop_forecast'] = stop_forecast
-        sample["datetime"] = [
-            int(
-                historical_ERA5_images.time.values[0]
-                .astype("datetime64[s]")
-                .astype(int)
-            ),
-            int(target_ERA5_images.time.values[0].astype("datetime64[s]").astype(int)),
-        ]
-
-    except Exception as e:
-        logger.error(f"Error processing index {tuple_index}: {e}")
-        raise
-
-    return sample
-
-
-class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
+class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
     """
     A Pytorch Dataset class that works on:
         - upper-air variables (time, level, lat, lon)
@@ -250,8 +44,8 @@ class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
         rank=0,
         world_size=1,
         skip_periods=None,
-        one_shot=None,
         max_forecast_len=None,
+        batch_size=1
     ):
         """
         Initialize the ERA5_and_Forcing_Dataset
@@ -274,8 +68,6 @@ class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
         - transform (callable, optional): Transformation function to apply to the data.
         - seed (int, optional): Random seed for reproducibility. Default is 42.
         - skip_periods (int, optional): Number of periods to skip between samples.
-        - one_shot(bool, optional): Whether to return all states or just
-                                    the final state of the training target. Default is None
         - max_forecast_len (int, optional): Maximum length of the forecast sequence.
         - shuffle (bool, optional): Whether to shuffle the data. Default is True.
 
@@ -296,9 +88,6 @@ class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
         self.skip_periods = skip_periods
         if self.skip_periods is None:
             self.skip_periods = 1
-
-        # one shot option
-        self.one_shot = one_shot
 
         # total number of needed forecast lead times
         self.total_seq_len = self.history_len + self.forecast_len
@@ -461,9 +250,33 @@ class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
 
         self.total_length = len(self.ERA5_indices)
         self.current_epoch = None
-        self.forecast_step_count = 0
         self.current_index = None
         self.initial_index = None
+
+        # Initialize state variables for batch management
+        self.batch_size = batch_size
+        self.batch_indices = None  # To track initial indices for each batch item
+        self.time_steps = None  # Tracks time steps for each batch index
+        self.forecast_step_counts = None  # Track forecast step counts for each batch item
+        self.initial_indices = None  # Tracks the initial index for each forecast item in the batch
+
+        # Initialize batch once when the dataset is created
+        self.initialize_batch()
+
+    def initialize_batch(self):
+        """
+        Initializes random starting indices for each batch item and resets their time steps and forecast counts.
+        This must be called before accessing the dataset or when resetting the batch.
+        """
+        # Randomly sample indices for the batch
+        self.batch_indices = np.random.choice(
+            range(self.__len__() - self.forecast_len),
+            size=self.batch_size,
+            replace=False,
+        )
+        self.time_steps = [0 for idx in self.batch_indices]  # Initialize time to 0 for each item
+        self.forecast_step_counts = [0 for idx in self.batch_indices]  # Initialize forecast step counts
+        self.initial_indices = list(self.batch_indices)  # Track initial indices for each batch item
 
     def __post_init__(self):
         # Total sequence length of each sample.
@@ -478,47 +291,81 @@ class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
 
     def set_epoch(self, epoch):
         self.current_epoch = epoch
-        self.forecast_step_count = 0
         self.current_index = None
         self.initial_index = None
 
-    def __getitem__(self, index):
-        if (self.forecast_step_count == self.forecast_len + 1) or (
-            self.current_index is None
-        ):
-            # We've completed the last forecast or we're starting for the first time
-            # Start a new forecast using the sampler index
-            self.current_index = index  # self._get_random_start_index()
-            self.forecast_step_count = 0
-            index = self.current_index
-            self.initial_index = self.current_index
-        else:
-            # Ignore the sampler index and continue the forecast
-            self.current_index += 1
-            index = self.current_index
+    def __getitem__(self, _):
+        """
+        Fetches the current forecast step data for each item in the batch.
+        Resets items when their forecast length is exceeded.
+        """
+        batch = {}
 
-        # Worker process
-        sample = self.worker((self.initial_index, index))
+        # If the forecast_step_count exceeds forecast_len, reset the item
+        # If one exceeds, they all exceed and all neet reset
+        if self.forecast_step_counts[0] == self.forecast_len + 1:
+            # Get a new starting index for this item (randomly selected)
+            self.initialize_batch()
 
-        # assign sample index
-        sample["forecast_step"] = self.forecast_step_count + 1
-        sample["index"] = index
-        sample["stop_forecast"] = self.forecast_step_count == self.forecast_len
+        for k, idx in enumerate(self.batch_indices):
+            # Get the current time step for this batch item
+            current_t = self.time_steps[k]
+            initial_idx = self.initial_indices[k]  # Correctly find the initial index
+            index_pair = (initial_idx, idx + current_t)  # Correctly construct the index_pair
 
-        # update the step count
-        self.forecast_step_count += 1
+            # Fetch the current sample for this batch item
+            sample = self.worker(index_pair)
 
-        return sample
+            # Add index to the sample
+            sample["index"] = idx
+
+            # Concatenate data by common keys in sample
+            for key, value in sample.items():
+                if isinstance(value, np.ndarray):  # If it's a numpy array
+                    value = torch.tensor(value)
+                elif isinstance(value, np.int64):  # If it's a numpy scalar (int64)
+                    value = torch.tensor(value, dtype=torch.int64)
+                elif isinstance(value, (int, float)):  # If it's a native Python scalar (int/float)
+                    value = torch.tensor(value, dtype=torch.float32)  # Ensure tensor is float for scalar
+                elif not isinstance(value, torch.Tensor):  # If it's not already a tensor
+                    value = torch.tensor(value)  # Ensure conversion to tensor
+
+                # Convert zero-dimensional tensor (scalar) to 1D tensor
+                if value.ndimension() == 0:
+                    value = value.unsqueeze(0)  # Unsqueeze to make it a 1D tensor
+
+                if key not in batch:
+                    batch[key] = value  # Initialize the key in the batch dictionary
+                else:
+                    batch[key] = torch.cat((batch[key], value), dim=0)  # Concatenate values along the batch dimension
+
+            # Increment time steps and forecast step counts for this batch item
+            self.time_steps[k] += 1
+            self.forecast_step_counts[k] += 1
+
+        batch["forecast_step"] = self.forecast_step_counts[0]
+        batch["stop_forecast"] = batch["forecast_step"] == self.forecast_len + 1
+        batch["datetime"] = batch["datetime"].view(-1, self.batch_size)  # reshape
+
+        return batch
 
 
 if __name__ == "__main__":
 
+    import logging
     import torch
     import yaml
     from torch.utils.data import DataLoader
     from credit.transforms import load_transforms
     from credit.parser import credit_main_parser, training_data_check
     from credit.datasets import setup_data_loading, set_globals
+
+    # Set up the logger
+    logging.basicConfig(
+        level=logging.INFO,  # Set the logging level
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger(__name__)  # Create a logger with the module name
 
     with open(
         "/glade/derecho/scratch/schreck/repos/miles-credit/production/multistep/wxformer_6h/model.yml"
@@ -529,15 +376,19 @@ if __name__ == "__main__":
         conf, parse_training=True, parse_predict=False, print_summary=False
     )
     training_data_check(conf, print_summary=False)
-
     data_config = setup_data_loading(conf)
 
-    data_config["forecast_len"] = 6
     batch_size = 2
+    data_config["forecast_len"] = 6
 
     set_globals(data_config, namespace=globals())
 
-    dataset_multi = ERA5_and_Forcing_MultiStep(
+    # globals().update(data_config)
+    # for key, value in data_config.items():
+    #     globals()[key] = value
+    #     logger.info(f"Creating global variable in the namespace: {key}")
+
+    dataset_multi = ERA5_MultiStep_Batcher(
         varname_upper_air=data_config['varname_upper_air'],
         varname_surface=data_config['varname_surface'],
         varname_dyn_forcing=data_config['varname_dyn_forcing'],
@@ -553,15 +404,15 @@ if __name__ == "__main__":
         history_len=data_config['history_len'],
         forecast_len=data_config['forecast_len'],
         skip_periods=data_config['skip_periods'],
-        one_shot=False,
         max_forecast_len=data_config['max_forecast_len'],
-        transform=load_transforms(conf)
+        transform=load_transforms(conf),
+        batch_size=batch_size
     )
 
     dataloader = DataLoader(
         dataset_multi,
         batch_size=1,  # Adjust the batch size as needed
-        shuffle=True,   # Shuffle the dataset if needed
+        shuffle=False,   # Shuffle the dataset if needed
         num_workers=1,  # Number of subprocesses to use for data loading (adjust as needed)
         drop_last=True,  # Drop the last incomplete batch if not divisible by batch_size,
         prefetch_factor=4
