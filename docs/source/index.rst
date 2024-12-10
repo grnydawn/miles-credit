@@ -6,7 +6,7 @@
 MILES-CREDIT documentation!
 ========================================
 
-The Community Research Earth Digital Intelligent Twin (CREDIT) project is a
+The NSF NCAR Community Research Earth Digital Intelligent Twin (CREDIT) project is a
 research platform developed by the NSF NCAR Machine Integration and Learning
 for Earth Systems, or `MILES <https://ncar.github.io/miles>`_ group. CREDIT
 allows users to train, run, and evaluate AI numerical weather prediction models.
@@ -17,7 +17,7 @@ allows users to train, run, and evaluate AI numerical weather prediction models.
    :caption: Contents:
 
    Getting Started <getting-started.md>
-
+   Contributing <contrib.rst>
 
 
 Indices and tables

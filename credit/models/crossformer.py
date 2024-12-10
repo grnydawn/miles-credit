@@ -345,31 +345,62 @@ class Transformer(nn.Module):
 class CrossFormer(BaseModel):
     def __init__(
         self,
-        image_height=640,
-        patch_height=1,
-        image_width=1280,
-        patch_width=1,
-        frames=2,
-        channels=4,
-        surface_channels=7,
-        input_only_channels=3,
-        output_only_channels=0,
-        levels=15,
-        dim=(64, 128, 256, 512),
-        depth=(2, 2, 8, 2),
-        dim_head=32,
-        global_window_size=(5, 5, 2, 1),
-        local_window_size=10,
-        cross_embed_kernel_sizes=((4, 8, 16, 32), (2, 4), (2, 4), (2, 4)),
-        cross_embed_strides=(4, 2, 2, 2),
-        attn_dropout=0.0,
-        ff_dropout=0.0,
-        use_spectral_norm=True,
-        interp=True,
-        padding_conf=None,
-        post_conf=None,
+        image_height: int = 640,
+        patch_height: int = 1,
+        image_width: int = 1280,
+        patch_width: int = 1,
+        frames: int = 2,
+        channels: int = 4,
+        surface_channels: int = 7,
+        input_only_channels: int = 3,
+        output_only_channels: int = 0,
+        levels: int = 15,
+        dim: tuple = (64, 128, 256, 512),
+        depth: tuple = (2, 2, 8, 2),
+        dim_head: int = 32,
+        global_window_size: tuple = (5, 5, 2, 1),
+        local_window_size: int = 10,
+        cross_embed_kernel_sizes: tuple = ((4, 8, 16, 32), (2, 4), (2, 4), (2, 4)),
+        cross_embed_strides: tuple = (4, 2, 2, 2),
+        attn_dropout: float = 0.0,
+        ff_dropout: float = 0.0,
+        use_spectral_norm: bool = True,
+        interp: bool = True,
+        padding_conf: dict = None,
+        post_conf: dict = None,
         **kwargs,
     ):
+        """
+        CrossFormer is the base architecture for the WXFormer model. It uses convolutions and long and short distance
+        attention layers in the encoder layer and then uses strided transpose convolution blocks for the decoder
+        layer.
+
+        Args:
+            image_height (int): number of grid cells in the south-north direction.
+            patch_height (int): number of grid cells within each patch in the south-north direction.
+            image_width (int): number of grid cells in the west-east direction.
+            patch_width (int): number of grid cells within each patch in the west-east direction.
+            frames (int): number of time steps being used as input
+            channels (int): number of 3D variables. Default is 4 for our ERA5 configuration (U, V, T, and Q)
+            surface_channels (int): number of surface (single-level) variables.
+            input_only_channels (int): number of variables only used as input to the ML model (e.g., forcing variables)
+            output_only_channels (int):number of variables that are only output by the model (e.g., diagnostic variables).
+            levels (int): number of vertical levels for each 3D variable (should be the same across frames)
+            dim (tuple): output dimensions of hidden state of each conv/transformer block in the encoder
+            depth (tuple): number of attention blocks per encoder layer
+            dim_head (int): dimension of each attention head.
+            global_window_size (tuple): number of grid cells between cells in long range attention
+            local_window_size (tuple): number of grid cells between cells in short range attention
+            cross_embed_kernel_sizes (tuple): width of the cross embed kernels in each layer
+            cross_embed_strides (tuple): stride of convolutions in each block
+            attn_dropout (float): dropout rate for attention layout
+            ff_dropout (float): dropout rate for feedforward layers.
+            use_spectral_norm (bool): whether to use spectral normalization
+            interp (bool): whether to use interpolation
+            padding_conf (dict): padding configuration
+            post_conf (dict): configuration for postblock processing
+            **kwargs:
+        """
         super().__init__()
 
         dim = tuple(dim)
