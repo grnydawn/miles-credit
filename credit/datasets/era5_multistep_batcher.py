@@ -1,11 +1,15 @@
-import torch
 import logging
+import time
+import queue
+import multiprocessing
+from threading import Thread
+from queue import Queue
+
 import numpy as np
+import torch
 from functools import partial
-from credit.data import (
-    drop_var_from_dataset,
-    get_forward_data
-)
+
+from credit.data import drop_var_from_dataset, get_forward_data
 from credit.datasets.era5_multistep import worker
 
 
@@ -350,7 +354,370 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         return batch
 
 
+# class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
+
+#     def __init__(self, *args, num_workers=4, **kwargs):
+#         """
+#         Initialize the MultiprocessingBatcher with a configurable number of workers.
+
+#         Args:
+#             num_workers (int): Number of workers to use for multiprocessing.
+#             *args, **kwargs: Arguments passed to the parent class.
+#         """
+#         super().__init__(*args, **kwargs)  # Initialize the parent class
+#         self.num_workers = num_workers
+
+#     def __getitem__(self, _):
+#         """
+#         Fetches the current forecast step data for each item in the batch.
+#         Utilizes multiprocessing to parallelize calls to self.worker.
+#         Ensures the results are returned in the correct order.
+#         """
+#         batch = {}
+
+#         # Reset items if forecast step count exceeds forecast length
+#         if self.forecast_step_counts[0] == self.forecast_len + 1:
+#             self.initialize_batch()
+
+#         # Shared dictionary to collect results from multiple processes (keyed by index)
+#         manager = multiprocessing.Manager()
+#         results = manager.dict()
+
+#         # Prepare arguments for processing
+#         args = []
+#         for k, idx in enumerate(self.batch_indices):
+#             current_t = self.time_steps[k]
+#             initial_idx = self.initial_indices[k]
+#             index_pair = (initial_idx, idx + current_t)
+#             args.append((k, index_pair, results))
+
+#         # Define a function for processing each worker call
+#         def worker_process(k, index_pair, result_dict):
+#             sample = self.worker(index_pair)
+#             sample["index"] = index_pair[1]  # Add index to the sample
+#             result_dict[k] = sample  # Store the result keyed by its order index
+
+#         # Split the tasks among the available workers
+#         processes = []
+#         for arg in args:
+#             p = multiprocessing.Process(target=worker_process, args=arg)
+#             processes.append(p)
+#             p.start()
+
+#         # Wait for all processes to finish
+#         for p in processes:
+#             p.join()
+
+#         # Sort results by their original order
+#         ordered_results = [results[k] for k in sorted(results.keys())]
+
+#         # Process sorted results and build the batch
+#         for k, sample in enumerate(ordered_results):
+#             for key, value in sample.items():
+#                 if isinstance(value, np.ndarray):
+#                     value = torch.tensor(value)
+#                 elif isinstance(value, np.int64):
+#                     value = torch.tensor(value, dtype=torch.int64)
+#                 elif isinstance(value, (int, float)):
+#                     value = torch.tensor(value, dtype=torch.float32)
+#                 elif not isinstance(value, torch.Tensor):
+#                     value = torch.tensor(value)
+
+#                 if value.ndimension() == 0:
+#                     value = value.unsqueeze(0)
+
+#                 if key not in batch:
+#                     batch[key] = value
+#                 else:
+#                     batch[key] = torch.cat((batch[key], value), dim=0)
+
+#             # Increment time steps and forecast step counts for this batch item
+#             self.time_steps[k] += 1
+#             self.forecast_step_counts[k] += 1
+
+#         batch["forecast_step"] = self.forecast_step_counts[0]
+#         batch["stop_forecast"] = batch["forecast_step"] == self.forecast_len + 1
+#         batch["datetime"] = batch["datetime"].view(-1, self.batch_size)
+
+#         return batch
+
+
+class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
+
+    def __init__(self, *args, num_workers=4, **kwargs):
+        """
+        Initialize the MultiprocessingBatcher with a configurable number of workers.
+
+        Args:
+            num_workers (int): Number of workers to use for multiprocessing.
+            *args, **kwargs: Arguments passed to the parent class.
+        """
+        super().__init__(*args, **kwargs)  # Initialize the parent class
+        self.num_workers = num_workers
+
+    def __getitem__(self, _):
+        """
+        Fetches the current forecast step data for each item in the batch.
+        Utilizes multiprocessing to parallelize calls to `self.worker`.
+        Ensures the results are returned in the correct order.
+        """
+        batch = {}
+
+        # Reset items if forecast step count exceeds forecast length
+        if self.forecast_step_counts[0] == self.forecast_len + 1:
+            self.initialize_batch()
+
+        # Shared dictionary to collect results from multiple processes (keyed by index)
+        manager = multiprocessing.Manager()
+        results = manager.dict()
+
+        # Prepare arguments for processing
+        args = []
+        for k, idx in enumerate(self.batch_indices):
+            current_t = self.time_steps[k]
+            initial_idx = self.initial_indices[k]
+            index_pair = (initial_idx, idx + current_t)
+            args.append((k, index_pair, results))
+
+        # Worker function
+        def worker_process(start_idx, end_idx):
+            for i in range(start_idx, end_idx):
+                k, index_pair = args[i][:2]
+                sample = self.worker(index_pair)
+                sample["index"] = index_pair[1]  # Add index to the sample
+                results[k] = sample  # Store the result keyed by its order index
+
+        # Split tasks among workers
+        tasks_per_worker = max(1, len(args) // self.num_workers)
+        processes = []
+
+        for i in range(self.num_workers):
+            start_idx = i * tasks_per_worker
+            end_idx = min((i + 1) * tasks_per_worker, len(args))
+            if start_idx < end_idx:  # Check if there are tasks for this worker
+                p = multiprocessing.Process(target=worker_process, args=(start_idx, end_idx))
+                processes.append(p)
+                p.start()
+
+        # Wait for all processes to finish
+        for p in processes:
+            p.join()
+
+        # Sort results by their original order
+        ordered_results = [results[k] for k in sorted(results.keys())]
+
+        # Process sorted results and build the batch
+        for k, sample in enumerate(ordered_results):
+            for key, value in sample.items():
+                if isinstance(value, np.ndarray):
+                    value = torch.tensor(value)
+                elif isinstance(value, np.int64):
+                    value = torch.tensor(value, dtype=torch.int64)
+                elif isinstance(value, (int, float)):
+                    value = torch.tensor(value, dtype=torch.float32)
+                elif not isinstance(value, torch.Tensor):
+                    value = torch.tensor(value)
+
+                if value.ndimension() == 0:
+                    value = value.unsqueeze(0)
+
+                if key not in batch:
+                    batch[key] = value
+                else:
+                    batch[key] = torch.cat((batch[key], value), dim=0)
+
+            # Increment time steps and forecast step counts for this batch item
+            self.time_steps[k] += 1
+            self.forecast_step_counts[k] += 1
+
+        batch["forecast_step"] = self.forecast_step_counts[0]
+        batch["stop_forecast"] = batch["forecast_step"] == self.forecast_len + 1
+        batch["datetime"] = batch["datetime"].view(-1, self.batch_size)
+
+        return batch
+
+
+class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
+    def __init__(self, *args, num_workers=4, prefetch_factor=4, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.num_workers = num_workers
+        self.prefetch_factor = prefetch_factor
+        self.prefetch_queue = Queue(maxsize=prefetch_factor)
+        self.stop_signal = multiprocessing.Event()
+
+        # Manager for shared resources
+        self.manager = multiprocessing.Manager()
+        self.results = self.manager.dict()
+
+        # Start prefetching thread
+        self.prefetch_thread = Thread(target=self.prefetch_batches, daemon=True)
+        self.prefetch_thread.start()
+
+    def prefetch_batches(self):
+        """
+        Prefetch batches asynchronously and store them in a queue.
+        Stops when the `stop_signal` is set.
+        """
+        try:
+            while not self.stop_signal.is_set():
+                if not self.prefetch_queue.full():  # Only prefetch if the queue has space
+                    try:
+                        batch = self._fetch_batch()
+                        self.prefetch_queue.put(batch)  # Add batch to the queue
+                    except Exception as e:
+                        print(f"Error during prefetching: {e}")
+                else:
+                    # Wait briefly to avoid busy waiting when the queue is full
+                    time.sleep(0.1)
+        except Exception as e:
+            print(f"Error in prefetch thread: {e}")
+
+    def worker_process(self, k, index_pair, result_dict):
+        """
+        Worker function that processes individual tasks, with error handling for specific exceptions.
+        """
+        try:
+            sample = self.worker(index_pair)
+            sample["index"] = index_pair[1]  # Add index to the sample
+            result_dict[k] = sample  # Store the result keyed by its order index
+        except FileNotFoundError:
+            # Log the error but continue processing
+            logger.warning(f"Ignoring transient connection error for index {k}.")
+        except Exception as e:
+            logger.error(f"Error in worker process for index {k}: {e}")
+            raise RuntimeError(f"Error in worker process for index {k}: {e}") from e
+
+    def _fetch_batch(self):
+        """
+        Fetches a batch using multiprocessing workers and splits the work efficiently.
+        """
+        batch = {}
+
+        # Reset items if forecast step count exceeds forecast length
+        if self.forecast_step_counts[0] == self.forecast_len + 1:
+            self.initialize_batch()
+
+        # Prepare arguments for processing
+        tasks = []
+        for k, idx in enumerate(self.batch_indices):
+            current_t = self.time_steps[k]
+            initial_idx = self.initial_indices[k]
+            index_pair = (initial_idx, idx + current_t)
+            tasks.append((k, index_pair))
+
+        # Split tasks among workers (efficient chunking)
+        chunk_size = max(1, len(tasks) // self.num_workers)
+        task_chunks = [tasks[i:i + chunk_size] for i in range(0, len(tasks), chunk_size)]
+
+        # Shared dictionary to collect results from workers
+        results = self.results
+
+        processes = []
+        for chunk in task_chunks:
+            p = multiprocessing.Process(target=self._process_chunk, args=(chunk, results))
+            processes.append(p)
+            p.start()
+
+        # Wait for all processes to finish
+        for p in processes:
+            p.join()
+
+        # Sort results by original order
+        ordered_results = [results[k] for k in sorted(results.keys())]
+
+        # Process sorted results and build the batch
+        for k, sample in enumerate(ordered_results):
+            for key, value in sample.items():
+                if isinstance(value, np.ndarray):
+                    value = torch.tensor(value)
+                elif isinstance(value, np.int64):
+                    value = torch.tensor(value, dtype=torch.int64)
+                elif isinstance(value, (int, float)):
+                    value = torch.tensor(value, dtype=torch.float32)
+                elif not isinstance(value, torch.Tensor):
+                    value = torch.tensor(value)
+
+                if value.ndimension() == 0:
+                    value = value.unsqueeze(0)
+
+                if key not in batch:
+                    batch[key] = value
+                else:
+                    batch[key] = torch.cat((batch[key], value), dim=0)
+
+            self.time_steps[k] += 1
+            self.forecast_step_counts[k] += 1
+
+        batch["forecast_step"] = self.forecast_step_counts[0]
+        batch["stop_forecast"] = batch["forecast_step"] == self.forecast_len + 1
+        batch["datetime"] = batch["datetime"].view(-1, self.batch_size)
+
+        return batch
+
+    def _process_chunk(self, task_chunk, result_dict):
+        """
+        Process a chunk of tasks and update the shared results dictionary.
+        """
+        for k, index_pair in task_chunk:
+            self.worker_process(k, index_pair, result_dict)
+
+    def __getitem__(self, _):
+        """
+        Get a batch from the prefetch queue.
+        """
+        return self.prefetch_queue.get()
+
+    def __del__(self):
+        """
+        Cleanup processes and threads when the object is destroyed.
+        """
+        try:
+            # Terminate running processes
+            if hasattr(self, 'processes'):
+                for p in self.processes:
+                    if p.is_alive():
+                        p.terminate()
+                        p.join(timeout=1)
+
+            # Close and remove any open managers
+            if hasattr(self, 'manager'):
+                self.manager.shutdown()
+                del self.manager
+
+            # Clear queues
+            if hasattr(self, 'prefetch_queue'):
+                while not self.prefetch_queue.empty():
+                    try:
+                        self.prefetch_queue.get_nowait()
+                    except queue.Empty:
+                        break
+
+            # Stop threads and events
+            if hasattr(self, 'stop_signal'):
+                self.stop_signal.set()
+
+            if hasattr(self, 'prefetch_thread'):
+                self.prefetch_thread.join(timeout=2)
+
+        except Exception as e:
+            print(f"Cleanup error: {e}")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.__del__()
+
+
 if __name__ == "__main__":
+
+    import sys
+
+    if len(sys.argv) != 2:
+        print("Usage: python script.py [1|2|3]")
+        sys.exit(1)
+
+    option = sys.argv[1]
 
     import logging
     import torch
@@ -388,38 +755,162 @@ if __name__ == "__main__":
     #     globals()[key] = value
     #     logger.info(f"Creating global variable in the namespace: {key}")
 
-    dataset_multi = ERA5_MultiStep_Batcher(
-        varname_upper_air=data_config['varname_upper_air'],
-        varname_surface=data_config['varname_surface'],
-        varname_dyn_forcing=data_config['varname_dyn_forcing'],
-        varname_forcing=data_config['varname_forcing'],
-        varname_static=data_config['varname_static'],
-        varname_diagnostic=data_config['varname_diagnostic'],
-        filenames=data_config['all_ERA_files'],
-        filename_surface=data_config['surface_files'],
-        filename_dyn_forcing=data_config['dyn_forcing_files'],
-        filename_forcing=data_config['forcing_files'],
-        filename_static=data_config['static_files'],
-        filename_diagnostic=data_config['diagnostic_files'],
-        history_len=data_config['history_len'],
-        forecast_len=data_config['forecast_len'],
-        skip_periods=data_config['skip_periods'],
-        max_forecast_len=data_config['max_forecast_len'],
-        transform=load_transforms(conf),
-        batch_size=batch_size
-    )
+    ##########
+    # Option 1
+    ##########
 
-    dataloader = DataLoader(
-        dataset_multi,
-        batch_size=1,  # Adjust the batch size as needed
-        shuffle=False,   # Shuffle the dataset if needed
-        num_workers=1,  # Number of subprocesses to use for data loading (adjust as needed)
-        drop_last=True,  # Drop the last incomplete batch if not divisible by batch_size,
-        prefetch_factor=4
-    )
+    if option == "1":
 
-    dataloader.dataset.set_epoch(0)
-    for (k, sample) in enumerate(dataloader):
-        print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'])
-        if k == 20:
-            break
+        logger.info("Option 1: ERA5_MultiStep_Batcher")
+
+        start_time = time.time()
+        dataset_multi = ERA5_MultiStep_Batcher(
+            varname_upper_air=data_config['varname_upper_air'],
+            varname_surface=data_config['varname_surface'],
+            varname_dyn_forcing=data_config['varname_dyn_forcing'],
+            varname_forcing=data_config['varname_forcing'],
+            varname_static=data_config['varname_static'],
+            varname_diagnostic=data_config['varname_diagnostic'],
+            filenames=data_config['all_ERA_files'],
+            filename_surface=data_config['surface_files'],
+            filename_dyn_forcing=data_config['dyn_forcing_files'],
+            filename_forcing=data_config['forcing_files'],
+            filename_static=data_config['static_files'],
+            filename_diagnostic=data_config['diagnostic_files'],
+            history_len=data_config['history_len'],
+            forecast_len=data_config['forecast_len'],
+            skip_periods=data_config['skip_periods'],
+            max_forecast_len=data_config['max_forecast_len'],
+            transform=load_transforms(conf),
+            batch_size=batch_size
+        )
+
+        dataloader = DataLoader(
+            dataset_multi,
+            num_workers=1,  # Must be 1 to use prefetching
+            drop_last=True,  # Drop the last incomplete batch if not divisible by batch_size,
+            prefetch_factor=4
+        )
+
+        dataloader.dataset.set_epoch(0)
+        for (k, sample) in enumerate(dataloader):
+            print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'])
+            if k == 20:
+                break
+
+        # End the timer
+        end_time = time.time()
+
+        # Calculate the elapsed time
+        elapsed_time = end_time - start_time
+
+        # Log the elapsed time
+        logger.info(f"Elapsed time for fetching 20 batches: {elapsed_time:.2f} seconds")
+
+    ##########
+    # Option 2
+    ##########
+
+    elif option == "2":
+
+        logger.info("Testing 2: MultiprocessingBatcher")
+
+        start_time = time.time()
+        dataset_multi = MultiprocessingBatcher(
+            varname_upper_air=data_config['varname_upper_air'],
+            varname_surface=data_config['varname_surface'],
+            varname_dyn_forcing=data_config['varname_dyn_forcing'],
+            varname_forcing=data_config['varname_forcing'],
+            varname_static=data_config['varname_static'],
+            varname_diagnostic=data_config['varname_diagnostic'],
+            filenames=data_config['all_ERA_files'],
+            filename_surface=data_config['surface_files'],
+            filename_dyn_forcing=data_config['dyn_forcing_files'],
+            filename_forcing=data_config['forcing_files'],
+            filename_static=data_config['static_files'],
+            filename_diagnostic=data_config['diagnostic_files'],
+            history_len=data_config['history_len'],
+            forecast_len=data_config['forecast_len'],
+            skip_periods=data_config['skip_periods'],
+            max_forecast_len=data_config['max_forecast_len'],
+            transform=load_transforms(conf),
+            batch_size=batch_size,
+            num_workers=4
+        )
+
+        dataloader = DataLoader(
+            dataset_multi,
+            num_workers=0,  # Must be 1 to use pre-fetching
+            drop_last=True  # Drop the last incomplete batch if not divisible by batch_size
+        )
+
+        dataloader.dataset.set_epoch(0)
+        for (k, sample) in enumerate(dataloader):
+            print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'])
+            if k == 20:
+                break
+
+        # End the timer
+        end_time = time.time()
+
+        # Calculate the elapsed time
+        elapsed_time = end_time - start_time
+
+        # Log the elapsed time
+        logger.info(f"Elapsed time for fetching 20 batches: {elapsed_time:.2f} seconds")
+
+    ##########
+    # Option 3
+    ##########
+
+    elif option == "3":
+
+        logger.info("Testing 3: MultiprocessingBatcherPrefetch")
+
+        start_time = time.time()
+        dataset_multi = MultiprocessingBatcherPrefetch(
+            varname_upper_air=data_config['varname_upper_air'],
+            varname_surface=data_config['varname_surface'],
+            varname_dyn_forcing=data_config['varname_dyn_forcing'],
+            varname_forcing=data_config['varname_forcing'],
+            varname_static=data_config['varname_static'],
+            varname_diagnostic=data_config['varname_diagnostic'],
+            filenames=data_config['all_ERA_files'],
+            filename_surface=data_config['surface_files'],
+            filename_dyn_forcing=data_config['dyn_forcing_files'],
+            filename_forcing=data_config['forcing_files'],
+            filename_static=data_config['static_files'],
+            filename_diagnostic=data_config['diagnostic_files'],
+            history_len=data_config['history_len'],
+            forecast_len=data_config['forecast_len'],
+            skip_periods=data_config['skip_periods'],
+            max_forecast_len=data_config['max_forecast_len'],
+            transform=load_transforms(conf),
+            batch_size=batch_size,
+            num_workers=6,
+            prefetch_factor=6
+        )
+
+        dataloader = DataLoader(
+            dataset_multi,
+            drop_last=True,  # Drop the last incomplete batch if not divisible by batch_size,
+        )
+
+        dataloader.dataset.set_epoch(0)
+        for (k, sample) in enumerate(dataloader):
+            print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'])
+            if k == 20:
+                break
+
+        # End the timer
+        end_time = time.time()
+
+        # Calculate the elapsed time
+        elapsed_time = end_time - start_time
+
+        # Log the elapsed time
+        logger.info(f"Elapsed time for fetching 20 batches: {elapsed_time:.2f} seconds")
+
+    else:
+        print(f"Invalid option: {option}. Please choose 1, 2, or 3.")
+        sys.exit(1)
