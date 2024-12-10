@@ -1,12 +1,13 @@
-# NSF NCAR MILES Community Runnable Earth Digital Intelligence Twin (CREDIT)
+# NSF NCAR MILES Community Research Earth Digital Intelligence Twin (CREDIT)
 
 ## About
-CREDIT is a package to train and run neural networks
-that can emulate full NWP models by predicting
-the next state of the atmosphere given the current state.
+CREDIT is a research platform to train and run neural networks that can emulate full NWP models by predicting
+the next state of the atmosphere given the current state. The platform is still under very active development. 
+If you are interested in using or contributing to CREDIT, please reach out to David John Gagne (dgagne@ucar.edu). 
+
 
 ## NSF-NCAR Derecho Installation
-Currently, the framework for running miles-credit in parallel is centered around NSF-NCAR's Derecho HPC. Derecho requires building several miles-credit dependent packages locally, including PyTorch, to enable correct MPI configuration. To begin, create a clone of the pre-built miles-credit environment, which contains compatiable versions of torch, torch-vision, numpy, and others. 
+Currently, the framework for running miles-credit in parallel is centered around NSF NCAR's Derecho HPC. Derecho requires building several miles-credit dependent packages locally, including PyTorch, to enable correct MPI configuration. To begin, create a clone of the pre-built miles-credit environment, which contains compatiable versions of torch, torch-vision, numpy, and others. 
 
 ```bash
 module purge 
@@ -72,14 +73,14 @@ python applications/train.py -c config/vit.yml
 Or use a fancier [variation](https://github.com/lucidrains/vit-pytorch/blob/main/vit_pytorch/rvt.py)
 
 ```bash
-python applications/train.py -c config/rvt.yml
+python applications/train.py -c config/wxformer_1dg_test.yml
 ```
 
 ## Launch with PBS on Casper or Derecho
  
 Adjust the PBS settings in a configuration file for either casper or derecho. Then, submit the job via
 ```bash
-python applications/train.py -c config/vit.yml -l 1
+python applications/train.py -c config/wxformer_1dg_test.yml -l 1
 ```
 The launch script may be found in the save location that you set in the configation file. The automatic launch script generation will take care of MPI calls and other complexities if you are using more than 1 GPU.
 
@@ -88,5 +89,12 @@ The launch script may be found in the save location that you set in the configat
 The predict field in the config file allows one to speficy start and end dates to roll-out a trained model. To generate a forecast,
 
 ```bash
-python applications/rollout_to_netcdf.py -c config/vit.yml
+python applications/rollout_to_netcdf.py -c config/wxformer_1dg_test.yml
 ```
+
+# Support
+This software is based upon work supported by the NSF National Center for Atmospheric Research, a major facility sponsored by the 
+U.S. National Science Foundation  under Cooperative Agreement No. 1852977 and managed by the University Corporation for Atmospheric Research. Any opinions, findings and conclusions or recommendations 
+expressed in this material do not necessarily reflect the views of NSF. Additional support for development was provided by 
+The NSF AI Institute for Research on Trustworthy AI for Weather, Climate, and Coastal Oceanography (AI2ES)  with grant
+number RISE-2019758. 
