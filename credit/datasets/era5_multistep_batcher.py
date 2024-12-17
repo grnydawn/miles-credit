@@ -97,7 +97,7 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         self.total_seq_len = self.history_len + self.forecast_len
 
         # set random seed
-        self.rng = np.random.default_rng(seed=seed)
+        self.rng = np.random.default_rng(seed=seed+rank)
 
         # max possible forecast len
         self.max_forecast_len = max_forecast_len
@@ -354,6 +354,7 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         return batch
 
 
+# This version does not control the num_workers. Kept here for now for benchmarking, remove it soon.
 # class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
 
 #     def __init__(self, *args, num_workers=4, **kwargs):
@@ -845,7 +846,7 @@ if __name__ == "__main__":
 
         logger.info("Testing 2: MultiprocessingBatcher")
         logger.info(
-            """ 
+            """
             dataset_multi = MultiprocessingBatcher(
                 varname_upper_air=data_config['varname_upper_air'],
                 varname_surface=data_config['varname_surface'],
