@@ -100,7 +100,7 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         self.total_seq_len = self.history_len + self.forecast_len
 
         # set random seed
-        self.rng = np.random.default_rng(seed=seed+rank)
+        self.rng = np.random.default_rng(seed=seed)
 
         # max possible forecast len
         self.max_forecast_len = max_forecast_len
@@ -258,7 +258,6 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         self.total_length = len(self.ERA5_indices)
         self.current_epoch = None
         self.current_index = None
-        self.initial_index = None
 
         # Use DistributedSampler for index management
         self.sampler = DistributedSampler(
@@ -266,7 +265,8 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
             num_replicas=world_size,
             rank=rank,
             shuffle=shuffle,
-            seed=seed
+            seed=seed,
+            drop_last=True
         )
 
         # Initialize state variables for batch management
@@ -274,10 +274,9 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         self.batch_indices = None  # To track initial indices for each batch item
         self.time_steps = None  # Tracks time steps for each batch index
         self.forecast_step_counts = None  # Track forecast step counts for each batch item
-        self.initial_indices = None  # Tracks the initial index for each forecast item in the batch
 
         # Initialize batch once when the dataset is created
-        self.initialize_batch()
+        # self.initialize_batch()
 
     # def initialize_batch(self):
     #     """
@@ -328,12 +327,11 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
             self.batch_call_count = 0
 
         # Set epoch for DistributedSampler to ensure consistent shuffling across devices
-        if self.current_epoch is not None:
-            self.sampler.set_epoch(self.current_epoch)
+        if self.current_epoch is None:
+            logging.warning("You must first set the epoch number using set_epoch method.")
 
         # Retrieve indices for this GPU
-        indices = list(self.sampler)
-        total_indices = len(indices)
+        total_indices = len(self.batch_indices)
 
         # Select batch indices based on call count (deterministic cycling)
         start = self.batch_call_count * self.batch_size
@@ -344,13 +342,13 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
                 # Simple wraparound by incrementing start index
                 start = start % total_indices
                 end = min(start + self.batch_size, total_indices)
-            indices = indices[start:end]
+            indices = self.batch_indices[start:end]
         else:
             if end > total_indices:
                 # Wrap-around to ensure no index is skipped
-                indices = indices[start:] + indices[:(end % total_indices)]
+                indices = self.batch_indices[start:] + self.batch_indices[:(end % total_indices)]
             else:
-                indices = indices[start:end]
+                indices = self.batch_indices[start:end]
 
         # Increment batch_call_count, reset when all indices are cycled
         self.batch_call_count += 1
@@ -358,10 +356,9 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
             self.batch_call_count = 0  # Reset for next cycle
 
         # Assign batch indices
-        self.batch_indices = indices
+        self.current_batch_indices = list(indices)  # this will be the local indices used in getitem
         self.time_steps = [0 for _ in self.batch_indices]
         self.forecast_step_counts = [0 for _ in self.batch_indices]
-        self.initial_indices = list(self.batch_indices)
 
     def __post_init__(self):
         # Total sequence length of each sample.
@@ -374,14 +371,11 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
             total_len += len(ERA5_xarray["time"]) - self.total_seq_len + 1
         return total_len
 
-    # def set_epoch(self, epoch):
-    #     self.current_epoch = epoch
-    #     self.current_index = None
-    #     self.initial_index = None
-
     def set_epoch(self, epoch):
         self.current_epoch = epoch
         self.sampler.set_epoch(epoch)
+        self.batch_indices = list(self.sampler)
+        self.initialize_batch()
 
     def __getitem__(self, _):
         """
@@ -396,11 +390,10 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
             # Get a new starting index for this item (randomly selected)
             self.initialize_batch()
 
-        for k, idx in enumerate(self.batch_indices):
+        for k, idx in enumerate(self.current_batch_indices):
             # Get the current time step for this batch item
             current_t = self.time_steps[k]
-            initial_idx = self.initial_indices[k]  # Correctly find the initial index
-            index_pair = (initial_idx, idx + current_t)  # Correctly construct the index_pair
+            index_pair = (idx, idx + current_t)  # Correctly construct the index_pair
 
             # Fetch the current sample for this batch item
             sample = self.worker(index_pair)
@@ -439,95 +432,6 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         return batch
 
 
-# This version does not control the num_workers. Kept here for now for benchmarking, remove it soon.
-# class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
-
-#     def __init__(self, *args, num_workers=4, **kwargs):
-#         """
-#         Initialize the MultiprocessingBatcher with a configurable number of workers.
-
-#         Args:
-#             num_workers (int): Number of workers to use for multiprocessing.
-#             *args, **kwargs: Arguments passed to the parent class.
-#         """
-#         super().__init__(*args, **kwargs)  # Initialize the parent class
-#         self.num_workers = num_workers
-
-#     def __getitem__(self, _):
-#         """
-#         Fetches the current forecast step data for each item in the batch.
-#         Utilizes multiprocessing to parallelize calls to self.worker.
-#         Ensures the results are returned in the correct order.
-#         """
-#         batch = {}
-
-#         # Reset items if forecast step count exceeds forecast length
-#         if self.forecast_step_counts[0] == self.forecast_len + 1:
-#             self.initialize_batch()
-
-#         # Shared dictionary to collect results from multiple processes (keyed by index)
-#         manager = multiprocessing.Manager()
-#         results = manager.dict()
-
-#         # Prepare arguments for processing
-#         args = []
-#         for k, idx in enumerate(self.batch_indices):
-#             current_t = self.time_steps[k]
-#             initial_idx = self.initial_indices[k]
-#             index_pair = (initial_idx, idx + current_t)
-#             args.append((k, index_pair, results))
-
-#         # Define a function for processing each worker call
-#         def worker_process(k, index_pair, result_dict):
-#             sample = self.worker(index_pair)
-#             sample["index"] = index_pair[1]  # Add index to the sample
-#             result_dict[k] = sample  # Store the result keyed by its order index
-
-#         # Split the tasks among the available workers
-#         processes = []
-#         for arg in args:
-#             p = multiprocessing.Process(target=worker_process, args=arg)
-#             processes.append(p)
-#             p.start()
-
-#         # Wait for all processes to finish
-#         for p in processes:
-#             p.join()
-
-#         # Sort results by their original order
-#         ordered_results = [results[k] for k in sorted(results.keys())]
-
-#         # Process sorted results and build the batch
-#         for k, sample in enumerate(ordered_results):
-#             for key, value in sample.items():
-#                 if isinstance(value, np.ndarray):
-#                     value = torch.tensor(value)
-#                 elif isinstance(value, np.int64):
-#                     value = torch.tensor(value, dtype=torch.int64)
-#                 elif isinstance(value, (int, float)):
-#                     value = torch.tensor(value, dtype=torch.float32)
-#                 elif not isinstance(value, torch.Tensor):
-#                     value = torch.tensor(value)
-
-#                 if value.ndimension() == 0:
-#                     value = value.unsqueeze(0)
-
-#                 if key not in batch:
-#                     batch[key] = value
-#                 else:
-#                     batch[key] = torch.cat((batch[key], value), dim=0)
-
-#             # Increment time steps and forecast step counts for this batch item
-#             self.time_steps[k] += 1
-#             self.forecast_step_counts[k] += 1
-
-#         batch["forecast_step"] = self.forecast_step_counts[0]
-#         batch["stop_forecast"] = batch["forecast_step"] == self.forecast_len + 1
-#         batch["datetime"] = batch["datetime"].view(-1, self.batch_size)
-
-#         return batch
-
-
 class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
 
     def __init__(self, *args, num_workers=4, **kwargs):
@@ -541,6 +445,10 @@ class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
         super().__init__(*args, **kwargs)  # Initialize the parent class
         self.num_workers = num_workers
 
+        # Shared dictionary to collect results from multiple processes (keyed by index)
+        self.manager = multiprocessing.Manager()
+        self.results = self.manager.dict()
+
     def __getitem__(self, _):
         """
         Fetches the current forecast step data for each item in the batch.
@@ -552,18 +460,14 @@ class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
         # Reset items if forecast step count exceeds forecast length
         if self.forecast_step_counts[0] == self.forecast_len + 1:
             self.initialize_batch()
-
-        # Shared dictionary to collect results from multiple processes (keyed by index)
-        manager = multiprocessing.Manager()
-        results = manager.dict()
+            self.results.clear()
 
         # Prepare arguments for processing
         args = []
-        for k, idx in enumerate(self.batch_indices):
+        for k, idx in enumerate(self.current_batch_indices):
             current_t = self.time_steps[k]
-            initial_idx = self.initial_indices[k]
-            index_pair = (initial_idx, idx + current_t)
-            args.append((k, index_pair, results))
+            index_pair = (idx, idx + current_t)
+            args.append((k, index_pair, self.results))
 
         # Worker function
         def worker_process(start_idx, end_idx):
@@ -571,7 +475,7 @@ class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
                 k, index_pair = args[i][:2]
                 sample = self.worker(index_pair)
                 sample["index"] = index_pair[1]  # Add index to the sample
-                results[k] = sample  # Store the result keyed by its order index
+                self.results[k] = sample  # Store the result keyed by its order index
 
         # Split tasks among workers
         tasks_per_worker = max(1, len(args) // self.num_workers)
@@ -590,7 +494,7 @@ class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
             p.join()
 
         # Sort results by their original order
-        ordered_results = [results[k] for k in sorted(results.keys())]
+        ordered_results = [self.results[k] for k in sorted(self.results.keys())]
 
         # Process sorted results and build the batch
         for k, sample in enumerate(ordered_results):
@@ -622,6 +526,11 @@ class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
 
         return batch
 
+    def __del__(self):
+        """Cleanup the manager when the object is destroyed"""
+        if hasattr(self, 'manager'):
+            self.manager.shutdown()
+
 
 class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
     def __init__(self, *args, num_workers=4, prefetch_factor=4, **kwargs):
@@ -635,9 +544,18 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
         self.manager = multiprocessing.Manager()
         self.results = self.manager.dict()
 
+        self.prefetch_thread = None
+
+    def set_epoch(self, epoch):
+        self.current_epoch = epoch
+        self.sampler.set_epoch(epoch)
+        self.batch_indices = list(self.sampler)
+        self.initialize_batch()
+
         # Start prefetching thread
-        self.prefetch_thread = Thread(target=self.prefetch_batches, daemon=True)
-        self.prefetch_thread.start()
+        if self.prefetch_thread is None:
+            self.prefetch_thread = Thread(target=self.prefetch_batches, daemon=True)
+            self.prefetch_thread.start()
 
     def prefetch_batches(self):
         """
@@ -680,15 +598,14 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
         batch = {}
 
         # Reset items if forecast step count exceeds forecast length
-        if self.forecast_step_counts[0] == self.forecast_len + 1:
+        if self.forecast_step_counts[0] == self.forecast_len + 1 or self.batch_indices is None:
             self.initialize_batch()
 
         # Prepare arguments for processing
         tasks = []
-        for k, idx in enumerate(self.batch_indices):
+        for k, idx in enumerate(self.current_batch_indices):
             current_t = self.time_steps[k]
-            initial_idx = self.initial_indices[k]
-            index_pair = (initial_idx, idx + current_t)
+            index_pair = (idx, idx + current_t)
             tasks.append((k, index_pair))
 
         # Split tasks among workers (efficient chunking)
@@ -831,11 +748,14 @@ if __name__ == "__main__":
     training_data_check(conf, print_summary=False)
     data_config = setup_data_loading(conf)
 
+    epoch = 0
     batch_size = 2
     data_config["forecast_len"] = 6
+    shuffle = True
+
     rank = 0
     world_size = 2
-    shuffle = True
+    num_workers = 2
 
     set_globals(data_config, namespace=globals())
 
@@ -880,7 +800,6 @@ if __name__ == "__main__":
             dataloader = DataLoader(
                 dataset_multi,
                 num_workers=1,  # Must be 1 to use prefetching
-                drop_last=True,  # Drop the last incomplete batch if not divisible by batch_size,
                 prefetch_factor=4
             )
             """
@@ -913,11 +832,12 @@ if __name__ == "__main__":
         dataloader = DataLoader(
             dataset_multi,
             num_workers=1,  # Must be 1 to use prefetching
-            drop_last=True,  # Drop the last incomplete batch if not divisible by batch_size,
             prefetch_factor=4
         )
 
-        dataloader.dataset.set_epoch(0)
+        # Must set the epoch before the dataloader will work.
+        dataloader.dataset.set_epoch(epoch)
+
         for (k, sample) in enumerate(dataloader):
             print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'])
             if k == 20:
@@ -969,7 +889,6 @@ if __name__ == "__main__":
             dataloader = DataLoader(
                 dataset_multi,
                 num_workers=0,  # Cannot use multiprocessing in both
-                drop_last=True  # Drop the last incomplete batch if not divisible by batch_size
             )
             """
         )
@@ -997,16 +916,15 @@ if __name__ == "__main__":
             shuffle=shuffle,
             rank=rank,
             world_size=world_size,
-            num_workers=4
+            num_workers=num_workers
         )
 
         dataloader = DataLoader(
             dataset_multi,
-            num_workers=0,  # Cannot use multiprocessing in both
-            drop_last=True  # Drop the last incomplete batch if not divisible by batch_size
+            num_workers=0  # Cannot use multiprocessing in both
         )
 
-        dataloader.dataset.set_epoch(0)
+        dataloader.dataset.set_epoch(epoch)
         for (k, sample) in enumerate(dataloader):
             print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'])
             if k == 20:
@@ -1057,8 +975,7 @@ if __name__ == "__main__":
             )
 
             dataloader = DataLoader(
-                dataset_multi,
-                drop_last=True,  # Drop the last incomplete batch if not divisible by batch_size,
+                dataset_multi
             )
             """
         )
@@ -1091,11 +1008,10 @@ if __name__ == "__main__":
         )
 
         dataloader = DataLoader(
-            dataset_multi,
-            drop_last=True,  # Drop the last incomplete batch if not divisible by batch_size,
+            dataset_multi
         )
 
-        dataloader.dataset.set_epoch(0)
+        dataloader.dataset.set_epoch(epoch)
         for (k, sample) in enumerate(dataloader):
             print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'])
             if k == 20:
