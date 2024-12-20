@@ -337,7 +337,7 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         self.initialize_batch()
 
     def batches_per_epoch(self):
-        return math.ceil((self.batch_indices) / self.batch_size)
+        return math.ceil(len(self.batch_indices) / self.batch_size)
 
     def __getitem__(self, _):
         """
