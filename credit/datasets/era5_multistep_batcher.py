@@ -1,5 +1,6 @@
 import logging
 import time
+import math
 import queue
 import multiprocessing
 from threading import Thread
@@ -332,7 +333,11 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         self.current_epoch = epoch
         self.sampler.set_epoch(epoch)
         self.batch_indices = list(self.sampler)
+        self.batch_call_count = 0
         self.initialize_batch()
+
+    def batches_per_epoch(self):
+        return math.ceil((self.batch_indices) / self.batch_size)
 
     def __getitem__(self, _):
         """
@@ -507,6 +512,7 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
         self.current_epoch = epoch
         self.sampler.set_epoch(epoch)
         self.batch_indices = list(self.sampler)
+        self.batch_call_count = 0
         self.initialize_batch()
 
         # Start prefetching thread
