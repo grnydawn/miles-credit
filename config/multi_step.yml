@@ -23,6 +23,7 @@ data:
     lead_time_periods: 6
     skip_periods: null
     static_first: True
+    dataset_type: MultiprocessingBatcherPrefetch # ERA5_and_Forcing_MultiStep, ERA5_MultiStep_Batcher, MultiprocessingBatcher, MultiprocessingBatcherPrefetch
     
 trainer:
     type: multi-step # <---------- change to your type
@@ -35,8 +36,8 @@ trainer:
     train_one_epoch: True
     learning_rate: 1.0e-04 # <-- change to your lr
     weight_decay: 0
-    train_batch_size: 1
-    valid_batch_size: 1
+    train_batch_size: 2
+    valid_batch_size: 2
     batches_per_epoch: 0
     valid_batches_per_epoch: 50
     stopping_patience: 500
@@ -50,6 +51,7 @@ trainer:
     grad_max_norm: 1.0
     thread_workers: 1
     valid_thread_workers: 0
+    prefetch_factor: 4 # Use with MultiprocessingBatcherPrefetch
   
 model:
     # crossformer example

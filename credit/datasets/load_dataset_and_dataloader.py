@@ -10,9 +10,10 @@ from credit.transforms import load_transforms
 from credit.parser import credit_main_parser, training_data_check
 from credit.datasets import setup_data_loading, set_globals
 import logging
+import re
 
 
-class CustomDataLoader:
+class DataLoaderLite:
     def __init__(self, dataset):
         self.dataset = dataset
 
@@ -20,15 +21,23 @@ class CustomDataLoader:
         for sample in self.dataset:  # Directly iterate over the dataset
             yield sample
 
+    def __len__(self):
+        if hasattr(self.dataset, "batches_per_epoch"):
+            return self.dataset.batches_per_epoch()  # Use the dataset's method if available
+        else:
+            return len(self.dataset)  # Otherwise, fall back to the dataset's length
 
-def load_dataset(conf, dataset_type, rank=0, world_size=1, is_train=True):
+
+def load_dataset(conf, rank=0, world_size=1, is_train=True):
     """
-    Load the dataset based on the specified class name.
+    Load the dataset based on the configuration.
 
     Args:
         conf (dict): Configuration dictionary containing dataset and training parameters.
-        dataset_type (str): Name of the dataset class to load (e.g., "ERA5_MultiStep_Batcher",
-                            "ERA5_and_Forcing_MultiStep", "ERA5_AnotherDataset", "ERA5_YetAnotherDataset").
+        rank (int, optional): Rank of the current process. Default is 0.
+        world_size (int, optional): Number of processes participating in the job. Default is 1.
+        is_train (bool, optional): Flag indicating whether the dataset is for training or validation.
+                                  Default is True.
 
     Returns:
         Dataset: The loaded dataset.
@@ -37,10 +46,11 @@ def load_dataset(conf, dataset_type, rank=0, world_size=1, is_train=True):
     conf = credit_main_parser(
         conf, parse_training=True, parse_predict=False, print_summary=False
     )
-    training_data_check(conf, print_summary=False)
+    training_data_check(conf, print_summary=False)  # this is redundant once load_dataset is called from train_*.py
     data_config = setup_data_loading(conf)
 
     training_type = "train" if is_train else "valid"
+    dataset_type = conf["data"].get("dataset_type", )
     batch_size = conf["trainer"][f"{training_type}_batch_size"]
     shuffle = is_train
     num_workers = conf["trainer"]["thread_workers"] if is_train else conf["trainer"]["valid_thread_workers"]
@@ -155,7 +165,9 @@ def load_dataset(conf, dataset_type, rank=0, world_size=1, is_train=True):
     else:
         raise ValueError(f"Unsupported dataset type: {dataset_type}")
 
-    logging.info(f"Loaded a {dataset_type} ERA dataset (forecast length = {data_config['forecast_len'] + 1})")
+    train_flag = "training" if is_train else "validation"
+
+    logging.info(f"Loaded a {train_flag} {dataset_type} ERA dataset (forecast length = {data_config['forecast_len'] + 1})")
 
     return dataset
 
@@ -167,7 +179,10 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
     Args:
         conf (dict): Configuration dictionary containing dataloader parameters.
         dataset (Dataset): The dataset to be used in the DataLoader.
-        is_train (bool): Flag indicating whether the dataloader is for training or validation.
+        rank (int, optional): Rank of the current process. Default is 0.
+        world_size (int, optional): Number of processes participating in the job. Default is 1.
+        is_train (bool, optional): Flag indicating whether the dataset is for training or validation.
+                                  Default is True.
 
     Returns:
         DataLoader: The loaded DataLoader.
@@ -208,17 +223,23 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
             prefetch_factor=prefetch_factor
         )
     elif type(dataset) is MultiprocessingBatcher:
-        dataloader = CustomDataLoader(
+        dataloader = DataLoaderLite(
             dataset
         )
     elif type(dataset) is MultiprocessingBatcherPrefetch:
-        dataloader = CustomDataLoader(
+        dataloader = DataLoaderLite(
             dataset
         )
     else:
         raise ValueError(f"Unsupported dataset type: {type(dataset)}")
 
-    logging.info(f"Loaded a DataLoader for the {dataset} ERA dataset.")
+    # Extract the class name using regular expression
+    match = re.search(r"\.(\w+) object at", str(dataset))
+    class_name = match.group(1)
+
+    train_flag = "training" if is_train else "validation"
+
+    logging.info(f"Loaded a {train_flag} DataLoader for the {class_name} ERA dataset.")
 
     return dataloader
 
@@ -273,12 +294,13 @@ if __name__ == "__main__":
     conf["trainer"]["prefetch_factor"] = 4  # Add prefetch_factor
     conf["data"]["forecast_len"] = 6
     conf["data"]["valid_forecast_len"] = 6
+    conf["data"]["dataset_type"] = dataset_type
 
     set_globals(data_config, namespace=globals())
 
     try:
         # Load the dataset using the provided dataset_type
-        dataset = load_dataset(conf, dataset_type, rank=rank, world_size=world_size)
+        dataset = load_dataset(conf, rank=rank, world_size=world_size)
 
         # Load the dataloader
         dataloader = load_dataloader(conf, dataset, rank=rank, world_size=world_size)

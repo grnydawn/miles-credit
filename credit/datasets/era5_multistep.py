@@ -569,6 +569,6 @@ if __name__ == "__main__":
 
     dataloader.dataset.set_epoch(0)
     for (k, sample) in enumerate(dataloader):
-        print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'])
+        print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'], sample["x"].shape, sample["x_surf"].shape)
         if k == 20:
             break

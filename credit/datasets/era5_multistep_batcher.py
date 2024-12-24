@@ -378,6 +378,10 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
                 if value.ndimension() == 0:
                     value = value.unsqueeze(0)  # Unsqueeze to make it a 1D tensor
 
+                # add the time dim, which is 1 in all datasets in this example
+                if value.ndim in (4, 5):
+                    value = value.unsqueeze(1)
+
                 if key not in batch:
                     batch[key] = value  # Initialize the key in the batch dictionary
                 else:
@@ -387,7 +391,7 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
             self.time_steps[k] += 1
             self.forecast_step_counts[k] += 1
 
-        batch["forecast_step"] = self.forecast_step_counts[0]
+        batch["forecast_step"] = torch.tensor([self.forecast_step_counts[0]])
         batch["stop_forecast"] = batch["forecast_step"] == self.forecast_len + 1
         batch["datetime"] = batch["datetime"].view(-1, self.batch_size)  # reshape
 
@@ -473,6 +477,10 @@ class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
                 if value.ndimension() == 0:
                     value = value.unsqueeze(0)
 
+                # add the time dim, which is 1 in all datasets in this example
+                if value.ndim in (4, 5):
+                    value = value.unsqueeze(1)
+
                 if key not in batch:
                     batch[key] = value
                 else:
@@ -482,7 +490,7 @@ class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
             self.time_steps[k] += 1
             self.forecast_step_counts[k] += 1
 
-        batch["forecast_step"] = self.forecast_step_counts[0]
+        batch["forecast_step"] = torch.tensor([self.forecast_step_counts[0]])
         batch["stop_forecast"] = batch["forecast_step"] == self.forecast_len + 1
         batch["datetime"] = batch["datetime"].view(-1, self.batch_size)
 
@@ -606,6 +614,10 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
                 if value.ndimension() == 0:
                     value = value.unsqueeze(0)
 
+                # add the time dim, which is 1 in all datasets in this example
+                if value.ndim in (4, 5):
+                    value = value.unsqueeze(1)
+
                 if key not in batch:
                     batch[key] = value
                 else:
@@ -614,7 +626,7 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
             self.time_steps[k] += 1
             self.forecast_step_counts[k] += 1
 
-        batch["forecast_step"] = self.forecast_step_counts[0]
+        batch["forecast_step"] = torch.tensor([self.forecast_step_counts[0]])
         batch["stop_forecast"] = batch["forecast_step"] == self.forecast_len + 1
         batch["datetime"] = batch["datetime"].view(-1, self.batch_size)
 
