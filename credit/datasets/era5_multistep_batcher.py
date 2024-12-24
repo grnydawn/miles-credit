@@ -2,6 +2,7 @@ import logging
 import time
 import math
 import queue
+import signal
 import multiprocessing
 from threading import Thread
 from queue import Queue
@@ -337,7 +338,7 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         self.initialize_batch()
 
     def batches_per_epoch(self):
-        return math.ceil(len(self.batch_indices) / self.batch_size)
+        return math.ceil(len(list(self.sampler)) / self.batch_size)
 
     def __getitem__(self, _):
         """
@@ -378,10 +379,6 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
                 if value.ndimension() == 0:
                     value = value.unsqueeze(0)  # Unsqueeze to make it a 1D tensor
 
-                # add the time dim, which is 1 in all datasets in this example
-                if value.ndim in (4, 5):
-                    value = value.unsqueeze(1)
-
                 if key not in batch:
                     batch[key] = value  # Initialize the key in the batch dictionary
                 else:
@@ -394,6 +391,8 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         batch["forecast_step"] = torch.tensor([self.forecast_step_counts[0]])
         batch["stop_forecast"] = batch["forecast_step"] == self.forecast_len + 1
         batch["datetime"] = batch["datetime"].view(-1, self.batch_size)  # reshape
+
+        # print(batch['index'], batch['datetime'], batch['forecast_step'], batch['stop_forecast'], batch['x'].shape, batch['x_surf'].shape)
 
         return batch
 
@@ -477,7 +476,9 @@ class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
                 if value.ndimension() == 0:
                     value = value.unsqueeze(0)
 
-                # add the time dim, which is 1 in all datasets in this example
+                # add the time, which is 1 in all datasets in this example
+                # this is needed since we use DataLoaderLite, which does not add
+                # the extra dimension and a mix up between batch and time-dim happens.
                 if value.ndim in (4, 5):
                     value = value.unsqueeze(1)
 
@@ -514,7 +515,16 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
         self.manager = multiprocessing.Manager()
         self.results = self.manager.dict()
 
+        # Register signal handler
+        self.stop_event = multiprocessing.Event()
+        #signal.signal(signal.SIGINT, self.handle_signal)
+        signal.signal(signal.SIGTERM, self.handle_signal)
+
         self.prefetch_thread = None
+
+    def handle_signal(self, signum, frame):
+        logging.info("Received signal, shutting down worker processes...")
+        self.stop_event.set()  # Signal worker processes to stop
 
     def set_epoch(self, epoch):
         self.current_epoch = epoch
@@ -558,9 +568,16 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
         except FileNotFoundError:
             # Log the error but continue processing
             logger.warning(f"Ignoring transient connection error for index {k}.")
+            self.stop_event.set()
+            return
         except Exception as e:
-            logger.error(f"Error in worker process for index {k}: {e}")
-            raise RuntimeError(f"Error in worker process for index {k}: {e}") from e
+            logger.warning(f"Error in worker process for index {k}: {e}.\n"
+                           "This is likely due to the end of training, or you killed the program. Exiting!\n"
+                           "Not what you expected? Email schreck@ucar.edu for support")
+            self.stop_event.set()
+            return
+            # logger.error(f"Error in worker process for index {k}: {e}")
+            # raise RuntimeError(f"Error in worker process for index {k}: {e}") from e
 
     def _fetch_batch(self):
         """
@@ -614,7 +631,9 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
                 if value.ndimension() == 0:
                     value = value.unsqueeze(0)
 
-                # add the time dim, which is 1 in all datasets in this example
+                # add the time, which is 1 in all datasets in this example
+                # this is needed since we use DataLoaderLite, which does not add
+                # the extra dimension and a mix up between batch and time-dim happens.
                 if value.ndim in (4, 5):
                     value = value.unsqueeze(1)
 
