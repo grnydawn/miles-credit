@@ -28,6 +28,12 @@ class DataLoaderLite:
             return len(self.dataset)  # Otherwise, fall back to the dataset's length
 
 
+def collate_fn(batch):
+    # Only used with ERA5_MultiStep_Batcher
+    # Prevents time and batch dimension from getting flipped
+    return batch[0]
+
+
 def load_dataset(conf, rank=0, world_size=1, is_train=True):
     """
     Load the dataset based on the configuration.
@@ -220,6 +226,7 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
         dataloader = DataLoader(
             dataset,
             num_workers=1,  # Must be 1 to use prefetching
+            collate_fn=collate_fn,
             prefetch_factor=prefetch_factor
         )
     elif type(dataset) is MultiprocessingBatcher:
@@ -315,7 +322,7 @@ if __name__ == "__main__":
 
         # Iterate through the dataloader and print samples
         for (k, sample) in enumerate(dataloader):
-            print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'])
+            print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'], sample["x"].shape, sample["x_surf"].shape)
             if k == 20:
                 break
 

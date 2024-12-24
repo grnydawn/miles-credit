@@ -379,6 +379,12 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
                 if value.ndimension() == 0:
                     value = value.unsqueeze(0)  # Unsqueeze to make it a 1D tensor
 
+                # add the time, which is 1 in all datasets in this example
+                # this is needed since we use DataLoaderLite, which does not add
+                # the extra dimension and a mix up between batch and time-dim happens.
+                if value.ndim in (4, 5):
+                    value = value.unsqueeze(1)
+
                 if key not in batch:
                     batch[key] = value  # Initialize the key in the batch dictionary
                 else:
@@ -567,7 +573,7 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
             result_dict[k] = sample  # Store the result keyed by its order index
         except FileNotFoundError:
             # Log the error but continue processing
-            logger.warning(f"Ignoring transient connection error for index {k}.")
+            # logger.warning(f"Ignoring transient connection error for index {k}.")
             self.stop_event.set()
             return
         except Exception as e:
@@ -575,9 +581,15 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
                            "This is likely due to the end of training, or you killed the program. Exiting!\n"
                            "Not what you expected? Email schreck@ucar.edu for support")
             self.stop_event.set()
-            return
             # logger.error(f"Error in worker process for index {k}: {e}")
-            # raise RuntimeError(f"Error in worker process for index {k}: {e}") from e
+            # Ensure proper cleanup before exiting worker process
+            if hasattr(self, 'shutdown') and callable(self.shutdown):
+                logger.info("Initiating shutdown sequence.")
+                self.shutdown()
+            return
+        except:
+            raise RuntimeError(f"Error in worker process for index {k}: {e}") from e
+
 
     def _fetch_batch(self):
         """
