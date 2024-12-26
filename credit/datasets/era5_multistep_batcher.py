@@ -44,6 +44,7 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         filename_forcing=None,
         filename_static=None,
         filename_diagnostic=None,
+        sst_forcing=None,
         history_len=2,
         forecast_len=0,
         transform=None,
@@ -78,7 +79,7 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         - skip_periods (int, optional): Number of periods to skip between samples.
         - max_forecast_len (int, optional): Maximum length of the forecast sequence.
         - shuffle (bool, optional): Whether to shuffle the data. Default is True.
-
+        - sst_forcing (optional):
         Returns:
         - sample (dict): A dictionary containing historical_ERA5_images,
                                                  target_ERA5_images,
@@ -106,6 +107,9 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
 
         # max possible forecast len
         self.max_forecast_len = max_forecast_len
+
+        # sst forcing
+        self.sst_forcing = sst_forcing
 
         # =================================================================== #
         # flags to determin if any of the [surface, dyn_forcing, diagnostics]
@@ -251,6 +255,7 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
             diagnostic_files=self.diagnostic_files,
             xarray_forcing=self.xarray_forcing,
             xarray_static=self.xarray_static,
+            sst_forcing=self.sst_forcing,
             history_len=self.history_len,
             forecast_len=self.forecast_len,
             skip_periods=self.skip_periods,
@@ -398,8 +403,6 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         batch["stop_forecast"] = batch["forecast_step"] == self.forecast_len + 1
         batch["datetime"] = batch["datetime"].view(-1, self.batch_size)  # reshape
 
-        # print(batch['index'], batch['datetime'], batch['forecast_step'], batch['stop_forecast'], batch['x'].shape, batch['x_surf'].shape)
-
         return batch
 
 
@@ -523,7 +526,7 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
 
         # Register signal handler
         self.stop_event = multiprocessing.Event()
-        #signal.signal(signal.SIGINT, self.handle_signal)
+        # signal.signal(signal.SIGINT, self.handle_signal)
         signal.signal(signal.SIGTERM, self.handle_signal)
 
         self.prefetch_thread = None
@@ -797,6 +800,7 @@ if __name__ == "__main__":
                 skip_periods=data_config['skip_periods'],
                 max_forecast_len=data_config['max_forecast_len'],
                 transform=load_transforms(conf),
+                sst_forcing=data_config['sst_forcing'],
                 batch_size=batch_size,
                 shuffle=shuffle,
                 rank=rank,
@@ -824,6 +828,7 @@ if __name__ == "__main__":
             filename_forcing=data_config['forcing_files'],
             filename_static=data_config['static_files'],
             filename_diagnostic=data_config['diagnostic_files'],
+            sst_forcing=data_config['sst_forcing'],
             history_len=data_config['history_len'],
             forecast_len=data_config['forecast_len'],
             skip_periods=data_config['skip_periods'],
@@ -885,6 +890,7 @@ if __name__ == "__main__":
                 skip_periods=data_config['skip_periods'],
                 max_forecast_len=data_config['max_forecast_len'],
                 transform=load_transforms(conf),
+                sst_forcing=data_config['sst_forcing'],
                 batch_size=batch_size,
                 shuffle=shuffle,
                 rank=rank,
@@ -913,6 +919,7 @@ if __name__ == "__main__":
             filename_forcing=data_config['forcing_files'],
             filename_static=data_config['static_files'],
             filename_diagnostic=data_config['diagnostic_files'],
+            sst_forcing=data_config['sst_forcing'],
             history_len=data_config['history_len'],
             forecast_len=data_config['forecast_len'],
             skip_periods=data_config['skip_periods'],
@@ -967,6 +974,7 @@ if __name__ == "__main__":
                 filename_forcing=data_config['forcing_files'],
                 filename_static=data_config['static_files'],
                 filename_diagnostic=data_config['diagnostic_files'],
+                sst_forcing=data_config['sst_forcing'],
                 history_len=data_config['history_len'],
                 forecast_len=data_config['forecast_len'],
                 skip_periods=data_config['skip_periods'],
@@ -1000,6 +1008,7 @@ if __name__ == "__main__":
             filename_forcing=data_config['forcing_files'],
             filename_static=data_config['static_files'],
             filename_diagnostic=data_config['diagnostic_files'],
+            sst_forcing=data_config['sst_forcing'],
             history_len=data_config['history_len'],
             forecast_len=data_config['forecast_len'],
             skip_periods=data_config['skip_periods'],

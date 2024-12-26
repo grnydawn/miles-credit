@@ -11,15 +11,15 @@ def set_globals(data_config, namespace=None):
     """
     Sets global variables from the provided configuration dictionary in the specified namespace.
 
-    This method updates the global variables in either the given `namespace` or the 
-    caller's namespace (if `namespace` is not provided). If the `namespace` is not specified, 
-    it uses the global namespace of the caller (using `sys._getframe(1).f_globals`).
+    This method updates the global variables in either the given `namespace` or the
+     caller's namespace (if `namespace` is not provided). If the `namespace` is not specified,
+     it uses the global namespace of the caller (using `sys._getframe(1).f_globals`).
 
     Parameters:
-    - data_config (dict): A dictionary where the keys are the global variable names 
-      and the values are the corresponding values to set.
-    - namespace (dict, optional): The namespace (or dictionary) where the global variables 
-      should be set. If not provided, the caller's global namespace is used.
+    - data_config (dict): A dictionary where the keys are the global variable names
+       and the values are the corresponding values to set.
+    - namespace (dict, optional): The namespace (or dictionary) where the global variables
+       should be set. If not provided, the caller's global namespace is used.
 
     The method logs each global variable being created and its name.
     """
@@ -36,8 +36,8 @@ def set_globals(data_config, namespace=None):
 
 def setup_data_loading(conf):
     """
-    Sets up the data loading configuration by reading and processing data paths, 
-    surface, dynamic forcing, and diagnostic files based on the given configuration.
+    Sets up the data loading configuration by reading and processing data paths,
+     surface, dynamic forcing, and diagnostic files based on the given configuration.
 
     The function processes the configuration dictionary (`conf`) and performs the following:
     - Globs and filters data files (ERA5, surface, dynamic forcing, diagnostic).
@@ -46,20 +46,20 @@ def setup_data_loading(conf):
     - Returns a dictionary containing all the paths and configuration details for further use.
 
     Parameters:
-    - conf (dict): A dictionary containing configuration details, including data paths, 
-      variable names, forecast details, and other settings.
+    - conf (dict): A dictionary containing configuration details, including data paths,
+       variable names, forecast details, and other settings.
 
     Returns:
-    - data_config (dict): A dictionary containing paths to various datasets and other 
-      configuration values used in data loading, such as:
+    - data_config (dict): A dictionary containing paths to various datasets and other
+       configuration values used in data loading, such as:
       - all_ERA_files: All ERA5 dataset files.
       - train_files: Filtered training dataset files.
       - valid_files: Filtered validation dataset files.
       - surface_files: Surface data files, if available.
       - dyn_forcing_files: Dynamic forcing files, if available.
       - diagnostic_files: Diagnostic files, if available.
-      - varname_upper_air, varname_surface, varname_dyn_forcing, etc.: Variable names for 
-        each data type.
+      - varname_upper_air, varname_surface, varname_dyn_forcing, etc.: Variable names for
+         each data type.
       - history_len: Length of the history data for training.
       - forecast_len: Number of steps ahead to forecast.
       - Other configuration values related to skipping periods, one-shot learning, etc.
@@ -263,6 +263,14 @@ def setup_data_loading(conf):
     else:
         one_shot = conf["data"]["one_shot"]
 
+    if conf["data"]["sst_forcing"]["activate"]:
+        sst_forcing = {
+            "varname_skt": conf["data"]["sst_forcing"]["varname_skt"],
+            "varname_ocean_mask": conf["data"]["sst_forcing"]["varname_ocean_mask"],
+        }
+    else:
+        sst_forcing = None
+
     data_config = {
         'all_ERA_files': all_ERA_files,
         'train_files': train_files,
@@ -290,7 +298,8 @@ def setup_data_loading(conf):
         'valid_forecast_len': valid_forecast_len,
         'max_forecast_len': max_forecast_len,
         'skip_periods': skip_periods,
-        'one_shot': one_shot
+        'one_shot': one_shot,
+        'sst_forcing': sst_forcing
     }
 
     return data_config
