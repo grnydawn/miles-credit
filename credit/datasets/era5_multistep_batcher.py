@@ -287,10 +287,10 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         self.current_epoch = None
         if len(self.batch_indices) < batch_size:
             logger.warning(
-                "Note that the batch size is smaller than the number of data indices"
-                " if this is not what you wanted, check batch_size in your config."
+                f"Note that the batch size ({batch_size}) is larger than the number of data indices ({len(self.batch_indices)})"
+                f"Resetting the batch size to {len(self.batch_indices)}."
                 )
-            self.batch_size = min(batch_size, len(self.batch_indices))
+            self.batch_size = len(self.batch_indices)
 
     def initialize_batch(self):
         """
