@@ -5,13 +5,11 @@ from credit.datasets.era5_multistep_batcher import (
     MultiprocessingBatcher,
     MultiprocessingBatcherPrefetch
 )
-from credit.data import ERA5_and_Forcing_Dataset
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from credit.transforms import load_transforms
-from credit.parser import credit_main_parser, training_data_check
-from credit.datasets import setup_data_loading, set_globals
 import logging
+import sys
 import re
 
 
@@ -50,13 +48,14 @@ def load_dataset(conf, rank=0, world_size=1, is_train=True):
     Returns:
         Dataset: The loaded dataset.
     """
+    try:
+        data_config = setup_data_loading(conf)
+    except KeyError:
+        logging.warning(
+            "You must run credit.parser.credit_main_parser(conf) before loading data. Exiting."
+        )
+        sys.exit()
     seed = conf["seed"]
-    conf = credit_main_parser(
-        conf, parse_training=True, parse_predict=False, print_summary=False
-    )
-    training_data_check(conf, print_summary=False)  # this is redundant once load_dataset is called from train_*.py
-    data_config = setup_data_loading(conf)
-
     training_type = "train" if is_train else "valid"
     dataset_type = conf["data"].get("dataset_type", )
     batch_size = conf["trainer"][f"{training_type}_batch_size"]
@@ -302,15 +301,16 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
 if __name__ == "__main__":
 
     import sys
+    import time
+    import yaml
+    from credit.parser import credit_main_parser, training_data_check
+    from credit.datasets import setup_data_loading, set_globals
 
     if len(sys.argv) != 2:
         print("Usage: python script.py [dataset_type]")
         sys.exit(1)
 
     dataset_id = int(sys.argv[1])
-
-    import time
-    import yaml
 
     # Set up the logger
     logging.basicConfig(
@@ -328,7 +328,6 @@ if __name__ == "__main__":
         conf, parse_training=True, parse_predict=False, print_summary=False
     )
     training_data_check(conf, print_summary=False)
-    data_config = setup_data_loading(conf)
 
     # options
     dataset_type = [
@@ -351,8 +350,6 @@ if __name__ == "__main__":
     conf["data"]["forecast_len"] = 0
     conf["data"]["valid_forecast_len"] = 0
     conf["data"]["dataset_type"] = dataset_type
-
-    set_globals(data_config, namespace=globals())
 
     try:
         # Load the dataset using the provided dataset_type

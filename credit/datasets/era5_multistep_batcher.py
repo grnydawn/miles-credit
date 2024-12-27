@@ -281,6 +281,17 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         self.time_steps = None  # Tracks time steps for each batch index
         self.forecast_step_counts = None  # Track forecast step counts for each batch item
 
+        # initialze the batch indices by faking the epoch number here and resetting to None
+        # this is mainly a feature for working with smaller datasets / testing purposes
+        self.set_epoch(0)
+        self.current_epoch = None
+        if len(self.batch_indices) < batch_size:
+            logger.warning(
+                "Note that the batch size is smaller than the number of data indices"
+                " if this is not what you wanted, check batch_size in your config."
+                )
+            self.batch_size = min(batch_size, len(self.batch_indices))
+
     def initialize_batch(self):
         """
         Initializes batch indices using DistributedSampler's indices.
@@ -343,7 +354,7 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         self.initialize_batch()
 
     def batches_per_epoch(self):
-        return math.ceil(len(list(self.sampler)) / self.batch_size)
+        return math.ceil(len(list(self.batch_indices)) / self.batch_size)
 
     def __getitem__(self, _):
         """
@@ -590,9 +601,8 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
                 logger.info("Initiating shutdown sequence.")
                 self.shutdown()
             return
-        except:
-            raise RuntimeError(f"Error in worker process for index {k}: {e}") from e
-
+        except:  # This is here to catch the workers that may not have died
+            raise RuntimeError(f"Error in worker process for index {k}")
 
     def _fetch_batch(self):
         """
