@@ -5,6 +5,7 @@ from credit.datasets.era5_multistep_batcher import (
     MultiprocessingBatcher,
     MultiprocessingBatcherPrefetch
 )
+from credit.datasets import setup_data_loading
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from credit.transforms import load_transforms
@@ -304,7 +305,6 @@ if __name__ == "__main__":
     import time
     import yaml
     from credit.parser import credit_main_parser, training_data_check
-    from credit.datasets import setup_data_loading, set_globals
 
     if len(sys.argv) != 2:
         print("Usage: python script.py [dataset_type]")
