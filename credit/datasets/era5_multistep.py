@@ -311,7 +311,7 @@ class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
                                     the final state of the training target. Default is None
         - max_forecast_len (int, optional): Maximum length of the forecast sequence.
         - shuffle (bool, optional): Whether to shuffle the data. Default is True.
-        - sst_forcing (optional): 
+        - sst_forcing (optional):
         Returns:
         - sample (dict): A dictionary containing historical_ERA5_images,
                                                  target_ERA5_images,

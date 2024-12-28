@@ -118,6 +118,7 @@ def load_dataset(conf, rank=0, world_size=1, is_train=True):
             world_size=world_size,
             seed=seed
         )
+        logging.warning("ERA5_and_Forcing_MultiStep is designed for batch_size = 1. Ignoring whats in your config.")
     elif dataset_type == "ERA5_MultiStep_Batcher":
         dataset = ERA5_MultiStep_Batcher(
             varname_upper_air=data_config['varname_upper_air'],
@@ -301,7 +302,6 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
 
 if __name__ == "__main__":
 
-    import sys
     import time
     import yaml
     from credit.parser import credit_main_parser, training_data_check
@@ -342,11 +342,13 @@ if __name__ == "__main__":
     rank = 0
     world_size = 2
     conf["trainer"]["start_epoch"] = epoch
-    conf["trainer"]["train_batch_size"] = 1  # batch_size
-    conf["trainer"]["valid_batch_size"] = 1  # batch_size
-    conf["trainer"]["thread_workers"] = 0   # num_workers
-    conf["trainer"]["valid_thread_workers"] = 0   # num_workers
+    conf["trainer"]["train_batch_size"] = 2  # batch_size
+    conf["trainer"]["valid_batch_size"] = conf["trainer"]["valid_batch_size"]  # batch_size
+    conf["trainer"]["thread_workers"] = 4   # num_workers
+    conf["trainer"]["valid_thread_workers"] = conf["trainer"]["thread_workers"]   # num_workers
     conf["trainer"]["prefetch_factor"] = 4  # Add prefetch_factor
+    conf["data"]["history_len"] = 3
+    conf["data"]["valid_history_len"] = conf["data"]["history_len"]
     conf["data"]["forecast_len"] = 0
     conf["data"]["valid_forecast_len"] = 0
     conf["data"]["dataset_type"] = dataset_type
