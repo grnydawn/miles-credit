@@ -14,9 +14,10 @@ import sys
 import re
 
 
-class DataLoaderLite:
+class BatchForecastLenDataLoader:
     def __init__(self, dataset):
         self.dataset = dataset
+        self.forecast_len = dataset.forecast_len + 1
 
     def __iter__(self):
         for sample in self.dataset:  # Directly iterate over the dataset
@@ -24,15 +25,9 @@ class DataLoaderLite:
 
     def __len__(self):
         if hasattr(self.dataset, "batches_per_epoch"):
-            return self.dataset.batches_per_epoch()  # Use the dataset's method if available
+            return self.dataset.batches_per_epoch() * self.forecast_len  # Use the dataset's method if available
         else:
-            return len(self.dataset)  # Otherwise, fall back to the dataset's length
-
-
-def collate_fn(batch):
-    # Only used with ERA5_MultiStep_Batcher
-    # Prevents time and batch dimension from getting flipped
-    return batch[0]
+            return len(self.dataset) * self.forecast_len  # Otherwise, fall back to the dataset's length
 
 
 def load_dataset(conf, rank=0, world_size=1, is_train=True):
@@ -272,18 +267,15 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
             prefetch_factor=prefetch_factor
         )
     elif type(dataset) is ERA5_MultiStep_Batcher:
-        dataloader = DataLoader(
-            dataset,
-            num_workers=1,  # Must be 1 to use prefetching
-            collate_fn=collate_fn,
-            prefetch_factor=prefetch_factor
+        dataloader = BatchForecastLenDataLoader(
+            dataset
         )
     elif type(dataset) is MultiprocessingBatcher:
-        dataloader = DataLoaderLite(
+        dataloader = BatchForecastLenDataLoader(
             dataset
         )
     elif type(dataset) is MultiprocessingBatcherPrefetch:
-        dataloader = DataLoaderLite(
+        dataloader = BatchForecastLenDataLoader(
             dataset
         )
     else:
@@ -347,9 +339,9 @@ if __name__ == "__main__":
     conf["trainer"]["thread_workers"] = 4   # num_workers
     conf["trainer"]["valid_thread_workers"] = conf["trainer"]["thread_workers"]   # num_workers
     conf["trainer"]["prefetch_factor"] = 4  # Add prefetch_factor
-    conf["data"]["history_len"] = 3
+    conf["data"]["history_len"] = 1
     conf["data"]["valid_history_len"] = conf["data"]["history_len"]
-    conf["data"]["forecast_len"] = 0
+    conf["data"]["forecast_len"] = 5
     conf["data"]["valid_forecast_len"] = 0
     conf["data"]["dataset_type"] = dataset_type
 

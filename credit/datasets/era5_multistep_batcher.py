@@ -396,7 +396,7 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
                     value = value.unsqueeze(0)  # Unsqueeze to make it a 1D tensor
 
                 # add the time, which is 1 in all datasets in this example
-                # this is needed since we use DataLoaderLite, which does not add
+                # this is needed since we use BatchForecastLenDataLoader, which does not add
                 # the extra dimension and a mix up between batch and time-dim happens.
                 if value.ndim in (4, 5):
                     value = value.unsqueeze(0)
@@ -495,7 +495,7 @@ class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
                     value = value.unsqueeze(0)
 
                 # add the time, which is 1 in all datasets in this example
-                # this is needed since we use DataLoaderLite, which does not add
+                # this is needed since we use BatchForecastLenDataLoader, which does not add
                 # the extra dimension and a mix up between batch and time-dim happens.
                 if value.ndim in (4, 5):
                     value = value.unsqueeze(0)
@@ -655,7 +655,7 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
                     value = value.unsqueeze(0)
 
                 # add the time, which is 1 in all datasets in this example
-                # this is needed since we use DataLoaderLite, which does not add
+                # this is needed since we use BatchForecastLenDataLoader, which does not add
                 # the extra dimension and a mix up between batch and time-dim happens.
                 if value.ndim in (4, 5):
                     value = value.unsqueeze(0)
