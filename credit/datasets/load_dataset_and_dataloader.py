@@ -9,25 +9,140 @@ from credit.datasets import setup_data_loading
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from credit.transforms import load_transforms
+import numpy as np
 import logging
 import sys
 import re
 
 
-class BatchForecastLenDataLoader:
+class BatchForecastLenSampler:
+    """
+    A PyTorch Sampler designed to preserve the forecast length from the dataset.
+
+    This sampler is tailored for datasets with a non-trivial forecast length,
+    ensuring compatibility with batch sampling by adjusting the total number
+    of iterations based on the dataset's forecast length and batches per epoch.
+
+    Attributes:
+        dataset: The dataset object, which must have `forecast_len` and
+                 `batches_per_epoch()` attributes.
+        forecast_len: The forecast length incremented by 1.
+        len: The total number of iterations determined by the forecast length
+             and the number of batches per epoch.
+    """
+
     def __init__(self, dataset):
+        """
+        Initializes the BatchForecastLenSampler.
+
+        Args:
+            dataset: A dataset object with a `forecast_len` attribute and
+                     a `batches_per_epoch()` method.
+        """
+        self.dataset = dataset
+        self.forecast_len = dataset.forecast_len + 1
+        self.len = self.dataset.batches_per_epoch() * self.forecast_len
+
+    def __iter__(self):
+        """
+        Returns an iterator for the sampler.
+
+        The iterator generates a sequence of zeros with a length equal
+        to the calculated `len`. This is primarily a placeholder to
+        satisfy the interface requirements of a PyTorch Sampler.
+
+        Returns:
+            An iterator over a sequence of zeros.
+        """
+        return iter(np.zeros(self.len))  # Dump
+
+    def __len__(self):
+        """
+        Returns the length of the sampler.
+
+        The length is the total number of iterations based on the forecast
+        length and batches per epoch from the dataset.
+
+        Returns:
+            int: The total number of iterations.
+        """
+        return self.len
+
+
+class BatchForecastLenDataLoader:
+    """
+    A custom DataLoader that supports datasets with a non-trivial forecast length.
+
+    This DataLoader is designed to iterate over datasets that provide a 
+    `forecast_len` attribute, optionally incorporating batch-specific 
+    properties like `batches_per_epoch()` if available.
+
+    Attributes:
+        dataset: The dataset object, which must have a `forecast_len` attribute 
+                 and may optionally have a `batches_per_epoch()` method.
+        forecast_len: The forecast length incremented by 1.
+    """
+
+    def __init__(self, dataset):
+        """
+        Initializes the BatchForecastLenDataLoader.
+
+        Args:
+            dataset: A dataset object with a `forecast_len` attribute and 
+                     optionally a `batches_per_epoch()` method.
+        """
         self.dataset = dataset
         self.forecast_len = dataset.forecast_len + 1
 
     def __iter__(self):
+        """
+        Iterates over the dataset.
+
+        This method directly yields samples from the dataset. The forecast
+        length is not explicitly handled here; it is assumed to be accounted 
+        for in the dataset's structure or sampling.
+
+        Yields:
+            sample: A single sample from the dataset.
+        """
         for sample in self.dataset:  # Directly iterate over the dataset
             yield sample
 
     def __len__(self):
+        """
+        Returns the length of the DataLoader.
+
+        The length is determined by the forecast length and either the 
+        dataset's `batches_per_epoch()` method (if available) or the dataset's
+        overall length.
+
+        Returns:
+            int: The total number of samples or iterations.
+        """
         if hasattr(self.dataset, "batches_per_epoch"):
             return self.dataset.batches_per_epoch() * self.forecast_len  # Use the dataset's method if available
         else:
             return len(self.dataset) * self.forecast_len  # Otherwise, fall back to the dataset's length
+
+
+def collate_fn(batch):
+    """
+    Custom collate function for use with the ERA5_MultiStep_Batcher dataset.
+
+    This function ensures that the time and batch dimensions are not flipped 
+    during data loading. It assumes that the dataset is structured such that 
+    the first element of the batch contains the correctly formatted data.
+
+    Args:
+        batch (list): A list of samples from the dataset, where each sample 
+                      is expected to be identically structured.
+
+    Returns:
+        Any: The first element of the batch, which contains the correctly
+             formatted data.
+    """
+    return batch[0]
+
 
 
 def load_dataset(conf, rank=0, world_size=1, is_train=True):
@@ -267,8 +382,12 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
             prefetch_factor=prefetch_factor
         )
     elif type(dataset) is ERA5_MultiStep_Batcher:
-        dataloader = BatchForecastLenDataLoader(
-            dataset
+        dataloader = DataLoader(
+            dataset,
+            num_workers=1,  # Must be 1 to use prefetching
+            collate_fn=collate_fn,
+            prefetch_factor=prefetch_factor,
+            sampler=BatchForecastLenSampler(dataset)  # Ensure len is correct
         )
     elif type(dataset) is MultiprocessingBatcher:
         dataloader = BatchForecastLenDataLoader(

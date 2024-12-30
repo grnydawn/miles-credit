@@ -284,13 +284,13 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         # initialze the batch indices by faking the epoch number here and resetting to None
         # this is mainly a feature for working with smaller datasets / testing purposes
         self.sampler.set_epoch(0)
-        batch_indices = list(self.sampler)
-        if len(batch_indices) < batch_size:
+        self.batch_indices = list(self.sampler)
+        if len(self.batch_indices) < batch_size:
             logger.warning(
-                f"Note that the batch size ({batch_size}) is larger than the number of data indices ({len(batch_indices)})"
-                f"Resetting the batch size to {len(batch_indices)}."
+                f"Note that the batch size ({batch_size}) is larger than the number of data indices ({len(self.batch_indices)})"
+                f"Resetting the batch size to {len(self.batch_indices)}."
                 )
-            self.batch_size = len(batch_indices)
+            self.batch_size = len(self.batch_indices)
 
     def initialize_batch(self):
         """
@@ -430,6 +430,7 @@ class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
         """
         super().__init__(*args, **kwargs)  # Initialize the parent class
         self.num_workers = num_workers if num_workers > 0 else 1
+        self.num_workers = min(self.num_workers, self.batch_size)
 
         # Shared dictionary to collect results from multiple processes (keyed by index)
         self.manager = multiprocessing.Manager()
