@@ -181,8 +181,9 @@ class GlobalMassFixer(nn.Module):
             p_level_demo = torch.from_numpy(np.array([100, 30000, 50000, 70000, 80000, 90000, 100000]))
             self.flag_sigma_level = False
             self.flag_midpoint = post_conf['global_mass_fixer']['midpoint']
-            self.core_compute = physics_pressure_level(lon_demo, lat_demo, p_level_demo, 
-                                                       midpoint=self.flag_midpoint)
+            self.core_compute = physics_pressure_level(
+                lon_demo, lat_demo, p_level_demo, midpoint=self.flag_midpoint)
+            
             self.N_levels = len(p_level_demo)
             self.ind_fix = len(p_level_demo) - int(post_conf['global_mass_fixer']['fix_level_num']) + 1
             
@@ -277,17 +278,11 @@ class GlobalMassFixer(nn.Module):
             
         # ------------------------------------------------------------------------------ #
         # global dry air mass conservation
+        
         if self.flag_sigma_level:
             # total dry air mass from q_input
             mass_dry_sum_t0 = self.core_compute.total_dry_air_mass(q_input, sp_input)
             
-            # total mass from q_pred
-            mass_dry_sum_t1_hold = self.core_compute.weighted_sum(
-                self.core_compute.integral_sliced(1-q_pred, sp_pred, 0, self.ind_fix) / GRAVITY, 
-                axis=(-2, -1))
-            mass_dry_sum_t1_fix = self.core_compute.weighted_sum(
-                self.core_compute.integral_sliced(1-q_pred, sp_pred, self.ind_fix_start, self.N_levels) / GRAVITY, 
-                axis=(-2, -1))
         else:
             # total dry air mass from q_input
             mass_dry_sum_t0 = self.core_compute.total_dry_air_mass(q_input)
@@ -301,22 +296,28 @@ class GlobalMassFixer(nn.Module):
                 self.core_compute.integral_sliced(1-q_pred, self.ind_fix_start, self.N_levels) / GRAVITY, 
                 axis=(-2, -1))
         
-        q_correct_ratio = (mass_dry_sum_t0 - mass_dry_sum_t1_hold) / mass_dry_sum_t1_fix
-        #q_correct_ratio = torch.clamp(q_correct_ratio, min=0.9, max=1.1)
-        
-        # broadcast: (batch, 1, 1, 1)
-        q_correct_ratio = q_correct_ratio.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
-        
-        # ===================================================================== #
-        # q fixes based on the ratio
-        # fix lower atmosphere
-        q_pred_fix = 1 - (1 - q_pred[:, self.ind_fix_start:, ...]) * q_correct_ratio
-        # extract unmodified part from q_pred
-        q_pred_hold = q_pred[:, :self.ind_fix_start, ...]
-        
-        # concat upper and lower q vals
-        # (batch, level, lat, lon)
-        q_pred = torch.cat([q_pred_hold, q_pred_fix], dim=1)
+            q_correct_ratio = (mass_dry_sum_t0 - mass_dry_sum_t1_hold) / mass_dry_sum_t1_fix
+            
+            # broadcast: (batch, 1, 1, 1)
+            q_correct_ratio = q_correct_ratio.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+            
+            # ===================================================================== #
+            # q fixes based on the ratio
+            # fix lower atmosphere
+            q_pred_fix = 1 - (1 - q_pred[:, self.ind_fix_start:, ...]) * q_correct_ratio
+            # extract unmodified part from q_pred
+            q_pred_hold = q_pred[:, :self.ind_fix_start, ...]
+            
+            # concat upper and lower q vals
+            # (batch, level, lat, lon)
+            q_pred = torch.cat([q_pred_hold, q_pred_fix], dim=1)
+
+            # ===================================================================== #
+            # return fixed q back to y_pred
+    
+            # expand fixed vars to (batch, level, time, lat, lon)
+            q_pred = q_pred.unsqueeze(2)
+            y_pred = concat_fix(y_pred, q_pred, self.q_ind_start, self.q_ind_end, N_vars)
         
         # ===================================================================== #
         # surface pressure fixes on global dry air mass conservation
@@ -345,14 +346,7 @@ class GlobalMassFixer(nn.Module):
 
             # expand fixed vars to (batch, level, time, lat, lon)
             sp_pred = sp_pred.unsqueeze(1).unsqueeze(2)
-            y_pred = concat_fix(y_pred, sp_pred, self.sp_ind, self.sp_ind, N_vars)
-            
-        # ===================================================================== #
-        # return fixed q back to y_pred
-
-        # expand fixed vars to (batch, level, time, lat, lon)
-        q_pred = q_pred.unsqueeze(2)
-        y_pred = concat_fix(y_pred, q_pred, self.q_ind_start, self.q_ind_end, N_vars)
+            y_pred = concat_fix(y_pred, sp_pred, self.sp_ind, self.sp_ind, N_vars)\
         
         if self.state_trans:
             y_pred = self.state_trans.transform_array(y_pred)
