@@ -105,8 +105,9 @@ class BatchForecastLenDataLoader:
         Yields:
             sample: A single sample from the dataset.
         """
-        for sample in self.dataset:  # Directly iterate over the dataset
-            yield sample
+        dataset_iter = iter(self.dataset)
+        for _ in range(len(self)):
+            yield next(dataset_iter)
 
     def __len__(self):
         """
