@@ -29,6 +29,7 @@ def worker(
     forecast_len: int,
     skip_periods: int,
     transform: Optional[Callable],
+    sst_forcing: Optional[Any] = None,
 ) -> Dict[str, Any]:
     """
     Processes a given index to extract and transform data for a specific time slice.
@@ -45,7 +46,6 @@ def worker(
     - skip_periods (int): Number of periods to skip between samples.
     - xarray_forcing (Optional[Any]): xarray dataset containing forcing data.
     - xarray_static (Optional[Any]): xarray dataset containing static data.
-
     - transform (Optional[Callable]): Transformation function to apply to the data.
 
     Returns:
@@ -187,6 +187,38 @@ def worker(
             # merge into the target dataset
             target_ERA5_images = target_ERA5_images.merge(diagnostic_subset)
 
+        # sst forcing operations
+        if sst_forcing is not None:
+            # get xr.dataset keys
+            varname_skt = sst_forcing["varname_skt"]
+            varname_ocean_mask = sst_forcing["varname_ocean_mask"]
+
+            # get xr.dataarray from the dataset
+            ocean_mask = historical_ERA5_images[varname_ocean_mask]
+            input_skt = historical_ERA5_images[varname_skt]
+            target_skt = target_ERA5_images[varname_skt]
+
+            # for multi-input cases, use time=-1 ocean mask for all times
+            if history_len > 1:
+                ocean_mask[: history_len - 1] = ocean_mask.isel(time=-1)
+
+            # get ocean mask
+            ocean_mask_bool = ocean_mask.isel(time=-1) == 0
+
+            # for multi-input cases, use time=-1 ocean SKT for all times
+            if history_len > 1:
+                input_skt[: history_len - 1] = input_skt[
+                    : history_len - 1
+                ].where(~ocean_mask_bool, input_skt.isel(time=-1))
+
+            # for target skt, replace ocean values using time=-1 input SKT
+            target_skt = target_skt.where(~ocean_mask_bool, input_skt.isel(time=-1))
+
+            # Update the target_ERA5_images dataset with the modified target_skt
+            historical_ERA5_images[varname_ocean_mask] = ocean_mask
+            historical_ERA5_images[varname_skt] = input_skt
+            target_ERA5_images[varname_skt] = target_skt
+
         # create a dict object with input/output tensors
         sample = Sample(
             historical_ERA5_images=historical_ERA5_images,
@@ -252,6 +284,7 @@ class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
         skip_periods=None,
         one_shot=None,
         max_forecast_len=None,
+        sst_forcing=None
     ):
         """
         Initialize the ERA5_and_Forcing_Dataset
@@ -278,7 +311,7 @@ class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
                                     the final state of the training target. Default is None
         - max_forecast_len (int, optional): Maximum length of the forecast sequence.
         - shuffle (bool, optional): Whether to shuffle the data. Default is True.
-
+        - sst_forcing (optional):
         Returns:
         - sample (dict): A dictionary containing historical_ERA5_images,
                                                  target_ERA5_images,
@@ -302,6 +335,9 @@ class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
 
         # total number of needed forecast lead times
         self.total_seq_len = self.history_len + self.forecast_len
+
+        # sst forcing
+        self.sst_forcing = sst_forcing
 
         # set random seed
         self.rng = np.random.default_rng(seed=seed)
@@ -457,6 +493,7 @@ class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
             forecast_len=self.forecast_len,
             skip_periods=self.skip_periods,
             transform=self.transform,
+            sst_forcing=self.sst_forcing
         )
 
         self.total_length = len(self.ERA5_indices)
@@ -555,6 +592,7 @@ if __name__ == "__main__":
         skip_periods=data_config['skip_periods'],
         one_shot=False,
         max_forecast_len=data_config['max_forecast_len'],
+        sst_forcing=data_config['sst_forcing'],
         transform=load_transforms(conf)
     )
 
@@ -569,6 +607,6 @@ if __name__ == "__main__":
 
     dataloader.dataset.set_epoch(0)
     for (k, sample) in enumerate(dataloader):
-        print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'])
+        print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'], sample["x"].shape, sample["x_surf"].shape)
         if k == 20:
             break

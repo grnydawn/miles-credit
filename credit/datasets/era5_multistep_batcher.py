@@ -2,6 +2,7 @@ import logging
 import time
 import math
 import queue
+import signal
 import multiprocessing
 from threading import Thread
 from queue import Queue
@@ -43,6 +44,7 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         filename_forcing=None,
         filename_static=None,
         filename_diagnostic=None,
+        sst_forcing=None,
         history_len=2,
         forecast_len=0,
         transform=None,
@@ -77,7 +79,7 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         - skip_periods (int, optional): Number of periods to skip between samples.
         - max_forecast_len (int, optional): Maximum length of the forecast sequence.
         - shuffle (bool, optional): Whether to shuffle the data. Default is True.
-
+        - sst_forcing (optional):
         Returns:
         - sample (dict): A dictionary containing historical_ERA5_images,
                                                  target_ERA5_images,
@@ -105,6 +107,9 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
 
         # max possible forecast len
         self.max_forecast_len = max_forecast_len
+
+        # sst forcing
+        self.sst_forcing = sst_forcing
 
         # =================================================================== #
         # flags to determin if any of the [surface, dyn_forcing, diagnostics]
@@ -250,6 +255,7 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
             diagnostic_files=self.diagnostic_files,
             xarray_forcing=self.xarray_forcing,
             xarray_static=self.xarray_static,
+            sst_forcing=self.sst_forcing,
             history_len=self.history_len,
             forecast_len=self.forecast_len,
             skip_periods=self.skip_periods,
@@ -274,6 +280,17 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         self.batch_indices = None  # To track initial indices for each batch item
         self.time_steps = None  # Tracks time steps for each batch index
         self.forecast_step_counts = None  # Track forecast step counts for each batch item
+
+        # initialze the batch indices by faking the epoch number here and resetting to None
+        # this is mainly a feature for working with smaller datasets / testing purposes
+        self.sampler.set_epoch(0)
+        self.batch_indices = list(self.sampler)
+        if len(self.batch_indices) < batch_size:
+            logger.warning(
+                f"Note that the batch size ({batch_size}) is larger than the number of data indices ({len(self.batch_indices)})"
+                f"Resetting the batch size to {len(self.batch_indices)}."
+                )
+            self.batch_size = len(self.batch_indices)
 
     def initialize_batch(self):
         """
@@ -337,7 +354,7 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         self.initialize_batch()
 
     def batches_per_epoch(self):
-        return math.ceil(len(self.batch_indices) / self.batch_size)
+        return math.ceil(len(list(self.batch_indices)) / self.batch_size)
 
     def __getitem__(self, _):
         """
@@ -378,16 +395,23 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
                 if value.ndimension() == 0:
                     value = value.unsqueeze(0)  # Unsqueeze to make it a 1D tensor
 
+                # add the time, which is 1 in all datasets in this example
+                # this is needed since we use BatchForecastLenDataLoader, which does not add
+                # the extra dimension and a mix up between batch and time-dim happens.
+                if value.ndim in (4, 5):
+                    value = value.unsqueeze(0)
+
                 if key not in batch:
                     batch[key] = value  # Initialize the key in the batch dictionary
                 else:
+
                     batch[key] = torch.cat((batch[key], value), dim=0)  # Concatenate values along the batch dimension
 
             # Increment time steps and forecast step counts for this batch item
             self.time_steps[k] += 1
             self.forecast_step_counts[k] += 1
 
-        batch["forecast_step"] = self.forecast_step_counts[0]
+        batch["forecast_step"] = torch.tensor([self.forecast_step_counts[0]])
         batch["stop_forecast"] = batch["forecast_step"] == self.forecast_len + 1
         batch["datetime"] = batch["datetime"].view(-1, self.batch_size)  # reshape
 
@@ -405,7 +429,8 @@ class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
             *args, **kwargs: Arguments passed to the parent class.
         """
         super().__init__(*args, **kwargs)  # Initialize the parent class
-        self.num_workers = num_workers
+        self.num_workers = num_workers if num_workers > 0 else 1
+        self.num_workers = min(self.num_workers, self.batch_size)
 
         # Shared dictionary to collect results from multiple processes (keyed by index)
         self.manager = multiprocessing.Manager()
@@ -440,16 +465,13 @@ class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
                 self.results[k] = sample  # Store the result keyed by its order index
 
         # Split tasks among workers
-        tasks_per_worker = max(1, len(args) // self.num_workers)
         processes = []
-
-        for i in range(self.num_workers):
-            start_idx = i * tasks_per_worker
-            end_idx = min((i + 1) * tasks_per_worker, len(args))
-            if start_idx < end_idx:  # Check if there are tasks for this worker
-                p = multiprocessing.Process(target=worker_process, args=(start_idx, end_idx))
-                processes.append(p)
-                p.start()
+        splits = np.array_split(range(len(args)), self.num_workers)
+        start_ends = [(split[0], split[-1] + 1) for split in splits]
+        for start_idx, end_idx in start_ends:
+            p = multiprocessing.Process(target=worker_process, args=(start_idx, end_idx))
+            processes.append(p)
+            p.start()
 
         # Wait for all processes to finish
         for p in processes:
@@ -473,6 +495,12 @@ class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
                 if value.ndimension() == 0:
                     value = value.unsqueeze(0)
 
+                # add the time, which is 1 in all datasets in this example
+                # this is needed since we use BatchForecastLenDataLoader, which does not add
+                # the extra dimension and a mix up between batch and time-dim happens.
+                if value.ndim in (4, 5):
+                    value = value.unsqueeze(0)
+
                 if key not in batch:
                     batch[key] = value
                 else:
@@ -482,7 +510,7 @@ class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
             self.time_steps[k] += 1
             self.forecast_step_counts[k] += 1
 
-        batch["forecast_step"] = self.forecast_step_counts[0]
+        batch["forecast_step"] = torch.tensor([self.forecast_step_counts[0]])
         batch["stop_forecast"] = batch["forecast_step"] == self.forecast_len + 1
         batch["datetime"] = batch["datetime"].view(-1, self.batch_size)
 
@@ -497,7 +525,7 @@ class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
 class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
     def __init__(self, *args, num_workers=4, prefetch_factor=4, **kwargs):
         super().__init__(*args, **kwargs)
-        self.num_workers = num_workers
+        self.num_workers = num_workers if num_workers > 0 else 1
         self.prefetch_factor = prefetch_factor
         self.prefetch_queue = Queue(maxsize=prefetch_factor)
         self.stop_signal = multiprocessing.Event()
@@ -506,7 +534,16 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
         self.manager = multiprocessing.Manager()
         self.results = self.manager.dict()
 
+        # Register signal handler
+        self.stop_event = multiprocessing.Event()
+        # signal.signal(signal.SIGINT, self.handle_signal)
+        signal.signal(signal.SIGTERM, self.handle_signal)
+
         self.prefetch_thread = None
+
+    def handle_signal(self, signum, frame):
+        logging.info("Received signal, shutting down worker processes...")
+        self.stop_event.set()  # Signal worker processes to stop
 
     def set_epoch(self, epoch):
         self.current_epoch = epoch
@@ -549,10 +586,22 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
             result_dict[k] = sample  # Store the result keyed by its order index
         except FileNotFoundError:
             # Log the error but continue processing
-            logger.warning(f"Ignoring transient connection error for index {k}.")
+            # logger.warning(f"Ignoring transient connection error for index {k}.")
+            self.stop_event.set()
+            return
         except Exception as e:
-            logger.error(f"Error in worker process for index {k}: {e}")
-            raise RuntimeError(f"Error in worker process for index {k}: {e}") from e
+            logger.warning(f"Error in worker process for index {k}: {e}.\n"
+                           "This is likely due to the end of training, or you killed the program. Exiting!\n"
+                           "Not what you expected? Email schreck@ucar.edu for support")
+            self.stop_event.set()
+            # logger.error(f"Error in worker process for index {k}: {e}")
+            # Ensure proper cleanup before exiting worker process
+            if hasattr(self, 'shutdown') and callable(self.shutdown):
+                logger.info("Initiating shutdown sequence.")
+                self.shutdown()
+            return
+        except:  # This is here to catch the workers that may not have died
+            raise RuntimeError(f"Error in worker process for index {k}")
 
     def _fetch_batch(self):
         """
@@ -606,6 +655,12 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
                 if value.ndimension() == 0:
                     value = value.unsqueeze(0)
 
+                # add the time, which is 1 in all datasets in this example
+                # this is needed since we use BatchForecastLenDataLoader, which does not add
+                # the extra dimension and a mix up between batch and time-dim happens.
+                if value.ndim in (4, 5):
+                    value = value.unsqueeze(0)
+
                 if key not in batch:
                     batch[key] = value
                 else:
@@ -614,7 +669,7 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
             self.time_steps[k] += 1
             self.forecast_step_counts[k] += 1
 
-        batch["forecast_step"] = self.forecast_step_counts[0]
+        batch["forecast_step"] = torch.tensor([self.forecast_step_counts[0]])
         batch["stop_forecast"] = batch["forecast_step"] == self.forecast_len + 1
         batch["datetime"] = batch["datetime"].view(-1, self.batch_size)
 
@@ -712,13 +767,14 @@ if __name__ == "__main__":
     data_config = setup_data_loading(conf)
 
     epoch = 0
-    batch_size = 2
+    batch_size = 5
     data_config["forecast_len"] = 6
+    data_config["history_len"] = 1
     shuffle = True
 
     rank = 0
     world_size = 2
-    num_workers = 2
+    num_workers = 4
 
     set_globals(data_config, namespace=globals())
 
@@ -726,6 +782,11 @@ if __name__ == "__main__":
     # for key, value in data_config.items():
     #     globals()[key] = value
     #     logger.info(f"Creating global variable in the namespace: {key}")
+
+    def collate_fn(batch):
+        # Only used with ERA5_MultiStep_Batcher
+        # Prevents time and batch dimension from getting flipped
+        return batch[0]
 
     ##########
     # Option 1
@@ -754,6 +815,7 @@ if __name__ == "__main__":
                 skip_periods=data_config['skip_periods'],
                 max_forecast_len=data_config['max_forecast_len'],
                 transform=load_transforms(conf),
+                sst_forcing=data_config['sst_forcing'],
                 batch_size=batch_size,
                 shuffle=shuffle,
                 rank=rank,
@@ -763,7 +825,8 @@ if __name__ == "__main__":
             dataloader = DataLoader(
                 dataset_multi,
                 num_workers=1,  # Must be 1 to use prefetching
-                prefetch_factor=4
+                prefetch_factor=4,
+                collate_fn=collate_fn  # Strip the batch_dim added by Dataloader. Batch is handled in dataset.
             )
             """
         )
@@ -781,6 +844,7 @@ if __name__ == "__main__":
             filename_forcing=data_config['forcing_files'],
             filename_static=data_config['static_files'],
             filename_diagnostic=data_config['diagnostic_files'],
+            sst_forcing=data_config['sst_forcing'],
             history_len=data_config['history_len'],
             forecast_len=data_config['forecast_len'],
             skip_periods=data_config['skip_periods'],
@@ -795,25 +859,9 @@ if __name__ == "__main__":
         dataloader = DataLoader(
             dataset_multi,
             num_workers=1,  # Must be 1 to use prefetching
-            prefetch_factor=4
+            prefetch_factor=4,
+            collate_fn=collate_fn
         )
-
-        # Must set the epoch before the dataloader will work.
-        dataloader.dataset.set_epoch(epoch)
-
-        for (k, sample) in enumerate(dataloader):
-            print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'])
-            if k == 20:
-                break
-
-        # End the timer
-        end_time = time.time()
-
-        # Calculate the elapsed time
-        elapsed_time = end_time - start_time
-
-        # Log the elapsed time
-        logger.info(f"Elapsed time for fetching 20 batches: {elapsed_time:.2f} seconds")
 
     ##########
     # Option 2
@@ -842,6 +890,7 @@ if __name__ == "__main__":
                 skip_periods=data_config['skip_periods'],
                 max_forecast_len=data_config['max_forecast_len'],
                 transform=load_transforms(conf),
+                sst_forcing=data_config['sst_forcing'],
                 batch_size=batch_size,
                 shuffle=shuffle,
                 rank=rank,
@@ -852,6 +901,7 @@ if __name__ == "__main__":
             dataloader = DataLoader(
                 dataset_multi,
                 num_workers=0,  # Cannot use multiprocessing in both
+                collate_fn=collate_fn  # Strip the batch_dim added by Dataloader. Batch is handled in dataset.
             )
             """
         )
@@ -870,6 +920,7 @@ if __name__ == "__main__":
             filename_forcing=data_config['forcing_files'],
             filename_static=data_config['static_files'],
             filename_diagnostic=data_config['diagnostic_files'],
+            sst_forcing=data_config['sst_forcing'],
             history_len=data_config['history_len'],
             forecast_len=data_config['forecast_len'],
             skip_periods=data_config['skip_periods'],
@@ -884,23 +935,9 @@ if __name__ == "__main__":
 
         dataloader = DataLoader(
             dataset_multi,
-            num_workers=0  # Cannot use multiprocessing in both
+            num_workers=0,  # Cannot use multiprocessing in both
+            collate_fn=collate_fn
         )
-
-        dataloader.dataset.set_epoch(epoch)
-        for (k, sample) in enumerate(dataloader):
-            print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'])
-            if k == 20:
-                break
-
-        # End the timer
-        end_time = time.time()
-
-        # Calculate the elapsed time
-        elapsed_time = end_time - start_time
-
-        # Log the elapsed time
-        logger.info(f"Elapsed time for fetching 20 batches: {elapsed_time:.2f} seconds")
 
     ##########
     # Option 3
@@ -924,6 +961,7 @@ if __name__ == "__main__":
                 filename_forcing=data_config['forcing_files'],
                 filename_static=data_config['static_files'],
                 filename_diagnostic=data_config['diagnostic_files'],
+                sst_forcing=data_config['sst_forcing'],
                 history_len=data_config['history_len'],
                 forecast_len=data_config['forecast_len'],
                 skip_periods=data_config['skip_periods'],
@@ -938,7 +976,8 @@ if __name__ == "__main__":
             )
 
             dataloader = DataLoader(
-                dataset_multi
+                dataset_multi,
+                collate_fn=collate_fn  # Strip the batch_dim added by Dataloader. Batch is handled in dataset.
             )
             """
         )
@@ -957,6 +996,7 @@ if __name__ == "__main__":
             filename_forcing=data_config['forcing_files'],
             filename_static=data_config['static_files'],
             filename_diagnostic=data_config['diagnostic_files'],
+            sst_forcing=data_config['sst_forcing'],
             history_len=data_config['history_len'],
             forecast_len=data_config['forecast_len'],
             skip_periods=data_config['skip_periods'],
@@ -971,24 +1011,25 @@ if __name__ == "__main__":
         )
 
         dataloader = DataLoader(
-            dataset_multi
+            dataset_multi,
+            collate_fn=collate_fn
         )
-
-        dataloader.dataset.set_epoch(epoch)
-        for (k, sample) in enumerate(dataloader):
-            print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'])
-            if k == 20:
-                break
-
-        # End the timer
-        end_time = time.time()
-
-        # Calculate the elapsed time
-        elapsed_time = end_time - start_time
-
-        # Log the elapsed time
-        logger.info(f"Elapsed time for fetching 20 batches: {elapsed_time:.2f} seconds")
 
     else:
         print(f"Invalid option: {option}. Please choose 1, 2, or 3.")
         sys.exit(1)
+
+    dataloader.dataset.set_epoch(epoch)
+    for (k, sample) in enumerate(dataloader):
+        print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'], sample["x"].shape, sample["x_surf"].shape)
+        if k == 20:
+            break
+
+    # End the timer
+    end_time = time.time()
+
+    # Calculate the elapsed time
+    elapsed_time = end_time - start_time
+
+    # Log the elapsed time
+    logger.info(f"Elapsed time for fetching 20 batches: {elapsed_time:.2f} seconds")

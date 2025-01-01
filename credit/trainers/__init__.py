@@ -29,6 +29,10 @@ trainer_types = {
         TrainerMultiStepGradAccum,
         "Loading a multi-step trainer that uses gradient accumulation.",
     ),
+    "universal": (
+        TrainerMultiStepGradAccum,
+        "Loading a single or multi-step trainer that uses gradient accumulation on forecast lengths > 1.",
+    ),
     "multi-step-concat": (
         TrainerMultiStepConcat,
         "Loading a multi-step trainer that uses concatenation (see modulus-makani).",
