@@ -30,7 +30,7 @@ from credit.seed import seed_everything
 from credit.data import (
     concat_and_reshape,
     reshape_only,
-    Predict_Dataset_Iter,
+    Predict_Dataset,
 )
 
 from credit.transforms import load_transforms, Normalize_ERA5_and_Forcing
@@ -167,7 +167,7 @@ def predict(rank, world_size, conf, p):
 
     # ----------------------------------------------------------------- #\
     # get dataset
-    dataset = Predict_Dataset_Iter(
+    dataset = Predict_Dataset(
         conf,
         varname_upper_air,
         varname_surface,
