@@ -26,7 +26,7 @@ import optuna
 from credit.data import concat_and_reshape, reshape_only
 from credit.models.checkpoint import TorchFSDPCheckpointIO
 from credit.scheduler import update_on_batch, update_on_epoch
-from credit.trainers.utils import cleanup, accum_log
+from credit.trainers.utils import cleanup, accum_log, cycle
 from credit.trainers.base_trainer import BaseTrainer
 from credit.postblock import GlobalMassFixer, GlobalWaterFixer, GlobalEnergyFixer
 
@@ -113,7 +113,7 @@ class Trainer(BaseTrainer):
             )
 
         batch_group_generator = tqdm.tqdm(
-            enumerate(trainloader),
+            range(batches_per_epoch),
             total=batches_per_epoch,
             leave=True,
             disable=True if self.rank > 0 else False,
@@ -121,7 +121,10 @@ class Trainer(BaseTrainer):
 
         results_dict = defaultdict(list)
 
-        for i, batch in batch_group_generator:
+        dl = cycle(trainloader)
+        for i in batch_group_generator:
+            batch = next(dl)  # Get the next batch from the iterator
+            
             # training log
             logs = {}
             # loss
@@ -409,13 +412,15 @@ class Trainer(BaseTrainer):
             )
 
         batch_group_generator = tqdm.tqdm(
-            enumerate(valid_loader),
+            range(valid_batches_per_epoch),
             total=valid_batches_per_epoch,
             leave=True,
             disable=True if self.rank > 0 else False,
         )
 
-        for i, batch in batch_group_generator:
+        dl = cycle(valid_loader)
+        for i in batch_group_generator:
+            batch = next(dl)
             with torch.no_grad():
                 if "x_surf" in batch:
                     # combine x and x_surf

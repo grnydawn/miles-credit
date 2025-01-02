@@ -294,6 +294,16 @@ class BaseTrainer(ABC):
                     epoch
                 )  # Ensure we don't start in the middle of a forecast epoch-over-epoch
 
+            # Valid shouldnt depend on epoch, but we need to call set_epoch for consistency
+            if not conf["trainer"]["skip_validation"]:
+                with torch.no_grad():
+                    # set the epoch in the dataset and sampler to ensure distributed randomness is handled correctly
+                    if hasattr(valid_loader, "sampler") and hasattr(valid_loader.sampler, "set_epoch"):
+                        valid_loader.sampler.set_epoch(epoch)
+
+                    if hasattr(valid_loader.dataset, "set_epoch"):
+                        valid_loader.dataset.set_epoch(epoch)
+
             ############
             #
             # Train

@@ -151,10 +151,16 @@ class Trainer(BaseTrainer):
 
         # set up a custom tqdm
         if not isinstance(trainloader.dataset, IterableDataset):
+            # Check if the dataset has its own batches_per_epoch method
+            if hasattr(trainloader.dataset, "batches_per_epoch"):
+                dataset_batches_per_epoch = trainloader.dataset.batches_per_epoch()
+            else:
+                dataset_batches_per_epoch = len(trainloader)
+            # Use the user-given number if not larger than the dataset
             batches_per_epoch = (
                 batches_per_epoch
-                if 0 < batches_per_epoch < len(trainloader)
-                else len(trainloader)
+                if 0 < batches_per_epoch < dataset_batches_per_epoch
+                else dataset_batches_per_epoch
             )
 
         batch_group_generator = tqdm.tqdm(
