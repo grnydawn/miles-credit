@@ -55,6 +55,9 @@ def predict(rank, world_size, conf, p):
     if conf["predict"]["mode"] in ["fsdp", "ddp"]:
         setup(rank, world_size, conf["predict"]["mode"])
 
+    # Set up dataloading
+    data_config = setup_data_loading(conf)
+
     # infer device id from rank
     if torch.cuda.is_available():
         device = torch.device(f"cuda:{rank % torch.cuda.device_count()}")
@@ -148,7 +151,8 @@ def predict(rank, world_size, conf, p):
         sst_forcing=data_config['sst_forcing'],
         batch_size=batch_size,
         rank=rank,
-        world_size=world_size
+        world_size=world_size,
+        skip_target=True
     )
 
     # Use a custom DataLoader so we get the len correct
@@ -202,7 +206,7 @@ def predict(rank, world_size, conf, p):
         save_datetimes = [0] * len(forecasts)
 
         # model inference loop
-        for k, batch in enumerate(data_loader):
+        for batch in data_loader:
             batch_size = batch["datetime"].shape[0]
             forecast_step = batch["forecast_step"].item()
 
@@ -227,20 +231,6 @@ def predict(rank, world_size, conf, p):
                 if "x_forcing_static" in batch:
                     x_forcing_batch = batch["x_forcing_static"][batch_idx:batch_idx+1].to(device).permute(0, 2, 1, 3, 4).float()
                     x = torch.cat((x, x_forcing_batch), dim=1)
-
-                # Load y-truth
-                if "y_surf" in batch:
-                    y = concat_and_reshape(
-                        batch["y"][batch_idx:batch_idx+1],
-                        batch["y_surf"][batch_idx:batch_idx+1]).to(device).float()
-                else:
-                    y = reshape_only(batch["y"][batch_idx:batch_idx+1]).to(device).float()
-
-                if "y_diag" in batch:
-                    y_diag_batch = (
-                        batch["y_diag"].to(device).permute(0, 2, 1, 3, 4)
-                    )
-                    y = torch.cat((y, y_diag_batch), dim=1).to(device).float()
 
                 # Clamp if needed
                 if flag_clamp:
@@ -268,7 +258,6 @@ def predict(rank, world_size, conf, p):
 
                 # Transform predictions
                 y_pred = state_transformer.inverse_transform(y_pred.cpu())
-                y = state_transformer.inverse_transform(y.cpu())
 
                 if "use_laplace_filter" in conf["predict"] and conf["predict"]["use_laplace_filter"]:
                     y_pred = dpf.diff_lap2d_filt(y_pred.to(device).squeeze()).unsqueeze(0).unsqueeze(2).cpu()
@@ -443,17 +432,13 @@ if __name__ == "__main__":
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
-    # ======================================================== #
     # handling config args
     conf = credit_main_parser(
         conf, parse_training=False, parse_predict=True, print_summary=False
     )
     predict_data_check(conf, print_summary=False)
-    data_config = setup_data_loading(conf)
-    # ======================================================== #
 
     # create a save location for rollout
-    # ---------------------------------------------------- #
     assert (
         "save_forecast" in conf["predict"]
     ), "Please specify the output dir through conf['predict']['save_forecast']"
@@ -461,7 +446,7 @@ if __name__ == "__main__":
     forecast_save_loc = conf["predict"]["save_forecast"]
     os.makedirs(forecast_save_loc, exist_ok=True)
 
-    print("Save roll-outs to {}".format(forecast_save_loc))
+    logging.info("Save roll-outs to {}".format(forecast_save_loc))
 
     # Create a project directory (to save launch.sh and model.yml) if they do not exist
     save_loc = os.path.expandvars(conf["save_loc"])
@@ -499,7 +484,7 @@ if __name__ == "__main__":
             forecasts = subsets[subset - 1]  # Select the subset based on subset_size
             conf["predict"]["forecasts"] = forecasts
 
-    seed = 1000 if "seed" not in conf else conf["seed"]
+    seed = conf["seed"]
     seed_everything(seed)
 
     local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])

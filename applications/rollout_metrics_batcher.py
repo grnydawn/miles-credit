@@ -6,7 +6,7 @@ import sys
 import yaml
 import logging
 import warnings
-from glob import glob
+import multiprocessing as mp
 from pathlib import Path
 from argparse import ArgumentParser
 from collections import defaultdict
@@ -26,12 +26,8 @@ import torch
 from credit.models import load_model
 from credit.seed import seed_everything
 from credit.data import (
-    Predict_Dataset,
     concat_and_reshape,
-    reshape_only,
-    generate_datetime,
-    nanoseconds_to_year,
-    hour_to_nanoseconds,
+    reshape_only
 )
 from credit.datasets import setup_data_loading
 from credit.transforms import load_transforms, Normalize_ERA5_and_Forcing
@@ -43,8 +39,6 @@ from credit.distributed import distributed_model_wrapper, setup, get_rank_info
 from credit.models.checkpoint import load_model_state, load_state_dict_error_handler
 from credit.postblock import GlobalMassFixer, GlobalWaterFixer, GlobalEnergyFixer
 from credit.parser import credit_main_parser, predict_data_check
-from torch.utils.data import get_worker_info
-from torch.utils.data.distributed import DistributedSampler
 from credit.datasets.era5_predict_batcher import (
     BatchForecastLenDataLoader,
     Predict_Dataset_Batcher
@@ -547,16 +541,9 @@ if __name__ == "__main__":
             forecasts = subsets[subset - 1]  # Select the subset based on subset_size
             conf["predict"]["forecasts"] = forecasts
 
-    seed = 1000 if "seed" not in conf else conf["seed"]
+    seed = conf["seed"]
     seed_everything(seed)
 
-    # if conf["predict"]["mode"] in ["fsdp", "ddp"]:  # multi-gpu inference
-    #     local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])
-    #     _ = predict(world_rank, world_size, conf, backend)
-    # else:  # single device inference
-    #     _ = predict(0, 1, conf, backend)
-
-    import multiprocessing as mp
     with mp.Pool(num_cpus) as p:
         if conf["predict"]["mode"] in ["fsdp", "ddp"]:  # multi-gpu inference
             local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])
