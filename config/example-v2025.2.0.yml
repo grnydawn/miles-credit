@@ -383,6 +383,16 @@ predict:
     # A directory called metrics will be added to the save_forecast field below.
     # To instead save the states to file (netcdf), run rollout_to_metrics.py. You will need to post-process
     # all the data with this option. A directory called netcdf will be added to the save_forecast field
+    
+
+    # the keyword that controls GPU usage
+    # fsdp: fully sharded data parallel
+    # ddp: distributed data parallel
+    # none: single-GPU training
+    mode: none
+
+    # Set the batch_size for the prediction inference mode (default is 1)
+    batch_size: 1
 
     forecasts:
         type: "custom"       # keep it as "custom". See also credit.forecast
