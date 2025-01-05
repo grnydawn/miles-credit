@@ -320,6 +320,7 @@ class Trainer(BaseTrainer):
                 if distributed:
                     torch.distributed.barrier()
                     
+                scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=grad_max_norm)
                 scaler.step(optimizer)
                 scaler.update()
