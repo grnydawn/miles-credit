@@ -623,6 +623,7 @@ class Trainer(BaseTrainer):
                     torch.distributed.barrier()
 
                 results_dict["valid_loss"].append(batch_loss[0].item())
+                results_dict["valid_forecast_len"].append(forecast_len + 1)
 
                 stop_forecast = False
 
