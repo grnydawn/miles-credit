@@ -320,12 +320,10 @@ class Trainer(BaseTrainer):
                 if distributed:
                     torch.distributed.barrier()
 
-                # apply gradient clipping if the config val is not None
                 if grad_max_norm is not None:
-                    torch.nn.utils.clip_grad_norm_(
-                        self.model.parameters(), max_norm=grad_max_norm
-                    )
-
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=grad_max_norm)
+        
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad()
