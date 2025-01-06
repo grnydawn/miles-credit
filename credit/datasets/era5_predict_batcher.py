@@ -118,7 +118,8 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
         rank=0,
         world_size=1,
         skip_periods=None,
-        batch_size=1
+        batch_size=1,
+        skip_target=False
     ):
         """
         Initialize the ERA5_and_Forcing_Dataset
@@ -142,6 +143,7 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
         - skip_periods (int, optional): Number of periods to skip between samples.
         - max_forecast_len (int, optional): Maximum length of the forecast sequence.
         - sst_forcing (optional):
+        - skip_target: Do not return y truth data
         Returns:
         - sample (dict): A dictionary containing historical_ERA5_images,
                                                  target_ERA5_images,
@@ -156,6 +158,7 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
         self.rank = rank
         self.world_size = world_size
         self.batch_size = batch_size
+        self.skip_target = skip_target
 
         # skip periods
         self.skip_periods = skip_periods
@@ -590,21 +593,22 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
                 next_file_idx = self.filenames.index(self.filenames[i_file]) + 1
                 if next_file_idx >= len(self.filenames):
                     raise OSError("End of available data reached.")
-
-                sliced_y = self.load_zarr_as_input(i_file, i_init_end, i_init_end, mode="target")
+                # Input data
                 sliced_x_next = self.load_zarr_as_input(next_file_idx, 0, self.history_len, mode="input")
-                sliced_y_next = self.load_zarr_as_input(next_file_idx, 0, 1, mode="target")
-
                 sliced_x = xr.concat([sliced_x, sliced_x_next], dim="time").isel(time=slice(0, self.history_len))
-                sliced_y = xr.concat([sliced_y, sliced_y_next], dim="time").isel(time=slice(self.history_len, self.history_len + 1))
-            else:
+                # Truth data
+                if not self.skip_target:
+                    sliced_y = self.load_zarr_as_input(i_file, i_init_end, i_init_end, mode="target")
+                    sliced_y_next = self.load_zarr_as_input(next_file_idx, 0, 1, mode="target")
+                    sliced_y = xr.concat([sliced_y, sliced_y_next], dim="time").isel(
+                        time=slice(self.history_len, self.history_len + 1))
+            elif not self.skip_target:
                 sliced_y = self.load_zarr_as_input(i_file, i_init_end + 1, i_init_end + 1, mode="target")
 
             # Transform data
-            sample = {
-                "historical_ERA5_images": sliced_x,
-                "target_ERA5_images": sliced_y,
-            }
+            sample = {"historical_ERA5_images": sliced_x}
+            if not self.skip_target:
+                sample["target_ERA5_images"] = sliced_y
             if self.transform:
                 sample = self.transform(sample)
 

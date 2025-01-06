@@ -217,167 +217,248 @@ def predict(rank, world_size, conf, backend=None, p=None):
             device=device,
         )
 
+    # Bred Vector Integration
+    # Add the following variables at the start of your code for bred vector parameters
+    perturbation_size = 0.01   # Magnitude of the initial perturbation
+    epsilon = 0.5             # Rescaling factor for bred vectors
+    num_cycles = 3            # Number of bred vector cycles
+    results = []              # Results storage for ensemble predictions
+    ensemble_members = []     # To store each ensemble forecast
+
     # Rollout
     with torch.no_grad():
-        # forecast count = a constant for each run
         forecast_count = 0
-
-        # y_pred allocation and results tracking
         results = []
+        save_datetimes = [0] * len(forecasts)
+        ensemble_members = []
 
         # model inference loop
         for k, batch in enumerate(data_loader):
             batch_size = batch["datetime"].shape[0]
             forecast_step = batch["forecast_step"].item()
-            save_datetimes = [0] * batch_size
 
-            # Initial input processing
+            # Set up dictionaries for metrics results
+            metrics_results = [defaultdict(list) for _ in range(batch_size)]
+
+            # Process initial conditions and reshape data
             if forecast_step == 1:
-                # Set up dictionaries for metrics results
-                metrics_results = [defaultdict(list) for _ in range(batch_size)]
+                # Handle datetime information for the batch
+                date_times = batch["datetime"].cpu().numpy()
+                init_datetimes = [datetime.utcfromtimestamp(dt) for dt in date_times]
+                init_datetime_strs = [dt.strftime("%Y-%m-%dT%HZ") for dt in init_datetimes]
+                save_datetimes[forecast_count:forecast_count+batch_size] = init_datetime_strs
 
-                # Process the entire batch at once
-                init_datetimes = [datetime.utcfromtimestamp(batch["datetime"][i].item()).strftime("%Y-%m-%dT%HZ") for i in range(batch_size)]
-                save_datetimes[forecast_count:forecast_count + batch_size] = init_datetimes
-
+                # Reshape input data for full batch
                 if "x_surf" in batch:
-                    x = concat_and_reshape(
+                    x_batch = concat_and_reshape(
                         batch["x"],
                         batch["x_surf"]
                     ).to(device).float()
                 else:
-                    x = reshape_only(batch["x"]).to(device).float()
+                    x_batch = reshape_only(batch["x"]).to(device).float()
 
-            # Add forcing and static variables
-            if "x_forcing_static" in batch:
-                x_forcing_batch = batch["x_forcing_static"].to(device).permute(0, 2, 1, 3, 4).float()
-                x = torch.cat((x, x_forcing_batch), dim=1)
+                # Add forcing and static variables
+                if "x_forcing_static" in batch:
+                    x_forcing_batch = batch["x_forcing_static"].to(device).permute(0, 2, 1, 3, 4).float()
+                    x_batch = torch.cat((x_batch, x_forcing_batch), dim=1)
 
-            # Load y-truth
-            if "y_surf" in batch:
-                y = concat_and_reshape(
-                    batch["y"],
-                    batch["y_surf"]).to(device).float()
-            else:
-                y = reshape_only(batch["y"]).to(device).float()
-
-            if "y_diag" in batch:
-                y_diag_batch = (
-                    batch["y_diag"].to(device).permute(0, 2, 1, 3, 4)
-                )
-                y = torch.cat((y, y_diag_batch), dim=1).to(device).float()
-
-            # Clamp if needed
-            if flag_clamp:
-                x = torch.clamp(x, min=clamp_min, max=clamp_max)
-
-            y_pred = model(x)
-
-            # Post-processing blocks
-            if flag_mass_conserve:
-                if forecast_step == 1:
-                    x_init = x.clone()
-                input_dict = {"y_pred": y_pred, "x": x_init}
-                input_dict = opt_mass(input_dict)
-                y_pred = input_dict["y_pred"]
-
-            if flag_water_conserve:
-                input_dict = {"y_pred": y_pred, "x": x}
-                input_dict = opt_water(input_dict)
-                y_pred = input_dict["y_pred"]
-
-            if flag_energy_conserve:
-                input_dict = {"y_pred": y_pred, "x": x}
-                input_dict = opt_energy(input_dict)
-                y_pred = input_dict["y_pred"]
-
-            # Transform predictions
-            y_pred = state_transformer.inverse_transform(y_pred.cpu())
-            y = state_transformer.inverse_transform(y.cpu())
-
-            if "use_laplace_filter" in conf["predict"] and conf["predict"]["use_laplace_filter"]:
-                y_pred = dpf.diff_lap2d_filt(y_pred.to(device).squeeze()).unsqueeze(0).unsqueeze(2).cpu()
-
-            # Calculate correct datetime for current forecast
-            init_datetime = [datetime.utcfromtimestamp(t) for t in batch["datetime"]]
-            utc_datetime = [t + timedelta(hours=lead_time_periods) for t in init_datetime]
-            _y_pred = y_pred.clone()
-
-            # Prepare for next iteration
-            y_pred = state_transformer.transform_array(y_pred).to(device)
-
-            if history_len == 1:
-                if "y_diag" in batch:
-                    x = y_pred[:, :-varnum_diag, ...].detach()
+                # Load y-truth
+                if "y_surf" in batch:
+                    y_batch = concat_and_reshape(
+                        batch["y"],
+                        batch["y_surf"]
+                    ).to(device).float()
                 else:
-                    x = y_pred.detach()
-            else:
-                if static_dim_size == 0:
-                    x_detach = x[:, :, 1:, ...].detach()
-                else:
-                    x_detach = x[:, :-static_dim_size, 1:, ...].detach()
+                    y_batch = reshape_only(batch["y"]).to(device).float()
 
                 if "y_diag" in batch:
-                    x = torch.cat([x_detach, y_pred[:, :-varnum_diag, ...].detach()], dim=2)
-                else:
-                    x = torch.cat([x_detach, y_pred.detach()], dim=2)
+                    y_diag_batch = batch["y_diag"].to(device).permute(0, 2, 1, 3, 4)
+                    y_batch = torch.cat((y_batch, y_diag_batch), dim=1).to(device).float()
 
-            # Process each item in the batch
-            for j in range(batch_size):
-                # Compute the metrics in parallel
-                result = p.apply_async(
-                    compute_metrics,
-                    (
-                        metrics,
-                        _y_pred[j].unsqueeze(0),
-                        y[j].unsqueeze(0),
-                        batch["datetime"][j].item(),
-                        forecast_step,
-                        utc_datetime[j]
+                # Clamp if needed
+                if flag_clamp:
+                    x_batch = torch.clamp(x_batch, min=clamp_min, max=clamp_max)
+
+                # Generate bred vectors
+                bred_vectors = []
+                for _ in range(num_cycles):
+                    # Create initial perturbation for entire batch
+                    delta_x0 = perturbation_size * torch.randn_like(x_batch)
+                    x_perturbed = x_batch.clone() + delta_x0
+
+                    # Run both unperturbed and perturbed forecasts
+                    x_unperturbed = x_batch.clone()
+
+                    if flag_clamp:
+                        x_unperturbed = torch.clamp(x_unperturbed, min=clamp_min, max=clamp_max)
+                        x_perturbed = torch.clamp(x_perturbed, min=clamp_min, max=clamp_max)
+
+                    # Batch predictions
+                    x_unperturbed_pred = model(x_unperturbed)
+                    x_perturbed_pred = model(x_perturbed)
+
+                    # Add forcing and static variables
+                    if "x_forcing_static" in batch:
+                        x_unperturbed_pred = torch.cat((x_unperturbed_pred, x_forcing_batch), dim=1)
+                        x_perturbed_pred = torch.cat((x_perturbed_pred, x_forcing_batch), dim=1)
+
+                    # Compute bred vectors
+                    delta_x = x_perturbed_pred - x_unperturbed_pred
+                    norm = torch.norm(delta_x, p=2, dim=2, keepdim=True)  # Calculate norm across channels, keeping dimensions
+                    delta_x_rescaled = epsilon * delta_x / (1e-8 + norm)
+                    bred_vectors.append(delta_x_rescaled)
+
+                # Initialize ensemble members for the entire batch
+                ensemble_members = [x_batch.clone() + bv for bv in bred_vectors]
+
+            # Batch predict for all ensemble members
+            y_preds = []
+            for member in ensemble_members:
+                if flag_clamp:
+                    member = torch.clamp(member, min=clamp_min, max=clamp_max)
+                y_pred = model(member)
+                y_preds.append(y_pred)
+
+            # Process results individually for saving and metrics
+            for j, batch_idx in enumerate(range(batch_size)):
+                init_datetime = datetime.utcfromtimestamp(batch["datetime"][batch_idx].item())
+                utc_datetime = init_datetime + timedelta(hours=lead_time_periods)
+
+                # Process each ensemble member's predictions
+                for member_idx, y_pred in enumerate(y_preds):
+                    # Extract this batch item's prediction
+                    y_pred_item = y_pred[batch_idx:batch_idx+1]
+
+                    # Post-process the prediction
+                    y_pred_item = state_transformer.inverse_transform(y_pred_item.cpu())
+                    y_true = state_transformer.inverse_transform(y_batch[batch_idx:batch_idx+1].cpu())
+
+                    if "use_laplace_filter" in conf["predict"] and conf["predict"]["use_laplace_filter"]:
+                        y_pred_item = dpf.diff_lap2d_filt(y_pred_item.to(device).squeeze()).unsqueeze(0).unsqueeze(2).cpu()
+
+                    # Apply conservation constraints
+                    if flag_mass_conserve:
+                        if forecast_step == 1:
+                            x_init = ensemble_members[member_idx][batch_idx:batch_idx+1].clone()
+                        input_dict = {"y_pred": y_pred_item, "x": x_init}
+                        input_dict = opt_mass(input_dict)
+                        y_pred_item = input_dict["y_pred"]
+
+                    if flag_water_conserve:
+                        input_dict = {"y_pred": y_pred_item, "x": ensemble_members[member_idx][batch_idx:batch_idx+1]}
+                        input_dict = opt_water(input_dict)
+                        y_pred_item = input_dict["y_pred"]
+
+                    if flag_energy_conserve:
+                        input_dict = {"y_pred": y_pred_item, "x": ensemble_members[member_idx][batch_idx:batch_idx+1]}
+                        input_dict = opt_energy(input_dict)
+                        y_pred_item = input_dict["y_pred"]
+
+                    # Compute metrics
+                    result = p.apply_async(
+                        compute_metrics,
+                        (
+                            metrics,
+                            y_pred_item,
+                            y_true,
+                            batch["datetime"][batch_idx].item(),
+                            forecast_step,
+                            utc_datetime
+                        )
                     )
-                )
-                results.append((j, result))  # Store the batch index with the result
+                    results.append((j, result))
 
-                # Print to screen
-                print_str = f"Forecast: {forecast_count + 1 + j} "
-                print_str += f"Date: {utc_datetime[j].strftime('%Y-%m-%d %H:%M:%S')} "
-                print_str += f"Hour: {forecast_step * lead_time_periods} "
-                print(print_str)
+                    # Update ensemble member for next timestep
+                    y_pred_item = state_transformer.transform_array(y_pred_item).to(device)
 
+                    if history_len == 1:
+                        if "y_diag" in batch:
+                            next_state = y_pred_item[:, :-varnum_diag, ...].detach()
+                        else:
+                            next_state = y_pred_item.detach()
+                    else:
+                        if static_dim_size == 0:
+                            x_detach = ensemble_members[member_idx][batch_idx:batch_idx+1, :, 1:, ...].detach()
+                        else:
+                            x_detach = ensemble_members[member_idx][batch_idx:batch_idx+1, :-static_dim_size, 1:, ...].detach()
+
+                        if "y_diag" in batch:
+                            next_state = torch.cat([x_detach, y_pred_item[:, :-varnum_diag, ...].detach()], dim=2)
+                        else:
+                            next_state = torch.cat([x_detach, y_pred_item.detach()], dim=2)
+
+                    # Add forcing and static variables after state update
+                    if "x_forcing_static" in batch:
+                        x_forcing_batch = batch["x_forcing_static"][batch_idx:batch_idx+1].to(device).permute(0, 2, 1, 3, 4).float()
+                        next_state = torch.cat((next_state, x_forcing_batch), dim=1)
+
+                    # Update the ensemble member with the new state
+                    ensemble_members[member_idx][batch_idx:batch_idx+1] = next_state.detach()
+
+                    # Print output to screen
+                    print_str = f"Forecast: {forecast_count + 1 + j} "
+                    print_str += f"Date: {utc_datetime.strftime('%Y-%m-%d %H:%M:%S')} "
+                    print_str += f"Hour: {forecast_step * lead_time_periods} "
+                    print_str += f"Ensemble member: {member_idx + 1} "
+                    print(print_str)
+
+                # Memory cleanup
                 torch.cuda.empty_cache()
                 gc.collect()
 
-            if batch["stop_forecast"].item():
-                # Wait for processes to finish and collect metrics
+            # Handle forecast completion
+            if batch["stop_forecast"][0]:
+                # Wait for processes to finish and gather results
                 for batch_idx, result in results:
-                    metric_dict = result.get()
-                    for h, v in metric_dict.items():
+                    for h, v in result.get().items():
                         metrics_results[batch_idx][h].append(v)
 
-                # Save metrics files
-                save_location = os.path.join(
-                    os.path.expandvars(conf["save_loc"]), "metrics"
-                )
+                # Save results
+                save_location = os.path.join(os.path.expandvars(conf["save_loc"]), "metrics")
                 os.makedirs(save_location, exist_ok=True)
-
                 for j in range(batch_size):
                     df = pd.DataFrame(metrics_results[j])
                     df.to_csv(
-                        os.path.join(save_location, f"{init_datetimes[j]}.csv")
+                        os.path.join(save_location, f"{init_datetime_strs[j]}.csv")
+                    )
+                    # Compute the mean and std for the ensemble
+                    # Drop any Unnamed columns
+                    df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+
+                    # Group by datetime and compute mean and std, excluding 'forecast_step'
+                    ave_df = df.groupby("datetime").agg(['mean', 'std']).reset_index()
+
+                    # Flatten the MultiIndex columns created by aggregation
+                    ave_df.columns = ['_'.join(col).rstrip('_') for col in ave_df.columns]
+
+                    # Drop forecast_step_std column
+                    ave_df = ave_df.drop(columns=['forecast_step_std'], errors='ignore')
+
+                    # Rename forecast_step_mean to forecast_step
+                    ave_df.rename(columns={'forecast_step_mean': 'forecast_step'}, inplace=True)
+
+                    cols = list(ave_df.columns)
+                    cols.remove('forecast_step')  # Remove forecast_step from its current position
+                    cols.insert(1, 'forecast_step')  # Insert forecast_step as the second column
+                    ave_df = ave_df[cols]
+
+                    ave_df.to_csv(
+                        os.path.join(save_location, f"{init_datetime_strs[j]}_ensemble.csv")
                     )
 
-                # Clear everything
-                results = []
-                y_pred = None
+                results.clear()
                 gc.collect()
 
                 if distributed:
                     torch.distributed.barrier()
 
-                forecast_count += batch_size
+                # Reset for next forecast
+                if j == (batch_size - 1):
+                    ensemble_members.clear()
+                    forecast_count += batch_size
 
-        if distributed:
-            torch.distributed.barrier()
+    if distributed:
+        torch.distributed.barrier()
 
     return 1
 
