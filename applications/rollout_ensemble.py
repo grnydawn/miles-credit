@@ -43,6 +43,7 @@ from credit.datasets.era5_predict_batcher import (
     BatchForecastLenDataLoader,
     Predict_Dataset_Batcher
 )
+from credit.ensemble.bred_vector import generate_bred_vectors
 
 
 logger = logging.getLogger(__name__)
@@ -279,37 +280,18 @@ def predict(rank, world_size, conf, backend=None, p=None):
                 if flag_clamp:
                     x_batch = torch.clamp(x_batch, min=clamp_min, max=clamp_max)
 
-                # Generate bred vectors
-                bred_vectors = []
-                for _ in range(num_cycles):
-                    # Create initial perturbation for entire batch
-                    delta_x0 = perturbation_size * torch.randn_like(x_batch)
-                    x_perturbed = x_batch.clone() + delta_x0
-
-                    # Run both unperturbed and perturbed forecasts
-                    x_unperturbed = x_batch.clone()
-
-                    if flag_clamp:
-                        x_unperturbed = torch.clamp(x_unperturbed, min=clamp_min, max=clamp_max)
-                        x_perturbed = torch.clamp(x_perturbed, min=clamp_min, max=clamp_max)
-
-                    # Batch predictions
-                    x_unperturbed_pred = model(x_unperturbed)
-                    x_perturbed_pred = model(x_perturbed)
-
-                    # Add forcing and static variables
-                    if "x_forcing_static" in batch:
-                        x_unperturbed_pred = torch.cat((x_unperturbed_pred, x_forcing_batch), dim=1)
-                        x_perturbed_pred = torch.cat((x_perturbed_pred, x_forcing_batch), dim=1)
-
-                    # Compute bred vectors
-                    delta_x = x_perturbed_pred - x_unperturbed_pred
-                    norm = torch.norm(delta_x, p=2, dim=2, keepdim=True)  # Calculate norm across channels, keeping dimensions
-                    delta_x_rescaled = epsilon * delta_x / (1e-8 + norm)
-                    bred_vectors.append(delta_x_rescaled)
-
-                # Initialize ensemble members for the entire batch
-                ensemble_members = [x_batch.clone() + bv for bv in bred_vectors]
+                # Initialize bred-vector initial conditions for the batch
+                ensemble_members = generate_bred_vectors(
+                    x_batch,
+                    model,
+                    x_forcing_batch=x_forcing_batch if "x_forcing_static" in batch else None,
+                    num_cycles=num_cycles,
+                    perturbation_size=perturbation_size,
+                    epsilon=epsilon,
+                    flag_clamp=flag_clamp,
+                    clamp_min=clamp_min if flag_clamp else None,
+                    clamp_max=clamp_max if flag_clamp else None
+                )
 
             # Batch predict for all ensemble members
             y_preds = []
