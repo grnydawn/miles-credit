@@ -76,7 +76,7 @@ class Trainer(BaseTrainer):
             flag_clamp = True
             clamp_min = float(conf["data"]["data_clamp"][0])
             clamp_max = float(conf["data"]["data_clamp"][1])
-        
+
         # ====================================================== #
         # postblock opts outside of model
         post_conf = conf["model"]["post_conf"]
@@ -124,6 +124,7 @@ class Trainer(BaseTrainer):
         dl = cycle(trainloader)
         for i in batch_group_generator:
             batch = next(dl)  # Get the next batch from the iterator
+            
             # training log
             logs = {}
             # loss
@@ -174,7 +175,7 @@ class Trainer(BaseTrainer):
                 if flag_clamp:
                     x = torch.clamp(x, min=clamp_min, max=clamp_max)
                     y = torch.clamp(y, min=clamp_min, max=clamp_max)
-                
+
                 # single step predict
                 y_pred = self.model(x)
 
@@ -268,7 +269,10 @@ class Trainer(BaseTrainer):
             if distributed:
                 torch.distributed.barrier()
                 
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=grad_max_norm)
+            if grad_max_norm is not None:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=grad_max_norm)
+
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad()
@@ -367,7 +371,7 @@ class Trainer(BaseTrainer):
             flag_clamp = True
             clamp_min = float(conf["data"]["data_clamp"][0])
             clamp_max = float(conf["data"]["data_clamp"][1])
-        
+
         # ====================================================== #
         # postblock opts outside of model
         post_conf = conf["model"]["post_conf"]
@@ -459,7 +463,7 @@ class Trainer(BaseTrainer):
                 if flag_clamp:
                     x = torch.clamp(x, min=clamp_min, max=clamp_max)
                     y = torch.clamp(y, min=clamp_min, max=clamp_max)
-                
+
                 y_pred = self.model(x)
 
                 # ============================================= #
