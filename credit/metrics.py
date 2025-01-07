@@ -134,7 +134,10 @@ class LatWeightedMetricsClimatology:
 
     def get_climatology(self, forecast_datetime, variable):
         """Extract the climatology for the given forecast datetime and variable."""
-        forecast_datetime = datetime.utcfromtimestamp(forecast_datetime)
+        if isinstance(forecast_datetime, datetime):
+            pass
+        elif isinstance(forecast_datetime, int):
+            forecast_datetime = datetime.utcfromtimestamp(forecast_datetime) # Assumes integer datetime
         dayofyear = forecast_datetime.timetuple().tm_yday
         hour = forecast_datetime.hour
 
@@ -198,15 +201,14 @@ class LatWeightedMetricsClimatology:
                     pred_prime = anomalies_pred[:, i] - torch.mean(anomalies_pred[:, i])
                     y_prime = anomalies_y[:, i] - torch.mean(anomalies_y[:, i])
 
-                    # Add epsilon to avoid division by zero
-                    epsilon = 1e-7
+                    # Offset the denominator incase its zero.
                     denominator = (
                         torch.sqrt(
                             torch.sum(w_var * w_lat * pred_prime**2)
                             * torch.sum(w_var * w_lat * y_prime**2)
                         )
-                        + epsilon
                     )
+                    denominator = torch.maximum(denominator, torch.tensor(1e-8, device=denominator.device))
                     loss_dict[f"acc_{var}"] = (
                         torch.sum(w_var * w_lat * pred_prime * y_prime) / denominator
                     )
@@ -257,7 +259,7 @@ if __name__ == "__main__":
 
     # Open an example config
     with open(
-        "/glade/derecho/scratch/schreck/repos/miles-credit/production/multistep/wxformer_6h/model.yml"
+        "../config/example-v2025.2.0.yml"
     ) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
@@ -266,8 +268,7 @@ if __name__ == "__main__":
     )
 
     # Climatology file
-    fn = '/glade/campaign/cisl/aiml/ksha/CREDIT_arXiv/VERIF/verif_6h/ERA5_clim/ERA5_clim_1990_2019_6h_interp.nc'
-    climatology_data = xr.open_dataset(fn)
+    climatology_data = xr.open_dataset(conf["predict"]["climatology"])
 
     # Make some fake data
 

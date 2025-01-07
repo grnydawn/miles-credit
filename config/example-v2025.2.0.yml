@@ -33,7 +33,7 @@ data:
     # the time dimension MUST be the same as upper-air variables
     # files must have the listed variable names
     # surface variables will be normalized by the dataloader, users do not need to normalize them
-    surface_variables: ['sp', 't2m']
+    surface_variables: ['SP', 't2m']
     save_loc_surface: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/SixHourly_TOTAL_*'
 
     # dynamic forcing variables, must be YEARLY zarr or nc with (time, latitude, longitude) dims
@@ -47,7 +47,7 @@ data:
     # the time dimension MUST be the same as upper-air variables
     # files must have the listed variable names 
     # diagnostic variables will be normalized by the dataloader, users do not need to normalize them
-    diagnostic_variables: ['Z500', 'T500'] 
+    diagnostic_variables: ['Z500', 'T500', 'U500', 'V500', 'Q500'] 
     save_loc_diagnostic: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/SixHourly_TOTAL_*'
     
     # periodic forcing variables, must be a single zarr or nc with (time, latitude, longitude) dims
