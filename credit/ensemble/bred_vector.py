@@ -61,3 +61,58 @@ def generate_bred_vectors(
     # Initialize ensemble members for the entire batch
     initial_conditions = [x_batch.clone() + bv for bv in bred_vectors]
     return initial_conditions
+
+
+if __name__ == "__main__":
+    from credit.models import load_model
+    import logging
+
+    # Set up the logger
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger(__name__)
+
+    crossformer_config = {
+        "type": "crossformer",
+        "frames": 1,                          # Number of input states
+        "image_height": 640,                  # Number of latitude grids
+        "image_width": 1280,                  # Number of longitude grids
+        "levels": 16,                         # Number of upper-air variable levels
+        "channels": 4,                        # Upper-air variable channels
+        "surface_channels": 7,                # Surface variable channels
+        "input_only_channels": 0,             # Dynamic forcing, forcing, static channels
+        "output_only_channels": 0,            # Diagnostic variable channels
+        "patch_width": 1,                     # Number of latitude grids in each 3D patch
+        "patch_height": 1,                    # Number of longitude grids in each 3D patch
+        "frame_patch_size": 1,                # Number of input states in each 3D patch
+        "dim": [32, 64, 128, 256],            # Dimensionality of each layer
+        "depth": [2, 2, 2, 2],                # Depth of each layer
+        "global_window_size": [10, 5, 2, 1],  # Global window size for each layer
+        "local_window_size": 10,              # Local window size
+        "cross_embed_kernel_sizes": [         # Kernel sizes for cross-embedding
+            [4, 8, 16, 32],
+            [2, 4],
+            [2, 4],
+            [2, 4]
+        ],
+        "cross_embed_strides": [2, 2, 2, 2],  # Strides for cross-embedding
+        "attn_dropout": 0.0,                  # Dropout probability for attention layers
+        "ff_dropout": 0.0,                    # Dropout probability for feed-forward layers
+        "use_spectral_norm": True             # Whether to use spectral normalization
+    }
+
+    num_cycles = 5
+    input_tensor = torch.randn(1, 71, 1, 640, 1280).to("cuda")
+    model = load_model({"model": crossformer_config}).to("cuda")
+
+    initial_conditions = generate_bred_vectors(
+        input_tensor,
+        model,
+        num_cycles=num_cycles,
+        perturbation_size=0.01,
+        epsilon=0.01,
+    )
+
+    logger.info(f"Generated {num_cycles} bred-vector initial conditions.")
