@@ -13,15 +13,9 @@ from credit.scheduler import update_on_batch
 from credit.trainers.utils import cycle, accum_log
 from credit.trainers.base_trainer import BaseTrainer
 from credit.data import concat_and_reshape, reshape_only
-import optuna
-
-import os
-import pandas as pd
-import torch
-from credit.models.checkpoint import TorchFSDPCheckpointIO
-from credit.scheduler import update_on_epoch
-from credit.trainers.utils import cleanup
 from credit.postblock import GlobalMassFixer, GlobalWaterFixer, GlobalEnergyFixer
+import optuna
+import torch
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +148,8 @@ class Trainer(BaseTrainer):
             # Check if the dataset has its own batches_per_epoch method
             if hasattr(trainloader.dataset, "batches_per_epoch"):
                 dataset_batches_per_epoch = trainloader.dataset.batches_per_epoch()
+            elif hasattr(trainloader.sampler, "batches_per_epoch"):
+                dataset_batches_per_epoch = trainloader.sampler.batches_per_epoch()
             else:
                 dataset_batches_per_epoch = len(trainloader)
             # Use the user-given number if not larger than the dataset
@@ -417,6 +413,8 @@ class Trainer(BaseTrainer):
             # Check if the dataset has its own batches_per_epoch method
             if hasattr(valid_loader.dataset, "batches_per_epoch"):
                 dataset_batches_per_epoch = valid_loader.dataset.batches_per_epoch()
+            elif hasattr(valid_loader.sampler, "batches_per_epoch"):
+                dataset_batches_per_epoch = valid_loader.sampler.batches_per_epoch()
             else:
                 dataset_batches_per_epoch = len(valid_loader)
             # Use the user-given number if not larger than the dataset
@@ -645,258 +643,3 @@ class Trainer(BaseTrainer):
         gc.collect()
 
         return results_dict
-
-    def fit_deprecated(
-        self,
-        conf,
-        train_loader,
-        valid_loader,
-        optimizer,
-        train_criterion,
-        valid_criterion,
-        scaler,
-        scheduler,
-        metrics,
-        trial=False,
-    ):
-        save_loc = conf["save_loc"]
-        start_epoch = conf["trainer"]["start_epoch"]
-        epochs = conf["trainer"]["epochs"]
-        skip_validation = (
-            conf["trainer"]["skip_validation"]
-            if "skip_validation" in conf["trainer"]
-            else False
-        )
-
-        # Reload the results saved in the training csv if continuing to train
-        if start_epoch == 0:
-            results_dict = defaultdict(list)
-            # Set start_epoch to the length of the training log and train for one epoch
-            # This is a manual override, you must use train_one_epoch = True
-            if (
-                "train_one_epoch" in conf["trainer"]
-                and conf["trainer"]["train_one_epoch"]
-            ):
-                epochs = 1
-        else:
-            results_dict = defaultdict(list)
-            saved_results = pd.read_csv(os.path.join(f"{save_loc}", "training_log.csv"))
-            # Set start_epoch to the length of the training log and train for one epoch
-            # This is a manual override, you must use train_one_epoch = True
-            if (
-                "train_one_epoch" in conf["trainer"]
-                and conf["trainer"]["train_one_epoch"]
-            ):
-                start_epoch = len(saved_results)
-                epochs = start_epoch + 1
-
-            for key in saved_results.columns:
-                if key == "index":
-                    continue
-                results_dict[key] = list(saved_results[key])
-
-        for epoch in range(start_epoch, epochs):
-            logger.info(f"Starting epoch {epoch}")
-
-            # set the epoch in the dataset and sampler to ensure distribured randomness is handled correctly
-            if hasattr(train_loader, "sampler") and hasattr(
-                train_loader.sampler, "set_epoch"
-            ):
-                train_loader.sampler.set_epoch(epoch)  # Start a new forecast
-
-            if hasattr(train_loader.dataset, "set_epoch"):
-                train_loader.dataset.set_epoch(
-                    epoch
-                )  # Ensure we don't start in the middle of a forecast epoch-over-epoch
-
-            ############
-            #
-            # Train
-            #
-            ############
-
-            train_results = self.train_one_epoch(
-                epoch,
-                conf,
-                train_loader,
-                optimizer,
-                train_criterion,
-                scaler,
-                scheduler,
-                metrics,
-            )
-
-            ############
-            #
-            # Validation
-            #
-            ############
-
-            if skip_validation:
-                valid_results = train_results
-
-            else:
-                valid_results = self.validate(
-                    epoch, conf, valid_loader, valid_criterion, metrics
-                )
-
-            #################
-            #
-            # Save results
-            #
-            #################
-
-            # update the learning rate if epoch-by-epoch updates
-
-            if (
-                conf["trainer"]["use_scheduler"]
-                and conf["trainer"]["scheduler"]["scheduler_type"] in update_on_epoch
-            ):
-                if conf["trainer"]["scheduler"]["scheduler_type"] == "plateau":
-                    scheduler.step(results_dict["valid_acc"][-1])
-                else:
-                    scheduler.step()
-
-            # Put things into a results dictionary -> dataframe
-
-            results_dict["epoch"].append(epoch)
-            for name in ["loss", "acc", "mae"]:
-                results_dict[f"train_{name}"].append(
-                    np.mean(train_results[f"train_{name}"])
-                )
-                results_dict[f"valid_{name}"].append(
-                    np.mean(valid_results[f"valid_{name}"])
-                )
-            results_dict["train_forecast_len"].append(
-                np.mean(train_results["train_forecast_len"])
-            )
-            results_dict["lr"].append(optimizer.param_groups[0]["lr"])
-
-            df = pd.DataFrame.from_dict(results_dict).reset_index()
-
-            # Save the dataframe to disk
-
-            if trial:
-                df.to_csv(
-                    os.path.join(
-                        f"{save_loc}",
-                        "trial_results",
-                        f"training_log_{trial.number}.csv",
-                    ),
-                    index=False,
-                )
-            else:
-                df.to_csv(os.path.join(f"{save_loc}", "training_log.csv"), index=False)
-
-            ############
-            #
-            # Checkpoint
-            #
-            ############
-
-            if not trial:
-                if conf["trainer"]["mode"] != "fsdp":
-                    if self.rank == 0:
-                        # Save the current model
-
-                        logger.info(
-                            f"Saving model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}"
-                        )
-
-                        state_dict = {
-                            "epoch": epoch,
-                            "model_state_dict": self.model.state_dict(),
-                            "optimizer_state_dict": optimizer.state_dict(),
-                            "scheduler_state_dict": scheduler.state_dict()
-                            if conf["trainer"]["use_scheduler"]
-                            else None,
-                            "scaler_state_dict": scaler.state_dict(),
-                        }
-                        torch.save(state_dict, f"{save_loc}/checkpoint.pt")
-
-                else:
-                    logger.info(
-                        f"Saving FSDP model, optimizer, grad scaler, and learning rate scheduler states to {save_loc}"
-                    )
-
-                    # Initialize the checkpoint I/O handler
-
-                    checkpoint_io = TorchFSDPCheckpointIO()
-
-                    # Save model and optimizer checkpoints
-
-                    checkpoint_io.save_unsharded_model(
-                        self.model,
-                        os.path.join(save_loc, "model_checkpoint.pt"),
-                        gather_dtensor=True,
-                        use_safetensors=False,
-                        rank=self.rank,
-                    )
-                    checkpoint_io.save_unsharded_optimizer(
-                        optimizer,
-                        os.path.join(save_loc, "optimizer_checkpoint.pt"),
-                        gather_dtensor=True,
-                        rank=self.rank,
-                    )
-
-                    # Still need to save the scheduler and scaler states, just in another file for FSDP
-
-                    state_dict = {
-                        "epoch": epoch,
-                        "scheduler_state_dict": scheduler.state_dict()
-                        if conf["trainer"]["use_scheduler"]
-                        else None,
-                        "scaler_state_dict": scaler.state_dict(),
-                    }
-
-                    torch.save(state_dict, os.path.join(save_loc, "checkpoint.pt"))
-
-                # This needs updated!
-                # valid_loss = np.mean(valid_results["valid_loss"])
-                # # save if this is the best model seen so far
-                # if (self.rank == 0) and (np.mean(valid_loss) == min(results_dict["valid_loss"])):
-                #     if conf["trainer"]["mode"] == "ddp":
-                #         shutil.copy(f"{save_loc}/checkpoint_{self.device}.pt", f"{save_loc}/best_{self.device}.pt")
-                #     elif conf["trainer"]["mode"] == "fsdp":
-                #         if os.path.exists(f"{save_loc}/best"):
-                #             shutil.rmtree(f"{save_loc}/best")
-                #         shutil.copytree(f"{save_loc}/checkpoint", f"{save_loc}/best")
-                #     else:
-                #         shutil.copy(f"{save_loc}/checkpoint.pt", f"{save_loc}/best.pt")
-
-            # clear the cached memory from the gpu
-            torch.cuda.empty_cache()
-            gc.collect()
-
-            training_metric = "train_loss" if skip_validation else "valid_loss"
-
-            # Stop training if we have not improved after X epochs (stopping patience)
-            best_epoch = [
-                i
-                for i, j in enumerate(results_dict[training_metric])
-                if j == min(results_dict[training_metric])
-            ][0]
-            offset = epoch - best_epoch
-            if offset >= conf["trainer"]["stopping_patience"]:
-                logger.info(f"Trial {trial.number} is stopping early")
-                break
-
-            # Stop training if we get too close to the wall time
-            if "stop_after_epoch" in conf["trainer"]:
-                if conf["trainer"]["stop_after_epoch"]:
-                    break
-
-        training_metric = "train_loss" if skip_validation else "valid_loss"
-
-        best_epoch = [
-            i
-            for i, j in enumerate(results_dict[training_metric])
-            if j == min(results_dict[training_metric])
-        ][0]
-
-        result = {k: v[best_epoch] for k, v in results_dict.items()}
-
-        if conf["trainer"]["mode"] in ["fsdp", "ddp"]:
-            cleanup()
-
-        return result
