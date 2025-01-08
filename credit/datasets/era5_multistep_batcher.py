@@ -54,7 +54,7 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
         skip_periods=None,
         max_forecast_len=None,
         batch_size=1,
-        shuffle=True
+        shuffle=True,
     ):
         """
         Initialize the ERA5_and_Forcing_Dataset
@@ -272,7 +272,7 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
             rank=rank,
             shuffle=shuffle,
             seed=seed,
-            drop_last=True
+            drop_last=True,
         )
 
         # Initialize state variables for batch management
@@ -289,7 +289,7 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
             logger.warning(
                 f"Note that the batch size ({batch_size}) is larger than the number of data indices ({len(self.batch_indices)})"
                 f"Resetting the batch size to {len(self.batch_indices)}."
-                )
+            )
             self.batch_size = len(self.batch_indices)
 
     def initialize_batch(self):
@@ -413,13 +413,12 @@ class ERA5_MultiStep_Batcher(torch.utils.data.Dataset):
 
         batch["forecast_step"] = torch.tensor([self.forecast_step_counts[0]])
         batch["stop_forecast"] = batch["forecast_step"] == self.forecast_len + 1
-        batch["datetime"] = batch["datetime"].view(-1, self.batch_size)  # reshape
+        batch["datetime"] = batch["datetime"].view(-1, len(self.current_batch_indices))
 
         return batch
 
 
 class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
-
     def __init__(self, *args, num_workers=4, **kwargs):
         """
         Initialize the MultiprocessingBatcher with a configurable number of workers.
@@ -467,7 +466,7 @@ class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
         # Split tasks among workers
         processes = []
         splits = np.array_split(range(len(args)), self.num_workers)
-        start_ends = [(split[0], split[-1] + 1) for split in splits]
+        start_ends = [(split[0], split[-1] + 1) for split in splits if len(split)]
         for start_idx, end_idx in start_ends:
             p = multiprocessing.Process(target=worker_process, args=(start_idx, end_idx))
             processes.append(p)
@@ -512,13 +511,13 @@ class MultiprocessingBatcher(ERA5_MultiStep_Batcher):
 
         batch["forecast_step"] = torch.tensor([self.forecast_step_counts[0]])
         batch["stop_forecast"] = batch["forecast_step"] == self.forecast_len + 1
-        batch["datetime"] = batch["datetime"].view(-1, self.batch_size)
+        batch["datetime"] = batch["datetime"].view(-1, len(self.current_batch_indices))
 
         return batch
 
     def __del__(self):
         """Cleanup the manager when the object is destroyed"""
-        if hasattr(self, 'manager'):
+        if hasattr(self, "manager"):
             self.manager.shutdown()
 
 
@@ -596,7 +595,7 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
             self.stop_event.set()
             # logger.error(f"Error in worker process for index {k}: {e}")
             # Ensure proper cleanup before exiting worker process
-            if hasattr(self, 'shutdown') and callable(self.shutdown):
+            if hasattr(self, "shutdown") and callable(self.shutdown):
                 logger.info("Initiating shutdown sequence.")
                 self.shutdown()
             return
@@ -671,7 +670,7 @@ class MultiprocessingBatcherPrefetch(ERA5_MultiStep_Batcher):
 
         batch["forecast_step"] = torch.tensor([self.forecast_step_counts[0]])
         batch["stop_forecast"] = batch["forecast_step"] == self.forecast_len + 1
-        batch["datetime"] = batch["datetime"].view(-1, self.batch_size)
+        batch["datetime"] = batch["datetime"].view(-1, len(self.current_batch_indices))
 
         return batch
 

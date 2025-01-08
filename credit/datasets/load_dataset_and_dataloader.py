@@ -3,7 +3,7 @@ from credit.datasets.era5_singlestep import ERA5_and_Forcing_SingleStep
 from credit.datasets.era5_multistep_batcher import (
     ERA5_MultiStep_Batcher,
     MultiprocessingBatcher,
-    MultiprocessingBatcherPrefetch
+    MultiprocessingBatcherPrefetch,
 )
 from credit.datasets import setup_data_loading
 from torch.utils.data import DataLoader
@@ -54,7 +54,7 @@ class BatchForecastLenSampler:
         Returns:
             An iterator over a sequence of zeros.
         """
-        return iter(np.zeros(self.len))  # Dump
+        return iter(np.zeros(self.len))
 
     def __len__(self):
         """
@@ -167,13 +167,15 @@ def load_dataset(conf, rank=0, world_size=1, is_train=True):
         )
         sys.exit()
     seed = conf["seed"]
+    shuffle = is_train
     training_type = "train" if is_train else "valid"
     dataset_type = conf["data"].get("dataset_type", )
     batch_size = conf["trainer"][f"{training_type}_batch_size"]
     shuffle = is_train
     num_workers = conf["trainer"]["thread_workers"] if is_train else conf["trainer"]["valid_thread_workers"]
-
-    prefetch_factor = conf["trainer"].get("prefetch_factor")
+    prefetch_factor = conf["trainer"].get("prefetch_factor", )
+    history_len = data_config["history_len"] if is_train else data_config["valid_history_len"]
+    forecast_len = data_config["forecast_len"] if is_train else data_config["valid_forecast_len"]
     if prefetch_factor is None:
         logging.warning(
             "prefetch_factor not found in config under 'trainer'. Using default value of 4. "
@@ -181,9 +183,6 @@ def load_dataset(conf, rank=0, world_size=1, is_train=True):
         )
         prefetch_factor = 4
 
-    # Set split name  
-    split_name = 'train' if is_train else 'valid'
-    
     # Instantiate the dataset based on the provided class name
     if dataset_type == "ERA5_and_Forcing_SingleStep":  # forecast-len = 0 dataset
         dataset = ERA5_and_Forcing_SingleStep(
@@ -193,19 +192,19 @@ def load_dataset(conf, rank=0, world_size=1, is_train=True):
             varname_forcing=conf["data"]["forcing_variables"],
             varname_static=conf["data"]["static_variables"],
             varname_diagnostic=conf["data"]["diagnostic_variables"],
-            filenames=data_config[f'{split_name}_files'],
-            filename_surface=data_config[f'{split_name}_surface_files'],
-            filename_dyn_forcing=data_config[f'{split_name}_dyn_forcing_files'],
+            filenames=data_config[f"{training_type}_files"],
+            filename_surface=data_config[f"{training_type}_surface_files"],
+            filename_dyn_forcing=data_config[f"{training_type}_dyn_forcing_files"],
             filename_forcing=conf["data"]["save_loc_forcing"],
             filename_static=conf["data"]["save_loc_static"],
-            filename_diagnostic=data_config[f'{split_name}_diagnostic_files'],
-            history_len=data_config['history_len'],
-            forecast_len=data_config['forecast_len'],
+            filename_diagnostic=data_config[f"{training_type}_diagnostic_files"],
+            history_len=history_len,
+            forecast_len=forecast_len,
             skip_periods=conf["data"]["skip_periods"],
             one_shot=conf["data"]["one_shot"],
             max_forecast_len=conf["data"]["max_forecast_len"],
             transform=load_transforms(conf),
-            sst_forcing=data_config['sst_forcing']
+            sst_forcing=data_config["sst_forcing"],
         )
     # All datasets from here on are multi-step examples
     elif dataset_type == "ERA5_and_Forcing_MultiStep":
@@ -216,14 +215,14 @@ def load_dataset(conf, rank=0, world_size=1, is_train=True):
             varname_forcing=conf["data"]["forcing_variables"],
             varname_static=conf["data"]["static_variables"],
             varname_diagnostic=conf["data"]["diagnostic_variables"],
-            filenames=data_config[f'{split_name}_files'],
-            filename_surface=data_config[f'{split_name}_surface_files'],
-            filename_dyn_forcing=data_config[f'{split_name}_dyn_forcing_files'],
+            filenames=data_config[f"{training_type}_files"],
+            filename_surface=data_config[f"{training_type}_surface_files"],
+            filename_dyn_forcing=data_config[f"{training_type}_dyn_forcing_files"],
             filename_forcing=conf["data"]["save_loc_forcing"],
             filename_static=conf["data"]["save_loc_static"],
-            filename_diagnostic=data_config[f'{split_name}_diagnostic_files'],
-            history_len=data_config['history_len'],
-            forecast_len=data_config['forecast_len'],
+            filename_diagnostic=data_config[f"{training_type}_diagnostic_files"],
+            history_len=history_len,
+            forecast_len=forecast_len,
             skip_periods=conf["data"]["skip_periods"],
             max_forecast_len=conf["data"]["max_forecast_len"],
             transform=load_transforms(conf),
@@ -234,78 +233,78 @@ def load_dataset(conf, rank=0, world_size=1, is_train=True):
         logging.warning("ERA5_and_Forcing_MultiStep is designed for batch_size = 1. Ignoring whats in your config.")
     elif dataset_type == "ERA5_MultiStep_Batcher":
         dataset = ERA5_MultiStep_Batcher(
-            varname_upper_air=data_config['varname_upper_air'],
-            varname_surface=data_config['varname_surface'],
-            varname_dyn_forcing=data_config['varname_dyn_forcing'],
-            varname_forcing=data_config['varname_forcing'],
-            varname_static=data_config['varname_static'],
-            varname_diagnostic=data_config['varname_diagnostic'],
-            filenames=data_config[f'{split_name}_files'],
-            filename_surface=data_config[f'{split_name}_surface_files'],
-            filename_dyn_forcing=data_config[f'{split_name}_dyn_forcing_files'],
-            filename_forcing=data_config['forcing_files'],
-            filename_static=data_config['static_files'],
-            filename_diagnostic=data_config[f'{split_name}_diagnostic_files'],
-            history_len=data_config['history_len'],
-            forecast_len=data_config['forecast_len'],
-            skip_periods=data_config['skip_periods'],
-            max_forecast_len=data_config['max_forecast_len'],
-            transform=load_transforms(conf),
-            batch_size=batch_size,
-            shuffle=shuffle,
-            rank=rank,
-            world_size=world_size
-        )
-    elif dataset_type == "MultiprocessingBatcher":
-        dataset = MultiprocessingBatcher(
-            varname_upper_air=data_config['varname_upper_air'],
-            varname_surface=data_config['varname_surface'],
-            varname_dyn_forcing=data_config['varname_dyn_forcing'],
-            varname_forcing=data_config['varname_forcing'],
-            varname_static=data_config['varname_static'],
-            varname_diagnostic=data_config['varname_diagnostic'],
-            filenames=data_config[f'{split_name}_files'],
-            filename_surface=data_config[f'{split_name}_surface_files'],
-            filename_dyn_forcing=data_config[f'{split_name}_dyn_forcing_files'],
-            filename_forcing=data_config['forcing_files'],
-            filename_static=data_config['static_files'],
-            filename_diagnostic=data_config[f'{split_name}_diagnostic_files'],
-            history_len=data_config['history_len'],
-            forecast_len=data_config['forecast_len'],
-            skip_periods=data_config['skip_periods'],
-            max_forecast_len=data_config['max_forecast_len'],
+            varname_upper_air=data_config["varname_upper_air"],
+            varname_surface=data_config["varname_surface"],
+            varname_dyn_forcing=data_config["varname_dyn_forcing"],
+            varname_forcing=data_config["varname_forcing"],
+            varname_static=data_config["varname_static"],
+            varname_diagnostic=data_config["varname_diagnostic"],
+            filenames=data_config[f"{training_type}_files"],
+            filename_surface=data_config[f"{training_type}_surface_files"],
+            filename_dyn_forcing=data_config[f"{training_type}_dyn_forcing_files"],
+            filename_forcing=data_config["forcing_files"],
+            filename_static=data_config["static_files"],
+            filename_diagnostic=data_config[f"{training_type}_diagnostic_files"],
+            history_len=history_len,
+            forecast_len=forecast_len,
+            skip_periods=data_config["skip_periods"],
+            max_forecast_len=data_config["max_forecast_len"],
             transform=load_transforms(conf),
             batch_size=batch_size,
             shuffle=shuffle,
             rank=rank,
             world_size=world_size,
-            num_workers=num_workers
         )
-    elif dataset_type == "MultiprocessingBatcherPrefetch":
-        dataset = MultiprocessingBatcherPrefetch(
-            varname_upper_air=data_config['varname_upper_air'],
-            varname_surface=data_config['varname_surface'],
-            varname_dyn_forcing=data_config['varname_dyn_forcing'],
-            varname_forcing=data_config['varname_forcing'],
-            varname_static=data_config['varname_static'],
-            varname_diagnostic=data_config['varname_diagnostic'],
-            filenames=data_config[f'{split_name}_files'],
-            filename_surface=data_config[f'{split_name}_surface_files'],
-            filename_dyn_forcing=data_config[f'{split_name}_dyn_forcing_files'],
-            filename_forcing=data_config['forcing_files'],
-            filename_static=data_config['static_files'],
-            filename_diagnostic=data_config[f'{split_name}_diagnostic_files'],
-            history_len=data_config['history_len'],
-            forecast_len=data_config['forecast_len'],
-            skip_periods=data_config['skip_periods'],
-            max_forecast_len=data_config['max_forecast_len'],
+    elif dataset_type == "MultiprocessingBatcher":
+        dataset = MultiprocessingBatcher(
+            varname_upper_air=data_config["varname_upper_air"],
+            varname_surface=data_config["varname_surface"],
+            varname_dyn_forcing=data_config["varname_dyn_forcing"],
+            varname_forcing=data_config["varname_forcing"],
+            varname_static=data_config["varname_static"],
+            varname_diagnostic=data_config["varname_diagnostic"],
+            filenames=data_config[f"{training_type}_files"],
+            filename_surface=data_config[f"{training_type}_surface_files"],
+            filename_dyn_forcing=data_config[f"{training_type}_dyn_forcing_files"],
+            filename_forcing=data_config["forcing_files"],
+            filename_static=data_config["static_files"],
+            filename_diagnostic=data_config[f"{training_type}_diagnostic_files"],
+            history_len=history_len,
+            forecast_len=forecast_len,
+            skip_periods=data_config["skip_periods"],
+            max_forecast_len=data_config["max_forecast_len"],
             transform=load_transforms(conf),
             batch_size=batch_size,
             shuffle=shuffle,
             rank=rank,
             world_size=world_size,
             num_workers=num_workers,
-            prefetch_factor=prefetch_factor
+        )
+    elif dataset_type == "MultiprocessingBatcherPrefetch":
+        dataset = MultiprocessingBatcherPrefetch(
+            varname_upper_air=data_config["varname_upper_air"],
+            varname_surface=data_config["varname_surface"],
+            varname_dyn_forcing=data_config["varname_dyn_forcing"],
+            varname_forcing=data_config["varname_forcing"],
+            varname_static=data_config["varname_static"],
+            varname_diagnostic=data_config["varname_diagnostic"],
+            filenames=data_config[f"{training_type}_files"],
+            filename_surface=data_config[f"{training_type}_surface_files"],
+            filename_dyn_forcing=data_config[f"{training_type}_dyn_forcing_files"],
+            filename_forcing=data_config["forcing_files"],
+            filename_static=data_config["static_files"],
+            filename_diagnostic=data_config[f"{training_type}_diagnostic_files"],
+            history_len=history_len,
+            forecast_len=forecast_len,
+            skip_periods=data_config["skip_periods"],
+            max_forecast_len=data_config["max_forecast_len"],
+            transform=load_transforms(conf),
+            batch_size=batch_size,
+            shuffle=shuffle,
+            rank=rank,
+            world_size=world_size,
+            num_workers=num_workers,
+            prefetch_factor=prefetch_factor,
         )
     else:
         raise ValueError(f"Unsupported dataset type: {dataset_type}")
