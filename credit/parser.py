@@ -1439,7 +1439,7 @@ def predict_data_check(conf, print_summary=False):
         file for file in all_ERA_files if any(year in file for year in pred_years)
     ]
 
-    if len(pred_years) != len(pred_ERA_files[i_year]):
+    if len(pred_years) != len(pred_ERA_files):
         warnings.warn(
             "Provided initializations in upper air files may not cover all forecasted dates"
         )
@@ -1452,7 +1452,7 @@ def predict_data_check(conf, print_summary=False):
             file for file in surface_files if any(year in file for year in pred_years)
         ]
 
-        if len(pred_years) != len(pred_surface_files[i_year]):
+        if len(pred_years) != len(pred_surface_files):
             warnings.warn(
                 "Provided initializations in surface files may not cover all forecasted dates"
             )
@@ -1467,7 +1467,7 @@ def predict_data_check(conf, print_summary=False):
             if any(year in file for year in pred_years)
         ]
 
-        if len(pred_years) != len(pred_dyn_forcing_files[i_year]):
+        if len(pred_years) != len(pred_dyn_forcing_files):
             warnings.warn(
                 "Provided initializations in surface files may not cover all forecasted dates"
             )
