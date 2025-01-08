@@ -1156,6 +1156,9 @@ def training_data_check(conf, print_summary=False):
         conf["data"]["variables"]
     )
 
+    # assign the upper_air vars in yaml if it can pass checks
+    varnames_upper_air = conf["data"]["variables"]
+    
     # collecting all variables that require zscores
     # deep copy to avoid changing conf['data'] by accident
     all_vars = copy.deepcopy(conf["data"]["variables"])
