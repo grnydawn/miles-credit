@@ -1,4 +1,7 @@
-from credit.datasets.era5_multistep import ERA5_and_Forcing_MultiStep
+from credit.datasets.era5_multistep import (
+    ERA5_and_Forcing_MultiStep,
+    RepeatingIndexSampler,
+)
 from credit.datasets.era5_singlestep import ERA5_and_Forcing_SingleStep
 from credit.datasets.era5_multistep_batcher import (
     ERA5_MultiStep_Batcher,
@@ -121,9 +124,13 @@ class BatchForecastLenDataLoader:
             int: The total number of samples or iterations.
         """
         if hasattr(self.dataset, "batches_per_epoch"):
-            return self.dataset.batches_per_epoch() * self.forecast_len  # Use the dataset's method if available
+            return (
+                self.dataset.batches_per_epoch() * self.forecast_len
+            )  # Use the dataset's method if available
         else:
-            return len(self.dataset) * self.forecast_len  # Otherwise, fall back to the dataset's length
+            return (
+                len(self.dataset) * self.forecast_len
+            )  # Otherwise, fall back to the dataset's length
 
 
 def collate_fn(batch):
@@ -169,13 +176,25 @@ def load_dataset(conf, rank=0, world_size=1, is_train=True):
     seed = conf["seed"]
     shuffle = is_train
     training_type = "train" if is_train else "valid"
-    dataset_type = conf["data"].get("dataset_type", )
+    dataset_type = conf["data"].get(
+        "dataset_type",
+    )
     batch_size = conf["trainer"][f"{training_type}_batch_size"]
     shuffle = is_train
-    num_workers = conf["trainer"]["thread_workers"] if is_train else conf["trainer"]["valid_thread_workers"]
-    prefetch_factor = conf["trainer"].get("prefetch_factor", )
-    history_len = data_config["history_len"] if is_train else data_config["valid_history_len"]
-    forecast_len = data_config["forecast_len"] if is_train else data_config["valid_forecast_len"]
+    num_workers = (
+        conf["trainer"]["thread_workers"]
+        if is_train
+        else conf["trainer"]["valid_thread_workers"]
+    )
+    prefetch_factor = conf["trainer"].get(
+        "prefetch_factor",
+    )
+    history_len = (
+        data_config["history_len"] if is_train else data_config["valid_history_len"]
+    )
+    forecast_len = (
+        data_config["forecast_len"] if is_train else data_config["valid_forecast_len"]
+    )
     if prefetch_factor is None:
         logging.warning(
             "prefetch_factor not found in config under 'trainer'. Using default value of 4. "
@@ -228,9 +247,11 @@ def load_dataset(conf, rank=0, world_size=1, is_train=True):
             transform=load_transforms(conf),
             rank=rank,
             world_size=world_size,
-            seed=seed
+            seed=seed,
         )
-        logging.warning("ERA5_and_Forcing_MultiStep is designed for batch_size = 1. Ignoring whats in your config.")
+        logging.warning(
+            "ERA5_and_Forcing_MultiStep is designed for batch_size = 1. Ignoring whats in your config."
+        )
     elif dataset_type == "ERA5_MultiStep_Batcher":
         dataset = ERA5_MultiStep_Batcher(
             varname_upper_air=data_config["varname_upper_air"],
@@ -311,7 +332,9 @@ def load_dataset(conf, rank=0, world_size=1, is_train=True):
 
     train_flag = "training" if is_train else "validation"
 
-    logging.info(f"Loaded a {train_flag} {dataset_type} ERA dataset (forecast length = {data_config['forecast_len'] + 1})")
+    logging.info(
+        f"Loaded a {train_flag} {dataset_type} ERA dataset (forecast length = {data_config['forecast_len'] + 1})"
+    )
 
     return dataset
 
@@ -335,7 +358,14 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
     training_type = "train" if is_train else "valid"
     batch_size = conf["trainer"][f"{training_type}_batch_size"]
     shuffle = is_train
-    num_workers = conf["trainer"]["thread_workers"] if is_train else conf["trainer"]["valid_thread_workers"]
+    num_workers = (
+        conf["trainer"]["thread_workers"]
+        if is_train
+        else conf["trainer"]["valid_thread_workers"]
+    )
+    forecast_len = (
+        conf["data"]["forecast_len"] if is_train else conf["data"]["valid_forecast_len"]
+    )
     prefetch_factor = conf["trainer"].get("prefetch_factor")
     if prefetch_factor is None:
         logging.warning(
@@ -361,17 +391,17 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
             sampler=sampler,
             pin_memory=True,
             persistent_workers=True if num_workers > 0 else False,
-            num_workers=num_workers
+            num_workers=num_workers,
         )
     elif type(dataset) is ERA5_and_Forcing_MultiStep:
         # This is the deprecated dataset
-        sampler = DistributedSampler(
+        sampler = RepeatingIndexSampler(
             dataset,
+            forecast_len=forecast_len,
             num_replicas=world_size,
             rank=rank,
             seed=seed,
             shuffle=is_train,
-            drop_last=True
         )
         dataloader = DataLoader(
             dataset,
@@ -381,7 +411,7 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
             pin_memory=True,
             persistent_workers=False,
             num_workers=1,  # set to one so prefetch is working
-            prefetch_factor=prefetch_factor
+            prefetch_factor=prefetch_factor,
         )
     elif type(dataset) is ERA5_MultiStep_Batcher:
         dataloader = DataLoader(
@@ -389,16 +419,12 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
             num_workers=1,  # Must be 1 to use prefetching
             collate_fn=collate_fn,
             prefetch_factor=prefetch_factor,
-            sampler=BatchForecastLenSampler(dataset)  # Ensure len is correct
+            sampler=BatchForecastLenSampler(dataset),  # Ensure len is correct
         )
     elif type(dataset) is MultiprocessingBatcher:
-        dataloader = BatchForecastLenDataLoader(
-            dataset
-        )
+        dataloader = BatchForecastLenDataLoader(dataset)
     elif type(dataset) is MultiprocessingBatcherPrefetch:
-        dataloader = BatchForecastLenDataLoader(
-            dataset
-        )
+        dataloader = BatchForecastLenDataLoader(dataset)
     else:
         raise ValueError(f"Unsupported dataset type: {type(dataset)}")
 
@@ -414,7 +440,6 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
 
 
 if __name__ == "__main__":
-
     import time
     import yaml
     from credit.parser import credit_main_parser, training_data_check
@@ -428,13 +453,11 @@ if __name__ == "__main__":
     # Set up the logger
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
     logger = logging.getLogger(__name__)
 
-    with open(
-        "/glade/derecho/scratch/schreck/repos/miles-credit/production/multistep/wxformer_6h/model.yml"
-    ) as cf:
+    with open("../../config/example-v2025.2.0.yml") as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
     conf = credit_main_parser(
@@ -448,7 +471,7 @@ if __name__ == "__main__":
         "ERA5_and_Forcing_MultiStep",
         "ERA5_MultiStep_Batcher",
         "MultiprocessingBatcher",
-        "MultiprocessingBatcherPrefetch"
+        "MultiprocessingBatcherPrefetch",
     ][dataset_id]
 
     epoch = 0
@@ -456,9 +479,13 @@ if __name__ == "__main__":
     world_size = 2
     conf["trainer"]["start_epoch"] = epoch
     conf["trainer"]["train_batch_size"] = 2  # batch_size
-    conf["trainer"]["valid_batch_size"] = conf["trainer"]["valid_batch_size"]  # batch_size
-    conf["trainer"]["thread_workers"] = 4   # num_workers
-    conf["trainer"]["valid_thread_workers"] = conf["trainer"]["thread_workers"]   # num_workers
+    conf["trainer"]["valid_batch_size"] = conf["trainer"][
+        "valid_batch_size"
+    ]  # batch_size
+    conf["trainer"]["thread_workers"] = 4  # num_workers
+    conf["trainer"]["valid_thread_workers"] = conf["trainer"][
+        "thread_workers"
+    ]  # num_workers
     conf["trainer"]["prefetch_factor"] = 4  # Add prefetch_factor
     conf["data"]["history_len"] = 1
     conf["data"]["valid_history_len"] = conf["data"]["history_len"]
@@ -474,16 +501,24 @@ if __name__ == "__main__":
         dataloader = load_dataloader(conf, dataset, rank=rank, world_size=world_size)
 
         # Must set the epoch before the dataloader will work for some datasets
-        if hasattr(dataloader.dataset, 'set_epoch'):
+        if hasattr(dataloader.dataset, "set_epoch"):
             dataloader.dataset.set_epoch(epoch)
-        elif hasattr(dataloader, 'set_epoch'):
+        elif hasattr(dataloader, "set_epoch"):
             dataloader.set_epoch(epoch)
 
         start_time = time.time()
 
         # Iterate through the dataloader and print samples
-        for (k, sample) in enumerate(dataloader):
-            print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'], sample["x"].shape, sample["x_surf"].shape)
+        for k, sample in enumerate(dataloader):
+            print(
+                k,
+                sample["index"],
+                sample["datetime"],
+                sample["forecast_step"],
+                sample["stop_forecast"],
+                sample["x"].shape,
+                sample["x_surf"].shape,
+            )
             if k == 20:
                 break
 

@@ -27,14 +27,14 @@ data:
     # files must have the listed variable names 
     # upper-air variables will be normalized by the dataloader, users do not need to normalize them
     variables: ['U','V','T','Q']
-    save_loc: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/SixHourly_TOTAL_*'
+    save_loc: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_mlevel_arXiv/SixHourly_y_TOTAL_*'
     
     # surface variables, must be YEARLY zarr or nc with (time, latitude, longitude) dims
     # the time dimension MUST be the same as upper-air variables
     # files must have the listed variable names
     # surface variables will be normalized by the dataloader, users do not need to normalize them
-    surface_variables: ['sp', 't2m']
-    save_loc_surface: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/SixHourly_TOTAL_*'
+    surface_variables: ['SP', 't2m', 'Z500', 'T500', 'U500', 'V500', 'Q500']
+    save_loc_surface: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_mlevel_arXiv/SixHourly_y_TOTAL_*'
 
     # dynamic forcing variables, must be YEARLY zarr or nc with (time, latitude, longitude) dims
     # the time dimension MUST be the same as upper-air variables
@@ -46,9 +46,10 @@ data:
     # diagnostic variables, must be YEARLY zarr or nc with (time, latitude, longitude) dims
     # the time dimension MUST be the same as upper-air variables
     # files must have the listed variable names 
+    # THESE ARE NOT LOADING CORRECTLY ON X
     # diagnostic variables will be normalized by the dataloader, users do not need to normalize them
-    diagnostic_variables: ['Z500', 'T500'] 
-    save_loc_diagnostic: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/SixHourly_TOTAL_*'
+    # diagnostic_variables: ['Z500', 'T500', 'U500', 'V500', 'Q500'] 
+    # save_loc_diagnostic: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/SixHourly_y_TOTAL_*'
     
     # periodic forcing variables, must be a single zarr or nc with (time, latitude, longitude) dims
     # the time dimension should cover an entire LEAP YEAR
@@ -56,20 +57,21 @@ data:
     # e.g., periodic forcing variables can be provided on the year 2000, 
     #       and its time coords should have 24*366 hours for a hourly model
     #
+    # THESE ARE REDUNDANT?
     # periodic forcing variables MUST be normalized BY USER 
-    forcing_variables: ['TSI']   
-    save_loc_forcing: '/glade/campaign/cisl/aiml/ksha/CREDIT/forcing_norm_6h.nc'
+    # forcing_variables: ['TSI']   
+    # save_loc_forcing: '/glade/campaign/cisl/aiml/ksha/CREDIT/forcing_norm_6h.nc'
     
     # static variables must be a single zarr or nc with (latitude, longitude) coords
     # static variables must be normalized BY USER 
     static_variables: ['Z_GDS4_SFC', 'LSM'] 
-    save_loc_static: '/glade/campaign/cisl/aiml/ksha/CREDIT/static_norm_old.nc'
+    save_loc_static: '/glade/derecho/scratch/ksha/CREDIT_data/static_norm_old.nc'
 
     # z-score files, they must be zarr or nc with (level,) coords
     # they MUST include all the 
     #     'variables', 'surface_variables', 'dynamic_forcing_variables', 'diagnostic_variables' above
-    mean_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/mean_6h_0.25deg.nc'
-    std_path: '/glade/campaign/cisl/aiml/ksha/CREDIT/std_6h_0.25deg.nc'
+    mean_path: '/glade/derecho/scratch/ksha/CREDIT_data/mean_6h_1979_2018_16lev_0.25deg.nc'
+    std_path: '/glade/derecho/scratch/ksha/CREDIT_data/std_residual_6h_1979_2018_16lev_0.25deg.nc'
     
     # years to form the training / validation set [first_year, last_yeat (not covered)]
     train_years: [1979, 2014] # 1979 - 2013
@@ -100,7 +102,7 @@ data:
     # this option speed-up multi-step training, it ONLY works with trainer type: standard
     # use one_shot --> True
     # do not use one_shot --> False or null
-    one_shot: True   
+    one_shot: False   
                             
     # number of hours for each forecast step
     # lead_time_periods = 6 for 6 hourly model and 6 hourly taining data
@@ -383,6 +385,16 @@ predict:
     # A directory called metrics will be added to the save_forecast field below.
     # To instead save the states to file (netcdf), run rollout_to_metrics.py. You will need to post-process
     # all the data with this option. A directory called netcdf will be added to the save_forecast field
+    
+
+    # the keyword that controls GPU usage
+    # fsdp: fully sharded data parallel
+    # ddp: distributed data parallel
+    # none: single-GPU training
+    mode: none
+
+    # Set the batch_size for the prediction inference mode (default is 1)
+    batch_size: 1
 
     forecasts:
         type: "custom"       # keep it as "custom". See also credit.forecast

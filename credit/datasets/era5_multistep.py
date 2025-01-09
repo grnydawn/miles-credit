@@ -207,9 +207,9 @@ def worker(
 
             # for multi-input cases, use time=-1 ocean SKT for all times
             if history_len > 1:
-                input_skt[: history_len - 1] = input_skt[
-                    : history_len - 1
-                ].where(~ocean_mask_bool, input_skt.isel(time=-1))
+                input_skt[: history_len - 1] = input_skt[: history_len - 1].where(
+                    ~ocean_mask_bool, input_skt.isel(time=-1)
+                )
 
             # for target skt, replace ocean values using time=-1 input SKT
             target_skt = target_skt.where(~ocean_mask_bool, input_skt.isel(time=-1))
@@ -250,6 +250,85 @@ def worker(
     return sample
 
 
+class RepeatingIndexSampler(torch.utils.data.Sampler):
+    def __init__(
+        self,
+        dataset,
+        forecast_len,
+        skip_periods=1,
+        shuffle=True,
+        seed=42,
+        rank=0,
+        num_replicas=1,
+    ):
+        """
+        Sampler that yields each starting index repeated (forecast_len + 1) times,
+        ensuring indices don't exceed the valid range for a full forecast sequence.
+        Supports distributed sampling.
+
+        Args:
+        - dataset (Dataset): The dataset to sample from.
+        - forecast_len (int): Length of each forecast sequence minus one.
+        - skip_periods (int): Number of periods to skip between sequences.
+        - shuffle (bool): Whether to shuffle the starting indices.
+        - seed (int): Random seed for reproducibility.
+        - rank (int): Rank of the current process (for distributed training).
+        - world_size (int): Total number of processes (for distributed training).
+        """
+        self.dataset = dataset
+        self.forecast_len = forecast_len + 1  # Total steps in the forecast sequence
+        self.skip_periods = skip_periods
+        self.shuffle = shuffle
+        self.seed = seed
+        self.rank = rank
+        self.num_replicas = num_replicas
+
+        # Compute valid starting indices ensuring full sequences fit
+        all_start_indices = list(range(0, len(self.dataset), skip_periods))
+
+        num_indices = len(
+            all_start_indices
+        )  # Trim the number of indices to ensure it's divisible by world_size
+        num_indices_per_rank = num_indices // self.num_replicas
+        all_start_indices = all_start_indices[
+            : num_indices_per_rank * self.num_replicas
+        ]
+        self.all_start_indices = all_start_indices
+        self.num_indices_per_rank = num_indices_per_rank
+
+        if self.shuffle:
+            self.rng = np.random.default_rng(seed)
+            # rng.shuffle(self.start_indices)
+
+    def __len__(self):
+        """Returns the total number of indices for this rank."""
+        # return len(self.start_indices) * self.forecast_len
+        return self.num_indices_per_rank * self.forecast_len
+
+    def __iter__(self):
+        """
+        Yields each start index repeated (forecast_len + 1) times.
+        """
+        all_indices = self.all_start_indices
+        if self.shuffle:
+            all_indices = self.rng.permutation(all_indices)
+
+        self.start_indices = all_indices[self.rank :: self.num_replicas]
+        assert len(self.start_indices) == self.num_indices_per_rank
+        for idx in self.start_indices:
+            for _ in range(self.forecast_len):
+                yield idx
+
+    def batches_per_epoch(self):
+        """
+        Computes the number of batches per epoch for a given batch size.
+
+        Returns:
+        - int: Number of batches per epoch.
+        """
+        return self.num_indices_per_rank
+
+
 class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
     """
     A Pytorch Dataset class that works on:
@@ -284,7 +363,7 @@ class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
         skip_periods=None,
         one_shot=None,
         max_forecast_len=None,
-        sst_forcing=None
+        sst_forcing=None,
     ):
         """
         Initialize the ERA5_and_Forcing_Dataset
@@ -493,7 +572,7 @@ class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
             forecast_len=self.forecast_len,
             skip_periods=self.skip_periods,
             transform=self.transform,
-            sst_forcing=self.sst_forcing
+            sst_forcing=self.sst_forcing,
         )
 
         self.total_length = len(self.ERA5_indices)
@@ -549,7 +628,6 @@ class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
 
 
 if __name__ == "__main__":
-
     import torch
     import yaml
     from torch.utils.data import DataLoader
@@ -557,9 +635,9 @@ if __name__ == "__main__":
     from credit.parser import credit_main_parser, training_data_check
     from credit.datasets import setup_data_loading, set_globals
 
-    with open(
-        "/glade/derecho/scratch/schreck/repos/miles-credit/production/multistep/wxformer_6h/model.yml"
-    ) as cf:
+    # filename = "/glade/derecho/scratch/schreck/finetune/arnold/model_xform.yml"
+    filename = "../../config/example-v2025.2.0.yml"
+    with open(filename) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
     conf = credit_main_parser(
@@ -569,44 +647,65 @@ if __name__ == "__main__":
 
     data_config = setup_data_loading(conf)
 
-    data_config["forecast_len"] = 6
-    batch_size = 2
+    data_config["forecast_len"] = 5
+    batch_size = 1
+    training_type = "train"
 
     set_globals(data_config, namespace=globals())
 
     dataset_multi = ERA5_and_Forcing_MultiStep(
-        varname_upper_air=data_config['varname_upper_air'],
-        varname_surface=data_config['varname_surface'],
-        varname_dyn_forcing=data_config['varname_dyn_forcing'],
-        varname_forcing=data_config['varname_forcing'],
-        varname_static=data_config['varname_static'],
-        varname_diagnostic=data_config['varname_diagnostic'],
-        filenames=data_config['all_ERA_files'],
-        filename_surface=data_config['surface_files'],
-        filename_dyn_forcing=data_config['dyn_forcing_files'],
-        filename_forcing=data_config['forcing_files'],
-        filename_static=data_config['static_files'],
-        filename_diagnostic=data_config['diagnostic_files'],
-        history_len=data_config['history_len'],
-        forecast_len=data_config['forecast_len'],
-        skip_periods=data_config['skip_periods'],
+        varname_upper_air=data_config["varname_upper_air"],
+        varname_surface=data_config["varname_surface"],
+        varname_dyn_forcing=data_config["varname_dyn_forcing"],
+        varname_forcing=data_config["varname_forcing"],
+        varname_static=data_config["varname_static"],
+        varname_diagnostic=data_config["varname_diagnostic"],
+        filenames=data_config["all_ERA_files"],
+        filename_surface=data_config["surface_files"],
+        filename_dyn_forcing=data_config["dyn_forcing_files"],
+        filename_forcing=data_config["forcing_files"],
+        filename_static=data_config["static_files"],
+        filename_diagnostic=data_config["diagnostic_files"],
+        history_len=data_config["history_len"],
+        forecast_len=data_config["forecast_len"],
+        skip_periods=data_config["skip_periods"],
         one_shot=False,
-        max_forecast_len=data_config['max_forecast_len'],
-        sst_forcing=data_config['sst_forcing'],
-        transform=load_transforms(conf)
+        max_forecast_len=data_config["max_forecast_len"],
+        sst_forcing=data_config["sst_forcing"],
+        transform=load_transforms(conf),
+    )
+
+    sampler = RepeatingIndexSampler(
+        dataset_multi,
+        forecast_len=data_config["forecast_len"],
+        num_replicas=1,
+        rank=0,
+        seed=1000,
+        shuffle=True,
     )
 
     dataloader = DataLoader(
         dataset_multi,
-        batch_size=1,  # Adjust the batch size as needed
-        shuffle=True,   # Shuffle the dataset if needed
-        num_workers=1,  # Number of subprocesses to use for data loading (adjust as needed)
-        drop_last=True,  # Drop the last incomplete batch if not divisible by batch_size,
-        prefetch_factor=4
+        batch_size=1,
+        shuffle=False,
+        sampler=sampler,
+        pin_memory=True,
+        persistent_workers=False,
+        num_workers=1,  # set to one so prefetch is working
+        prefetch_factor=4,
     )
 
     dataloader.dataset.set_epoch(0)
-    for (k, sample) in enumerate(dataloader):
-        print(k, sample['index'], sample['datetime'], sample['forecast_step'], sample['stop_forecast'], sample["x"].shape, sample["x_surf"].shape)
-        if k == 20:
+    for k, sample in enumerate(dataloader):
+        print(
+            k,
+            sample["index"],
+            sample["datetime"],
+            sample["forecast_step"],
+            sample["stop_forecast"],
+            sample["x"].shape,
+            sample["x_surf"].shape,
+            # sample["x_forcing_static"].shape,
+        )
+        if k == 500:
             break
