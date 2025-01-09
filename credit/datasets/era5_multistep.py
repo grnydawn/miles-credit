@@ -293,22 +293,28 @@ class RepeatingIndexSampler(torch.utils.data.Sampler):
         all_start_indices = all_start_indices[
             : num_indices_per_rank * self.num_replicas
         ]
-
-        # Split indices for distributed processes
-        self.start_indices = all_start_indices[self.rank :: num_replicas]
+        self.all_start_indices = all_start_indices
+        self.num_indices_per_rank = num_indices_per_rank
 
         if self.shuffle:
-            rng = np.random.default_rng(seed)
-            rng.shuffle(self.start_indices)
+            self.rng = np.random.default_rng(seed)
+            # rng.shuffle(self.start_indices)
 
     def __len__(self):
         """Returns the total number of indices for this rank."""
-        return len(self.start_indices) * self.forecast_len
+        # return len(self.start_indices) * self.forecast_len
+        return self.num_indices_per_rank * self.forecast_len
 
     def __iter__(self):
         """
         Yields each start index repeated (forecast_len + 1) times.
         """
+        all_indices = self.all_start_indices
+        if self.shuffle:
+            all_indices = self.rng.permutation(all_indices)
+
+        self.start_indices = all_indices[self.rank :: self.num_replicas]
+        assert len(self.start_indices) == self.num_indices_per_rank
         for idx in self.start_indices:
             for _ in range(self.forecast_len):
                 yield idx
@@ -320,7 +326,7 @@ class RepeatingIndexSampler(torch.utils.data.Sampler):
         Returns:
         - int: Number of batches per epoch.
         """
-        return len(self.start_indices)
+        return self.num_indices_per_rank
 
 
 class ERA5_and_Forcing_MultiStep(torch.utils.data.Dataset):
