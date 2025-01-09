@@ -695,13 +695,11 @@ if __name__ == "__main__":
         prefetch_factor=4,
     )
 
-    check = []
     dataloader.dataset.set_epoch(0)
     for k, sample in enumerate(dataloader):
         print(
             k,
             sample["index"],
-            sample["sampler_index"],
             sample["datetime"],
             sample["forecast_step"],
             sample["stop_forecast"],
@@ -709,8 +707,5 @@ if __name__ == "__main__":
             sample["x_surf"].shape,
             # sample["x_forcing_static"].shape,
         )
-        check.append(sample["sampler_index"].item())
         if k == 500:
             break
-
-    print(sorted(set(list(check))))
