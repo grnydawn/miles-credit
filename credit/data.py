@@ -1320,10 +1320,10 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         # ============================================================================ #
         # subtrack shifted_hour form the 1st & last init times
         # convert to datetime object
-        self.init_datetime[index][0] = datetime.strptime(
+        self.init_datetime[index][0] = datetime.datetime.strptime(
             self.init_datetime[index][0], "%Y-%m-%d %H:%M:%S"
         ) - timedelta(hours=shifted_hours)
-        self.init_datetime[index][1] = datetime.strptime(
+        self.init_datetime[index][1] = datetime.datetime.strptime(
             self.init_datetime[index][1], "%Y-%m-%d %H:%M:%S"
         ) - timedelta(hours=shifted_hours)
 
