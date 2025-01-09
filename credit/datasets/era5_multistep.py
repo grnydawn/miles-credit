@@ -678,7 +678,7 @@ if __name__ == "__main__":
     sampler = RepeatingIndexSampler(
         dataset_multi,
         forecast_len=data_config["forecast_len"],
-        world_size=1,
+        num_replicas=1,
         rank=0,
         seed=1000,
         shuffle=True,
