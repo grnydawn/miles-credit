@@ -363,6 +363,9 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
         if is_train
         else conf["trainer"]["valid_thread_workers"]
     )
+    forecast_len = (
+        conf["data"]["forecast_len"] if is_train else conf["data"]["valid_forecast_len"]
+    )
     prefetch_factor = conf["trainer"].get("prefetch_factor")
     if prefetch_factor is None:
         logging.warning(
@@ -394,7 +397,7 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
         # This is the deprecated dataset
         sampler = RepeatingIndexSampler(
             dataset,
-            forecast_len=conf["data"]["forecast_len"],
+            forecast_len=forecast_len,
             num_replicas=world_size,
             rank=rank,
             seed=seed,
