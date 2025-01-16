@@ -19,8 +19,6 @@ import pandas as pd
 
 # ---------- #
 import torch
-from torch.utils.data import get_worker_info
-from torch.utils.data.distributed import DistributedSampler
 
 # ---------- #
 # credit
