@@ -753,6 +753,11 @@ def credit_main_parser(
 
         if "ensemble_size" not in conf["trainer"]:
             conf["trainer"]["ensemble_size"] = 1
+        
+        if conf["trainer"]["ensemble_size"] > 1:
+            assert (
+                conf["loss"]["training_loss"] in ["KCRPS"]
+            ), f"{conf["loss"]["training_loss"]} loss incompatible with ensemble training. ensemble_size is {conf["trainer"]["ensemble_size"]}"
 
         if "load_scaler" not in conf["trainer"]:
             conf["trainer"]["load_scaler"] = False

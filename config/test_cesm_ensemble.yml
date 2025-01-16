@@ -4,7 +4,7 @@
 # The model is trained on hourly model-level ERA5 data with top solar irradiance, geopotential, and land-sea mask
 # Output variables: model level [U, V, T, Q], single level [SP, t2m], and 500 hPa [U, V, T, Z, Q]
 # --------------------------------------------------------------------------------------------------------------------- #
-save_loc: '/glade/work/$USER/CREDIT_runs/test_cesm_ensemble/'
+save_loc: '/glade/work/$USER/CREDIT_runs/tests/cesm_ensemble/'
 seed: 1000
 
 #net short top of model: FSNT
@@ -29,6 +29,7 @@ seed: 1000
 #FLDT is not usually output from the model, but FLNT and FLUT are. SOLIN is the insolation.
 
 data:
+    dataset_type: "ERA5_and_Forcing_MultiStep"
     # upper-air variables
     variables: ['U','V','T','Q']
     save_loc: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/f.e21.CREDIT_climate_????.zarr'
