@@ -28,7 +28,7 @@ class LatWeightedMetrics:
         # DO NOT apply these weights during metrics computations, only on the loss during
         self.w_var = None
 
-        self.ensemble_size = conf["trainer"]["ensemble_size"]
+        self.ensemble_size = conf["trainer"].get("ensemble_size", 1) # default value of 1 if not set
 
     def __call__(self, pred, y, clim=None, transform=None, forecast_datetime=0):
         if transform is not None:
@@ -36,8 +36,9 @@ class LatWeightedMetrics:
             y = transform(y)
 
         # calculate ensemble mean, if ensemble_size=1, does nothing
-        pred = pred.view(y.shape[0], self.ensemble_size, *y.shape[1:]) #b, ensemble, c, t, lat, lon
-        pred = pred.mean(dim=1)
+        if self.ensemble_size > 1:
+            pred = pred.view(y.shape[0], self.ensemble_size, *y.shape[1:]) #b, ensemble, c, t, lat, lon
+            pred = pred.mean(dim=1)
 
         # Get latitude and variable weights
         w_lat = (

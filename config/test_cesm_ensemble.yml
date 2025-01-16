@@ -163,7 +163,7 @@ model:
     pad_lat: 48             # number of grids to pad on -90 and 90 deg lat
 
     post_conf: 
-        activate: True
+        activate: False
         #this scaling maps your variables to the ERA5 units 
         #make sure to adjust if your timestep is not 6 hours 
         requires_scaling: True
