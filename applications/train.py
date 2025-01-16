@@ -27,7 +27,7 @@ from credit.distributed import distributed_model_wrapper, setup, get_rank_info
 
 from credit.seed import seed_everything
 from credit.loss import VariableTotalLoss2D
-from credit.data import ERA5Dataset, ERA5_and_Forcing_Dataset, Dataset_BridgeScaler
+from credit.data import ERA5_and_Forcing_Dataset
 from credit.transforms import load_transforms
 from credit.scheduler import load_scheduler, annealed_probability
 from credit.parser import credit_main_parser, training_data_check
@@ -51,93 +51,6 @@ os.environ["MKL_NUM_THREADS"] = "1"
 
 # https://stackoverflow.com/questions/59129812/how-to-avoid-cuda-out-of-memory-in-pytorch
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-
-
-def load_dataset_and_sampler(conf, files, world_size, rank, is_train):
-    """
-    Load the dataset and sampler for training or validation.
-
-    Args:
-        conf (dict): Configuration dictionary containing dataset and training parameters.
-        files (list): List of file paths for the dataset.
-        world_size (int): Number of processes participating in the job.
-        rank (int): Rank of the current process.
-        is_train (bool): Flag indicating whether the dataset is for training or validation.
-
-    Returns:
-        tuple: A tuple containing the dataset and the distributed sampler.
-    """
-
-    # convert $USER to the actual user name
-    seed = conf["seed"]
-    conf["save_loc"] = os.path.expandvars(conf["save_loc"])
-
-    # number of previous lead time inputs
-    history_len = conf["data"]["history_len"]
-    valid_history_len = conf["data"]["valid_history_len"]
-    history_len = history_len if is_train else valid_history_len
-
-    # number of lead times to forecast
-    forecast_len = conf["data"]["forecast_len"]
-    valid_forecast_len = conf["data"]["valid_forecast_len"]
-    forecast_len = forecast_len if is_train else valid_forecast_len
-
-    # optional setting: max_forecast_len
-    max_forecast_len = (
-        None
-        if "max_forecast_len" not in conf["data"]
-        else conf["data"]["max_forecast_len"]
-    )
-
-    # optional setting: skip_periods
-    skip_periods = (
-        None if "skip_periods" not in conf["data"] else conf["data"]["skip_periods"]
-    )
-
-    # optional setting: one_shot
-    one_shot = None if "one_shot" not in conf["data"] else conf["data"]["one_shot"]
-
-    # shufle dataloader if training
-    shuffle = is_train
-    name = "Train" if is_train else "Valid"
-
-    # data preprocessing utils
-    transforms = load_transforms(conf)
-
-    # quantile transform using BridgeScaler
-    if conf["data"]["scaler_type"] == "quantile-cached":
-        dataset = Dataset_BridgeScaler(
-            conf,
-            conf_dataset="bs_years_train" if is_train else "bs_years_val",
-            transform=transforms,
-        )
-
-    else:
-        # Z-score
-        dataset = ERA5Dataset(
-            filenames=files,
-            history_len=history_len,
-            forecast_len=forecast_len,
-            skip_periods=skip_periods,
-            one_shot=one_shot,
-            max_forecast_len=max_forecast_len,
-            transform=transforms,
-        )
-
-    # Pytorch sampler
-    sampler = DistributedSampler(
-        dataset,
-        num_replicas=world_size,
-        rank=rank,
-        seed=seed,
-        shuffle=shuffle,
-        drop_last=True,
-    )
-    logging.info(
-        f" Loaded a {name} ERA dataset, and a distributed sampler (forecast length = {forecast_len + 1})"
-    )
-
-    return dataset, sampler
 
 
 def load_dataset_and_sampler_zscore_only(
@@ -607,12 +520,7 @@ def main(rank, world_size, conf, backend, trial=False):
             is_train=False,
         )
     else:
-        train_dataset, train_sampler = load_dataset_and_sampler(
-            conf, train_files, world_size, rank, is_train=True
-        )
-        valid_dataset, valid_sampler = load_dataset_and_sampler(
-            conf, valid_files, world_size, rank, is_train=False
-        )
+        raise Exception("unsupported scaler")
 
     # setup the dataloder for this process
 
