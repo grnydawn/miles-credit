@@ -1320,12 +1320,12 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         # ============================================================================ #
         # subtrack shifted_hour form the 1st & last init times
         # convert to datetime object
-        self.init_datetime[index][0] = datetime.strptime(
+        self.init_datetime[index][0] = datetime.datetime.strptime(
             self.init_datetime[index][0], "%Y-%m-%d %H:%M:%S"
-        ) - timedelta(hours=shifted_hours)
-        self.init_datetime[index][1] = datetime.strptime(
+        ) - datetime.timedelta(hours=shifted_hours)
+        self.init_datetime[index][1] = datetime.datetime.strptime(
             self.init_datetime[index][1], "%Y-%m-%d %H:%M:%S"
-        ) - timedelta(hours=shifted_hours)
+        ) - datetime.timedelta(hours=shifted_hours)
 
         # convert the 1st & last init times to a list of init times
         self.init_datetime[index] = generate_datetime(
@@ -1343,7 +1343,7 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         # init_time_list_np[0]: the first initialization time
         # init_time_list_np[t]: the forcasted time of the (t-1)th step; the initialization time of the t-th step
         self.init_time_list_np = [
-            np.datetime64(str(dt_obj) + ".000000000").astype(datetime)
+            np.datetime64(str(dt_obj) + ".000000000").astype(datetime.datetime)
             for dt_obj in init_time_list_dt
         ]
 
@@ -1361,7 +1361,7 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
                     N_times = len(ds["time"])
                     # convert ds['time'] to a list of nanosecondes
                     ds_time_list = [
-                        np.datetime64(ds_time.values).astype(datetime)
+                        np.datetime64(ds_time.values).astype(datetime.datetime)
                         for ds_time in ds["time"]
                     ]
                     ds_start_time = ds_time_list[0]
