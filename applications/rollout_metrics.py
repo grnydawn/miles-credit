@@ -16,7 +16,6 @@ from collections import defaultdict
 # Numerics
 from datetime import datetime, timedelta
 import pandas as pd
-import xarray as xr
 import numpy as np
 
 # ---------- #
@@ -40,8 +39,6 @@ from credit.metrics import LatWeightedMetrics
 from credit.forecast import load_forecasts
 from credit.distributed import distributed_model_wrapper, setup, get_rank_info
 from credit.models.checkpoint import load_model_state
-from torch.utils.data import get_worker_info
-from torch.utils.data.distributed import DistributedSampler
 from credit.parser import credit_main_parser, predict_data_check
 
 logger = logging.getLogger(__name__)
