@@ -751,6 +751,14 @@ def credit_main_parser(
             "train_batch_size" in conf["trainer"]
         ), "Training set batch size ('train_batch_size') is missing from onf['trainer']"
 
+        if "ensemble_size" not in conf["trainer"]:
+            conf["trainer"]["ensemble_size"] = 1  # default value of 1 means deterministic training
+        
+        if conf["trainer"]["ensemble_size"] > 1:
+            assert (
+                conf["loss"]["training_loss"] in ["KCRPS"]
+            ), f'''{conf["loss"]["training_loss"]} loss incompatible with ensemble training. ensemble_size is {conf["trainer"]["ensemble_size"]}'''
+
         if "load_scaler" not in conf["trainer"]:
             conf["trainer"]["load_scaler"] = False
 

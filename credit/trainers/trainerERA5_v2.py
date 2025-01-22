@@ -175,6 +175,14 @@ class Trainer(BaseTrainer):
                 if flag_clamp:
                     x = torch.clamp(x, min=clamp_min, max=clamp_max)
                     y = torch.clamp(y, min=clamp_min, max=clamp_max)
+                
+                # --------------------------------------------- #
+                # ensemble
+                # copies each sample in the batch ensemble_size number of times. 
+                # if samples in the batch are ordered (x,y,z) then the result tensor is (x, x, ..., y, y, ..., z,z ...)
+                # WARNING: needs to be used with a loss that can handle x with b * ensemble_size samples and y with b samples
+                if conf["trainer"].get("ensemble_size", 1) > 1: # gets value if set, otherwise is 1
+                    x = torch.repeat_interleave(x, conf["trainer"]["ensemble_size"], 0)
 
                 # single step predict
                 y_pred = self.model(x)
@@ -463,6 +471,14 @@ class Trainer(BaseTrainer):
                 if flag_clamp:
                     x = torch.clamp(x, min=clamp_min, max=clamp_max)
                     y = torch.clamp(y, min=clamp_min, max=clamp_max)
+                
+                # --------------------------------------------- #
+                # ensemble
+                # copies each sample in the batch ensemble_size number of times. 
+                # if samples in the batch are ordered (x,y,z) then the result tensor is (x, x, ..., y, y, ..., z,z ...)
+                # WARNING: needs to be used with a loss that can handle x with b * ensemble_size samples and y with b samples
+                if conf["trainer"].get("ensemble_size", 1) > 1: # gets value if set, otherwise is 1
+                    x = torch.repeat_interleave(x, conf["trainer"]["ensemble_size"], 0)
 
                 y_pred = self.model(x)
 

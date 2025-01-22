@@ -3,7 +3,6 @@ import logging
 import copy
 import os
 import torch.nn.functional as F
-from torch import nn
 from credit.models.base_model import BaseModel
 from credit.postblock import PostBlock
 

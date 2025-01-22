@@ -78,6 +78,9 @@ class Trainer(BaseTrainer):
         amp = conf["trainer"]["amp"]
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
         forecast_length = conf["data"]["forecast_len"]
+        ensemble_size = conf["trainer"].get("ensemble_size", 1)
+        if ensemble_size > 1:
+            logger.info(f"ensemble training with ensemble_size {ensemble_size}")
 
         # number of diagnostic variables
         varnum_diag = len(conf["data"]["diagnostic_variables"])
@@ -187,6 +190,14 @@ class Trainer(BaseTrainer):
                     else:
                         # no x_surf
                         x = reshape_only(batch["x"]).to(self.device)  # .float()
+                    
+                    # --------------------------------------------- #
+                    # ensemble x and x_surf on initialization
+                    # copies each sample in the batch ensemble_size number of times. 
+                    # if samples in the batch are ordered (x,y,z) then the result tensor is (x, x, ..., y, y, ..., z,z ...)
+                    # WARNING: needs to be used with a loss that can handle x with b * ensemble_size samples and y with b samples
+                    if ensemble_size > 1:
+                        x = torch.repeat_interleave(x, ensemble_size, 0)
 
                 # add forcing and static variables (regardless of fcst hours)
                 if "x_forcing_static" in batch:
@@ -194,6 +205,11 @@ class Trainer(BaseTrainer):
                     x_forcing_batch = (
                         batch["x_forcing_static"].to(self.device).permute(0, 2, 1, 3, 4)
                     )  # .float()
+                    # ---------------- ensemble ----------------- #
+                    # ensemble x_forcing_batch for concat. see above for explanation of code
+                    if ensemble_size > 1: 
+                        x_forcing_batch = torch.repeat_interleave(x_forcing_batch, ensemble_size, 0)
+                    # --------------------------------------------- #
 
                     # concat on var dimension
                     x = torch.cat((x, x_forcing_batch), dim=1)
@@ -271,7 +287,7 @@ class Trainer(BaseTrainer):
                     torch.distributed.barrier()
 
                 # stop after X steps
-                stop_forecast = batch["stop_forecast"].item()
+                stop_forecast = batch["stop_forecast"][0].item()
                 if stop_forecast:
                     break
 
@@ -404,6 +420,8 @@ class Trainer(BaseTrainer):
             if "valid_forecast_len" in conf["data"]
             else conf["forecast_len"]
         )
+        ensemble_size = conf["trainer"].get("ensemble_size", 1)
+
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
 
         results_dict = defaultdict(list)
@@ -473,8 +491,8 @@ class Trainer(BaseTrainer):
                 y_pred = None  # Place holder that gets updated after first roll-out
                 while not stop_forecast:
                     batch = next(dl)
-                    forecast_step = batch["forecast_step"].item()
-                    stop_forecast = batch["stop_forecast"].item()
+                    forecast_step = batch["forecast_step"][0].item()
+                    stop_forecast = batch["stop_forecast"][0].item()
                     if forecast_step == 1:
                         # Initialize x and x_surf with the first time step
                         if "x_surf" in batch:
@@ -487,6 +505,13 @@ class Trainer(BaseTrainer):
                         else:
                             # no x_surf
                             x = reshape_only(batch["x"]).to(self.device)  # .float()
+                        # --------------------------------------------- #
+                        # ensemble x and x_surf on initialization
+                        # copies each sample in the batch ensemble_size number of times. 
+                        # if samples in the batch are ordered (x,y,z) then the result tensor is (x, x, ..., y, y, ..., z,z ...)
+                        # WARNING: needs to be used with a loss that can handle x with b * ensemble_size samples and y with b samples
+                        if ensemble_size > 1:
+                            x = torch.repeat_interleave(x, ensemble_size, 0)
 
                     # add forcing and static variables (regardless of fcst hours)
                     if "x_forcing_static" in batch:
@@ -496,6 +521,11 @@ class Trainer(BaseTrainer):
                             .to(self.device)
                             .permute(0, 2, 1, 3, 4)
                         )  # .float()
+                        # ---------------- ensemble ----------------- #
+                        # ensemble x_forcing_batch for concat. see above for explanation of code
+                        if ensemble_size > 1: 
+                            x_forcing_batch = torch.repeat_interleave(x_forcing_batch, ensemble_size, 0)
+                        # --------------------------------------------- #
 
                         # concat on var dimension
                         x = torch.cat((x, x_forcing_batch), dim=1)

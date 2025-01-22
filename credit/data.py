@@ -16,13 +16,11 @@ Content:
 """
 
 # system tools
-import os
-from typing import Optional, Callable, TypedDict, Union
+from typing import TypedDict, Union
 
 # data utils
 import datetime
 import numpy as np
-import pandas as pd
 import xarray as xr
 
 # Pytorch utils
