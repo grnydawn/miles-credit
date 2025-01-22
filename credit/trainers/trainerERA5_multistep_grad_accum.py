@@ -287,7 +287,7 @@ class Trainer(BaseTrainer):
                     torch.distributed.barrier()
 
                 # stop after X steps
-                stop_forecast = batch["stop_forecast"].item()
+                stop_forecast = batch["stop_forecast"][0].item()
                 if stop_forecast:
                     break
 
@@ -491,8 +491,8 @@ class Trainer(BaseTrainer):
                 y_pred = None  # Place holder that gets updated after first roll-out
                 while not stop_forecast:
                     batch = next(dl)
-                    forecast_step = batch["forecast_step"].item()
-                    stop_forecast = batch["stop_forecast"].item()
+                    forecast_step = batch["forecast_step"][0].item()
+                    stop_forecast = batch["stop_forecast"][0].item()
                     if forecast_step == 1:
                         # Initialize x and x_surf with the first time step
                         if "x_surf" in batch:
