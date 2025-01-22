@@ -137,7 +137,9 @@ class LatWeightedMetricsClimatology:
         if isinstance(forecast_datetime, datetime):
             pass
         elif isinstance(forecast_datetime, int):
-            forecast_datetime = datetime.utcfromtimestamp(forecast_datetime) # Assumes integer datetime
+            forecast_datetime = datetime.utcfromtimestamp(
+                forecast_datetime
+            )  # Assumes integer datetime
         dayofyear = forecast_datetime.timetuple().tm_yday
         hour = forecast_datetime.hour
 
@@ -148,7 +150,7 @@ class LatWeightedMetricsClimatology:
         # Convert to PyTorch tensor
         return torch.tensor(climatology_slice.values, dtype=torch.float32)
 
-    def __call__(self, pred, y, transform=None, forecast_datetime=None):
+    def __call__(self, pred, y, extras=None, transform=None, forecast_datetime=None):
         if transform is not None:
             pred = transform(pred)
             y = transform(y)
@@ -188,9 +190,11 @@ class LatWeightedMetricsClimatology:
 
                 # Compute anamolies
                 for i, var in enumerate(ordered_acc_vars):
-                    clim = self.get_climatology(forecast_datetime, var).to(
-                        dtype=pred.dtype, device=pred.device
-                    ).unsqueeze(0)
+                    clim = (
+                        self.get_climatology(forecast_datetime, var)
+                        .to(dtype=pred.dtype, device=pred.device)
+                        .unsqueeze(0)
+                    )
                     anomalies_pred.append(acc_pred[:, i] - clim)
                     anomalies_y.append(acc_y[:, i] - clim)
 
@@ -202,13 +206,13 @@ class LatWeightedMetricsClimatology:
                     y_prime = anomalies_y[:, i] - torch.mean(anomalies_y[:, i])
 
                     # Offset the denominator incase its zero.
-                    denominator = (
-                        torch.sqrt(
-                            torch.sum(w_var * w_lat * pred_prime**2)
-                            * torch.sum(w_var * w_lat * y_prime**2)
-                        )
+                    denominator = torch.sqrt(
+                        torch.sum(w_var * w_lat * pred_prime**2)
+                        * torch.sum(w_var * w_lat * y_prime**2)
                     )
-                    denominator = torch.maximum(denominator, torch.tensor(1e-8, device=denominator.device))
+                    denominator = torch.maximum(
+                        denominator, torch.tensor(1e-8, device=denominator.device)
+                    )
                     loss_dict[f"acc_{var}"] = (
                         torch.sum(w_var * w_lat * pred_prime * y_prime) / denominator
                     )
@@ -226,11 +230,14 @@ class LatWeightedMetricsClimatology:
                 loss_dict[f"mae_{var}"] = (
                     torch.abs(error[:, i]) * w_lat * w_var
                 ).mean()
+                if extras is not None:
+                    for k, v in extras.items():
+                        loss_dict[f"{k}_{var}"] = (v[:, i] * w_lat * w_var).mean()
 
             # Compute average metrics
             if anamoly_scores:
                 loss_dict["acc"] = np.mean(
-                        [loss_dict[k].cpu().item() for k in loss_dict.keys() if "acc_" in k]
+                    [loss_dict[k].cpu().item() for k in loss_dict.keys() if "acc_" in k]
                 )
             loss_dict["rmse"] = np.mean(
                 [loss_dict[k].cpu().item() for k in loss_dict.keys() if "rmse_" in k]
@@ -253,14 +260,12 @@ if __name__ == "__main__":
 
     logging.basicConfig(
         level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
     logger = logging.getLogger(__name__)
 
     # Open an example config
-    with open(
-        "../config/example-v2025.2.0.yml"
-    ) as cf:
+    with open("../config/example-v2025.2.0.yml") as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
     conf = credit_main_parser(
