@@ -14,6 +14,7 @@ from torch.utils.data.distributed import DistributedSampler
 from credit.transforms import load_transforms
 import numpy as np
 import logging
+import torch
 import sys
 import re
 
@@ -204,6 +205,9 @@ def load_dataset(conf, rank=0, world_size=1, is_train=True):
 
     # Instantiate the dataset based on the provided class name
     if dataset_type == "ERA5_and_Forcing_SingleStep":  # forecast-len = 0 dataset
+        logging.warning(
+            "ERA5_and_Forcing_SingleStep is deprecated. Use ERA5_MultiStep_Batcher or MultiprocessingBatcher for all forecast lengths"
+        )
         dataset = ERA5_and_Forcing_SingleStep(
             varname_upper_air=conf["data"]["variables"],
             varname_surface=conf["data"]["surface_variables"],
@@ -227,6 +231,10 @@ def load_dataset(conf, rank=0, world_size=1, is_train=True):
         )
     # All datasets from here on are multi-step examples
     elif dataset_type == "ERA5_and_Forcing_MultiStep":
+        logging.warning(
+            "ERA5_and_Forcing_MultiStep is deprecated -- it only supports batch size = 1 (ignoring whats in your config).\n"
+            "Use ERA5_MultiStep_Batcher or MultiprocessingBatcher for all forecast lengths and batch sizes"
+        )
         dataset = ERA5_and_Forcing_MultiStep(
             varname_upper_air=conf["data"]["variables"],
             varname_surface=conf["data"]["surface_variables"],
@@ -248,9 +256,6 @@ def load_dataset(conf, rank=0, world_size=1, is_train=True):
             rank=rank,
             world_size=world_size,
             seed=seed,
-        )
-        logging.warning(
-            "ERA5_and_Forcing_MultiStep is designed for batch_size = 1. Ignoring whats in your config."
         )
     elif dataset_type == "ERA5_MultiStep_Batcher":
         dataset = ERA5_MultiStep_Batcher(
@@ -333,7 +338,7 @@ def load_dataset(conf, rank=0, world_size=1, is_train=True):
     train_flag = "training" if is_train else "validation"
 
     logging.info(
-        f"Loaded a {train_flag} {dataset_type} ERA dataset (forecast length = {data_config['forecast_len'] + 1})"
+        f"Loaded a {train_flag} {dataset_type} dataset (forecast length = {data_config['forecast_len'] + 1})"
     )
 
     return dataset
@@ -376,6 +381,24 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
 
     if type(dataset) is ERA5_and_Forcing_SingleStep:
         # This is the single-step dataset, original version
+        def custom_collate_fn(batch):
+            # Only return length 1 tensors for forecast_step and stop_forecast
+            keys = batch[0].keys()
+            collated_batch = {}
+            for key in keys:
+                items = [item[key] for item in batch]
+                if torch.is_tensor(items[0]):
+                    collated_batch[key] = torch.stack(items)
+                elif isinstance(items[0], (int, float, bool)):
+                    collated_batch[key] = torch.tensor(
+                        [items[0]]
+                        if key in ["forecast_step", "stop_forecast"]
+                        else items
+                    )
+                else:
+                    collated_batch[key] = items
+            return collated_batch
+
         sampler = DistributedSampler(
             dataset,
             num_replicas=world_size,
@@ -392,6 +415,7 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
             pin_memory=True,
             persistent_workers=True if num_workers > 0 else False,
             num_workers=num_workers,
+            collate_fn=custom_collate_fn,
         )
     elif type(dataset) is ERA5_and_Forcing_MultiStep:
         # This is the deprecated dataset
@@ -479,13 +503,9 @@ if __name__ == "__main__":
     world_size = 2
     conf["trainer"]["start_epoch"] = epoch
     conf["trainer"]["train_batch_size"] = 2  # batch_size
-    conf["trainer"]["valid_batch_size"] = conf["trainer"][
-        "valid_batch_size"
-    ]  # batch_size
+    conf["trainer"]["valid_batch_size"] = 2  # batch_size
     conf["trainer"]["thread_workers"] = 4  # num_workers
-    conf["trainer"]["valid_thread_workers"] = conf["trainer"][
-        "thread_workers"
-    ]  # num_workers
+    conf["trainer"]["valid_thread_workers"] = 4  # num_workers
     conf["trainer"]["prefetch_factor"] = 4  # Add prefetch_factor
     conf["data"]["history_len"] = 1
     conf["data"]["valid_history_len"] = conf["data"]["history_len"]
