@@ -162,7 +162,7 @@ class LatWeightedMetricsClimatology:
             pred = transform(pred)
             y = transform(y)
 
-        # Get latitude and variable weights
+        # Get latitude and variable weights to device
         w_lat = (
             self.w_lat.to(dtype=pred.dtype, device=pred.device)
             if self.w_lat is not None
@@ -176,73 +176,26 @@ class LatWeightedMetricsClimatology:
 
         loss_dict = {}
         with torch.no_grad():
-            # Compute ACC for acc_vars using anomalies
-            anamoly_scores = False
+            anomaly_scores = False
             if self.climatology and forecast_datetime:
-                anomalies_pred = []
-                anomalies_y = []
-                acc_pred = pred
-                acc_y = y
-
-                # Get the list of variables from the climatology file
-                clim_vars = list(self.climatology.data_vars)
-
-                # Ensure self.acc_vars is in the same order as clim_vars
-                ordered_acc_vars = [var for var in clim_vars if var in self.vars]
-
-                # Reorder acc_pred and acc_y to match ordered_acc_vars
-                indices = [self.acc_vars.index(var) for var in ordered_acc_vars]
-                acc_pred = acc_pred[:, indices]
-                acc_y = acc_y[:, indices]
-
-                # Compute anamolies
-                for i, var in enumerate(ordered_acc_vars):
-                    clim = (
-                        self.get_climatology(forecast_datetime, var)
-                        .to(dtype=pred.dtype, device=pred.device)
-                        .unsqueeze(0)
-                    )
-                    anomalies_pred.append(acc_pred[:, i] - clim)
-                    anomalies_y.append(acc_y[:, i] - clim)
-
-                anomalies_pred = torch.stack(anomalies_pred, dim=1)
-                anomalies_y = torch.stack(anomalies_y, dim=1)
-
-                for i, var in enumerate(self.acc_vars):
-                    pred_prime = anomalies_pred[:, i] - torch.mean(anomalies_pred[:, i])
-                    y_prime = anomalies_y[:, i] - torch.mean(anomalies_y[:, i])
-
-                    # Offset the denominator incase its zero.
-                    denominator = torch.sqrt(
-                        torch.sum(w_var * w_lat * pred_prime**2)
-                        * torch.sum(w_var * w_lat * y_prime**2)
-                    )
-                    denominator = torch.maximum(
-                        denominator, torch.tensor(1e-8, device=denominator.device)
-                    )
-                    loss_dict[f"acc_{var}"] = (
-                        torch.sum(w_var * w_lat * pred_prime * y_prime) / denominator
-                    )
-                anamoly_scores = True
+                loss_dict = self.acc(loss_dict, pred, y, 
+                                    extras, transform, forecast_datetime,
+                                    w_var, w_lat)
+                anomaly_scores = True
+                
 
             # Compute RMSE, MSE, MAE for all vars
             error = pred - y
             for i, var in enumerate(self.vars):
-                loss_dict[f"rmse_{var}"] = torch.mean(
-                    torch.sqrt(
-                        torch.mean(error[:, i] ** 2 * w_lat * w_var, dim=(-2, -1))
-                    )
-                )
-                loss_dict[f"mse_{var}"] = (error[:, i] ** 2 * w_lat * w_var).mean()
-                loss_dict[f"mae_{var}"] = (
-                    torch.abs(error[:, i]) * w_lat * w_var
-                ).mean()
+                loss_dict[f"rmse_{var}"] = self.rmse(error[:, i], w_lat, w_var)
+                loss_dict[f"mse_{var}"] = self.mse(error[:, i], w_lat, w_var)
+                loss_dict[f"mae_{var}"] = self.mae(error[:, i], w_lat, w_var)
                 if extras is not None:
                     for k, v in extras.items():
                         loss_dict[f"{k}_{var}"] = (v[:, i] * w_lat * w_var).mean()
 
             # Compute average metrics
-            if anamoly_scores:
+            if anomaly_scores:
                 loss_dict["acc"] = np.mean(
                     [loss_dict[k].cpu().item() for k in loss_dict.keys() if "acc_" in k]
                 )
@@ -257,7 +210,67 @@ class LatWeightedMetricsClimatology:
             )
 
         return loss_dict
+    
+    def acc(self, loss_dict, pred, y, extras, transform, forecast_datetime, w_var, w_lat):
+        # Compute ACC for acc_vars using anomalies
+        anomalies_pred = []
+        anomalies_y = []
+        acc_pred = pred
+        acc_y = y
 
+        # Get the list of variables from the climatology file
+        clim_vars = list(self.climatology.data_vars)
+
+        # Ensure self.acc_vars is in the same order as clim_vars
+        ordered_acc_vars = [var for var in clim_vars if var in self.vars]
+
+        # Reorder acc_pred and acc_y to match ordered_acc_vars
+        indices = [self.acc_vars.index(var) for var in ordered_acc_vars]
+        acc_pred = acc_pred[:, indices]
+        acc_y = acc_y[:, indices]
+
+        # Compute anomalies
+        for i, var in enumerate(ordered_acc_vars):
+            clim = (
+                self.get_climatology(forecast_datetime, var)
+                .to(dtype=pred.dtype, device=pred.device)
+                .unsqueeze(0)
+            )
+            anomalies_pred.append(acc_pred[:, i] - clim)
+            anomalies_y.append(acc_y[:, i] - clim)
+
+        anomalies_pred = torch.stack(anomalies_pred, dim=1)
+        anomalies_y = torch.stack(anomalies_y, dim=1)
+
+        for i, var in enumerate(self.acc_vars):
+            pred_prime = anomalies_pred[:, i] - torch.mean(anomalies_pred[:, i])
+            y_prime = anomalies_y[:, i] - torch.mean(anomalies_y[:, i])
+
+            # Offset the denominator incase its zero.
+            denominator = torch.sqrt(
+                torch.sum(w_var * w_lat * pred_prime**2)
+                * torch.sum(w_var * w_lat * y_prime**2)
+            )
+            denominator = torch.maximum(
+                denominator, torch.tensor(1e-8, device=denominator.device)
+            )
+            loss_dict[f"acc_{var}"] = (
+                torch.sum(w_var * w_lat * pred_prime * y_prime) / denominator
+            )
+        return loss_dict
+    
+    def rmse(self, error, w_lat, w_var):
+        return torch.mean(
+                    torch.sqrt(
+                        torch.mean(error ** 2 * w_lat * w_var, dim=(-2, -1))
+                    )
+                )
+    def mse(self, error, w_lat, w_var):
+        return (error ** 2 * w_lat * w_var).mean()
+    
+    def mae(self, error, w_lat, w_var):
+        return (torch.abs(error) * w_lat * w_var
+                ).mean()
 
 if __name__ == "__main__":
     import yaml
