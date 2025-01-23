@@ -26,7 +26,7 @@ import optuna
 from credit.data import concat_and_reshape, reshape_only
 from credit.models.checkpoint import TorchFSDPCheckpointIO
 from credit.scheduler import update_on_batch, update_on_epoch
-from credit.trainers.utils import cleanup, accum_log
+from credit.trainers.utils import cleanup, accum_log, cycle
 from credit.trainers.base_trainer import BaseTrainer
 from credit.postblock import GlobalMassFixer, GlobalWaterFixer, GlobalEnergyFixer
 
@@ -46,6 +46,7 @@ class Trainer(BaseTrainer):
         # training hyperparameters
         batches_per_epoch = conf["trainer"]["batches_per_epoch"]
         grad_accum_every = conf["trainer"]["grad_accum_every"]
+        grad_max_norm = conf["trainer"]["grad_max_norm"]
         forecast_len = conf["data"]["forecast_len"]
         amp = conf["trainer"]["amp"]
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
@@ -66,6 +67,15 @@ class Trainer(BaseTrainer):
             and conf["trainer"]["scheduler"]["scheduler_type"] == "lambda"
         ):
             scheduler.step()
+
+        # ------------------------------------------------------- #
+        # clamp to remove outliers
+        if conf["data"]["data_clamp"] is None:
+            flag_clamp = False
+        else:
+            flag_clamp = True
+            clamp_min = float(conf["data"]["data_clamp"][0])
+            clamp_max = float(conf["data"]["data_clamp"][1])
 
         # ====================================================== #
         # postblock opts outside of model
@@ -103,7 +113,7 @@ class Trainer(BaseTrainer):
             )
 
         batch_group_generator = tqdm.tqdm(
-            enumerate(trainloader),
+            range(batches_per_epoch),
             total=batches_per_epoch,
             leave=True,
             disable=True if self.rank > 0 else False,
@@ -111,7 +121,10 @@ class Trainer(BaseTrainer):
 
         results_dict = defaultdict(list)
 
-        for i, batch in batch_group_generator:
+        dl = cycle(trainloader)
+        for i in batch_group_generator:
+            batch = next(dl)  # Get the next batch from the iterator
+            
             # training log
             logs = {}
             # loss
@@ -156,6 +169,20 @@ class Trainer(BaseTrainer):
 
                     # concat on var dimension
                     y = torch.cat((y, y_diag_batch), dim=1)
+
+                # --------------------------------------------- #
+                # clamp
+                if flag_clamp:
+                    x = torch.clamp(x, min=clamp_min, max=clamp_max)
+                    y = torch.clamp(y, min=clamp_min, max=clamp_max)
+                
+                # --------------------------------------------- #
+                # ensemble
+                # copies each sample in the batch ensemble_size number of times. 
+                # if samples in the batch are ordered (x,y,z) then the result tensor is (x, x, ..., y, y, ..., z,z ...)
+                # WARNING: needs to be used with a loss that can handle x with b * ensemble_size samples and y with b samples
+                if conf["trainer"].get("ensemble_size", 1) > 1: # gets value if set, otherwise is 1
+                    x = torch.repeat_interleave(x, conf["trainer"]["ensemble_size"], 0)
 
                 # single step predict
                 y_pred = self.model(x)
@@ -249,6 +276,10 @@ class Trainer(BaseTrainer):
 
             if distributed:
                 torch.distributed.barrier()
+                
+            if grad_max_norm is not None:
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=grad_max_norm)
 
             scaler.step(optimizer)
             scaler.update()
@@ -340,6 +371,15 @@ class Trainer(BaseTrainer):
 
         results_dict = defaultdict(list)
 
+        # ------------------------------------------------------- #
+        # clamp to remove outliers
+        if conf["data"]["data_clamp"] is None:
+            flag_clamp = False
+        else:
+            flag_clamp = True
+            clamp_min = float(conf["data"]["data_clamp"][0])
+            clamp_max = float(conf["data"]["data_clamp"][1])
+
         # ====================================================== #
         # postblock opts outside of model
         post_conf = conf["model"]["post_conf"]
@@ -378,13 +418,15 @@ class Trainer(BaseTrainer):
             )
 
         batch_group_generator = tqdm.tqdm(
-            enumerate(valid_loader),
+            range(valid_batches_per_epoch),
             total=valid_batches_per_epoch,
             leave=True,
             disable=True if self.rank > 0 else False,
         )
 
-        for i, batch in batch_group_generator:
+        dl = cycle(valid_loader)
+        for i in batch_group_generator:
+            batch = next(dl)
             with torch.no_grad():
                 if "x_surf" in batch:
                     # combine x and x_surf
@@ -423,6 +465,20 @@ class Trainer(BaseTrainer):
 
                     # concat on var dimension
                     y = torch.cat((y, y_diag_batch), dim=1)
+
+                # --------------------------------------------- #
+                # clamp
+                if flag_clamp:
+                    x = torch.clamp(x, min=clamp_min, max=clamp_max)
+                    y = torch.clamp(y, min=clamp_min, max=clamp_max)
+                
+                # --------------------------------------------- #
+                # ensemble
+                # copies each sample in the batch ensemble_size number of times. 
+                # if samples in the batch are ordered (x,y,z) then the result tensor is (x, x, ..., y, y, ..., z,z ...)
+                # WARNING: needs to be used with a loss that can handle x with b * ensemble_size samples and y with b samples
+                if conf["trainer"].get("ensemble_size", 1) > 1: # gets value if set, otherwise is 1
+                    x = torch.repeat_interleave(x, conf["trainer"]["ensemble_size"], 0)
 
                 y_pred = self.model(x)
 

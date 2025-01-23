@@ -4,18 +4,15 @@ import sys
 import yaml
 import logging
 import warnings
-from glob import glob
 from pathlib import Path
 from argparse import ArgumentParser
 import multiprocessing as mp
-from collections import defaultdict
 
 # ---------- #
 # Numerics
 from datetime import datetime, timedelta
 import xarray as xr
 import numpy as np
-import pandas as pd
 
 # ---------- #
 import torch
@@ -25,20 +22,23 @@ import torch
 from credit.models import load_model
 from credit.seed import seed_everything
 from credit.distributed import get_rank_info
+from credit.datasets import setup_data_loading
+from credit.datasets.era5_predict_batcher import (
+    BatchForecastLenDataLoader,
+    Predict_Dataset_Batcher
+)
 
 from credit.data import (
     concat_and_reshape,
     reshape_only,
-    Predict_Dataset,
 )
 
 from credit.transforms import load_transforms, Normalize_ERA5_and_Forcing
 from credit.pbs import launch_script, launch_script_mpi
 from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
-from credit.metrics import LatWeightedMetrics
 from credit.forecast import load_forecasts
 from credit.distributed import distributed_model_wrapper, setup
-from credit.models.checkpoint import load_model_state
+from credit.models.checkpoint import load_model_state, load_state_dict_error_handler
 from credit.parser import credit_main_parser, predict_data_check
 from credit.output import load_metadata, make_xarray, save_netcdf_increment
 from credit.postblock import GlobalMassFixer, GlobalWaterFixer, GlobalEnergyFixer
@@ -55,6 +55,9 @@ def predict(rank, world_size, conf, p):
     if conf["predict"]["mode"] in ["fsdp", "ddp"]:
         setup(rank, world_size, conf["predict"]["mode"])
 
+    # Set up dataloading
+    data_config = setup_data_loading(conf)
+
     # infer device id from rank
     if torch.cuda.is_available():
         device = torch.device(f"cuda:{rank % torch.cuda.device_count()}")
@@ -63,8 +66,7 @@ def predict(rank, world_size, conf, p):
         device = torch.device("cpu")
 
     # config settings
-    seed = conf["seed"]
-    seed_everything(seed)
+    seed_everything(conf["seed"])
 
     # number of input time frames
     history_len = conf["data"]["history_len"]
@@ -72,51 +74,15 @@ def predict(rank, world_size, conf, p):
     # length of forecast steps
     lead_time_periods = conf["data"]["lead_time_periods"]
 
+    # batch size
+    batch_size = conf["predict"].get("batch_size", 1)
+
     # transform and ToTensor class
-    transform = load_transforms(conf)
     if conf["data"]["scaler_type"] == "std_new":
         state_transformer = Normalize_ERA5_and_Forcing(conf)
     else:
         print("Scaler type {} not supported".format(conf["data"]["scaler_type"]))
         raise
-    # ----------------------------------------------------------------- #
-    # parse varnames and save_locs from config
-
-    # upper air variables
-    all_ERA_files = sorted(glob(conf["data"]["save_loc"]))
-    varname_upper_air = conf["data"]["variables"]
-
-    # surface variables
-    varname_surface = conf["data"]["surface_variables"]
-
-    if conf["data"]["flag_surface"]:
-        surface_files = sorted(glob(conf["data"]["save_loc_surface"]))
-    else:
-        surface_files = None
-
-    # diagnostic variables
-    varname_diagnostic = conf["data"]["diagnostic_variables"]
-
-    if conf["data"]["flag_diagnostic"]:
-        diagnostic_files = sorted(glob(conf["data"]["save_loc_diagnostic"]))
-    else:
-        diagnostic_files = None
-
-    # dynamic forcing variables
-    varname_dyn_forcing = conf["data"]["dynamic_forcing_variables"]
-
-    if conf["data"]["flag_dyn_forcing"]:
-        dyn_forcing_files = sorted(glob(conf["data"]["save_loc_dynamic_forcing"]))
-    else:
-        dyn_forcing_files = None
-
-    # forcing variables
-    forcing_files = conf["data"]["save_loc_forcing"]
-    varname_forcing = conf["data"]["forcing_variables"]
-
-    # static variables
-    static_files = conf["data"]["save_loc_static"]
-    varname_static = conf["data"]["static_variables"]
 
     # number of diagnostic variables
     varnum_diag = len(conf["data"]["diagnostic_variables"])
@@ -128,7 +94,6 @@ def predict(rank, world_size, conf, p):
         + len(conf["data"]["static_variables"])
     )
 
-    # ------------------------------------------------------- #
     # clamp to remove outliers
     if conf["data"]["data_clamp"] is None:
         flag_clamp = False
@@ -137,7 +102,6 @@ def predict(rank, world_size, conf, p):
         clamp_min = float(conf["data"]["data_clamp"][0])
         clamp_max = float(conf["data"]["data_clamp"][1])
 
-    # ====================================================== #
     # postblock opts outside of model
     post_conf = conf["model"]["post_conf"]
     flag_mass_conserve = False
@@ -162,76 +126,64 @@ def predict(rank, world_size, conf, p):
                 logger.info("Activate GlobalEnergyFixer outside of model")
                 flag_energy_conserve = True
                 opt_energy = GlobalEnergyFixer(post_conf)
-    # ====================================================== #
 
-    # ----------------------------------------------------------------- #\
-    # get dataset
-    dataset = Predict_Dataset(
-        conf,
-        varname_upper_air,
-        varname_surface,
-        varname_dyn_forcing,
-        varname_forcing,
-        varname_static,
-        varname_diagnostic,
-        filenames=all_ERA_files,
-        filename_surface=surface_files,
-        filename_dyn_forcing=dyn_forcing_files,
-        filename_forcing=forcing_files,
-        filename_static=static_files,
-        filename_diagnostic=diagnostic_files,
-        fcst_datetime=load_forecasts(conf),
-        history_len=history_len,
+    # Load the forecasts we wish to compute
+    forecasts = load_forecasts(conf)
+
+    dataset = Predict_Dataset_Batcher(
+        varname_upper_air=data_config['varname_upper_air'],
+        varname_surface=data_config['varname_surface'],
+        varname_dyn_forcing=data_config['varname_dyn_forcing'],
+        varname_forcing=data_config['varname_forcing'],
+        varname_static=data_config['varname_static'],
+        varname_diagnostic=data_config['varname_diagnostic'],
+        filenames=data_config['all_ERA_files'],
+        filename_surface=data_config['surface_files'],
+        filename_dyn_forcing=data_config['dyn_forcing_files'],
+        filename_forcing=data_config['forcing_files'],
+        filename_static=data_config['static_files'],
+        filename_diagnostic=data_config['diagnostic_files'],
+        fcst_datetime=forecasts,
+        lead_time_periods=lead_time_periods,
+        history_len=data_config['history_len'],
+        skip_periods=data_config['skip_periods'],
+        transform=load_transforms(conf),
+        sst_forcing=data_config['sst_forcing'],
+        batch_size=batch_size,
         rank=rank,
         world_size=world_size,
-        transform=transform,
-        rollout_p=0.0,
-        which_forecast=None,
+        skip_target=True
     )
 
-    # setup the dataloder
-    data_loader = torch.utils.data.DataLoader(
-        dataset,
-        batch_size=1,
-        shuffle=False,
-        pin_memory=True,
-        num_workers=0,
-        drop_last=False,
-    )
+    # Use a custom DataLoader so we get the len correct
+    data_loader = BatchForecastLenDataLoader(dataset)
 
-    # flag for distributed inference
+    # Warning -- see next line
     distributed = conf["predict"]["mode"] in ["ddp", "fsdp"]
-    # ================================================================================ #
+
+    # Load the model
     if conf["predict"]["mode"] == "none":
-        model = load_model(conf, load_weights=True).to(device) 
-        
+        model = load_model(conf, load_weights=True).to(device)
     elif conf["predict"]["mode"] == "ddp":
         model = load_model(conf).to(device)
-        # if conf["trainer"].get("compile", False):
-        #     model = torch.compile(model)
         model = distributed_model_wrapper(conf, model, device)
         ckpt = os.path.join(save_loc, "checkpoint.pt")
         checkpoint = torch.load(ckpt, map_location=device)
         load_msg = model.module.load_state_dict(checkpoint["model_state_dict"], strict=False)
         load_state_dict_error_handler(load_msg)
-        
     elif conf["predict"]["mode"] == "fsdp":
         model = load_model(conf, load_weights=True).to(device)
         model = distributed_model_wrapper(conf, model, device)
         # Load model weights (if any), an optimizer, scheduler, and gradient scaler
         model = load_model_state(conf, model, device)
-    # ================================================================================ #
 
+    # Put model in inference mode
     model.eval()
 
     # get lat/lons from x-array
     latlons = xr.open_dataset(conf["loss"]["latitude_weights"])
-
+    # grab ERA5 (etc) metadata
     meta_data = load_metadata(conf)
-
-    # Set up metrics and containers
-    metrics = LatWeightedMetrics(conf, predict_mode=True)
-    metrics_results = defaultdict(list)
 
     # Set up the diffusion and pole filters
     if (
@@ -249,220 +201,138 @@ def predict(rank, world_size, conf, p):
         # forecast count = a constant for each run
         forecast_count = 0
 
-        # y_pred allocation
+        # y_pred allocation and results tracking
         results = []
+        save_datetimes = [0] * len(forecasts)
 
         # model inference loop
-        for k, batch in enumerate(data_loader):
-            # get the datetime and forecasted hours
-            date_time = batch["datetime"].item()
-            forecast_hour = batch["forecast_hour"].item()
-            # initialization on the first forecast hour
-            if forecast_hour == 1:
-                # Initialize x and x_surf with the first time step
+        for batch in data_loader:
+            batch_size = batch["datetime"].shape[0]
+            forecast_step = batch["forecast_step"].item()
+
+            # Initial input processing
+            if forecast_step == 1:
+                # Process the entire batch at once
+                init_datetimes = [datetime.utcfromtimestamp(batch["datetime"][i].item()).strftime("%Y-%m-%dT%HZ") for i in range(batch_size)]
+                save_datetimes[forecast_count:forecast_count + batch_size] = init_datetimes
+
                 if "x_surf" in batch:
-                    # combine x and x_surf
-                    # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon)
-                    # output: (batch_num, var, time, lat, lon), 'x' first and then 'x_surf'
-                    x = (
-                        concat_and_reshape(batch["x"], batch["x_surf"])
-                        .to(device)
-                        .float()
-                    )
+                    x = concat_and_reshape(
+                        batch["x"],
+                        batch["x_surf"]
+                    ).to(device).float()
                 else:
-                    # no x_surf
                     x = reshape_only(batch["x"]).to(device).float()
 
-                init_datetime = datetime.utcfromtimestamp(date_time)
-                init_datetime_str = init_datetime.strftime("%Y-%m-%dT%HZ")
-
-            # -------------------------------------------------------------------------------------- #
-            # add forcing and static variables (regardless of fcst hours)
+            # Add forcing and static variables for the entire batch
             if "x_forcing_static" in batch:
-                # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
-                x_forcing_batch = (
-                    batch["x_forcing_static"].to(device).permute(0, 2, 1, 3, 4).float()
-                )
-
-                # concat on var dimension
+                x_forcing_batch = batch["x_forcing_static"].to(device).permute(0, 2, 1, 3, 4).float()
                 x = torch.cat((x, x_forcing_batch), dim=1)
 
-            # -------------------------------------------------------------------------------------- #
-            # Load y-truth
-            if "y_surf" in batch:
-                # combine y and y_surf
-                y = concat_and_reshape(batch["y"], batch["y_surf"]).to(device).float()
-            else:
-                # no y_surf
-                y = reshape_only(batch["y"]).to(device).float()
-                
-            # adding diagnostic vars to y
-            if "y_diag" in batch:
-                y_diag_batch = (
-                    batch["y_diag"].to(device).permute(0, 2, 1, 3, 4)
-                )
-                y = torch.cat((y, y_diag_batch), dim=1).to(device).float()
-                
-            # -------------------------------------------------------------------------------------- #
-            # start prediction
-
-            # --------------------------------------------- #
-            # clamp
+            # Clamp if needed
             if flag_clamp:
                 x = torch.clamp(x, min=clamp_min, max=clamp_max)
-                # y = torch.clamp(y, min=clamp_min, max=clamp_max)
 
+            # Model inference on the entire batch
             y_pred = model(x)
 
-            # ============================================= #
-            # postblock opts outside of model
-
-            # backup init state
+            # Post-processing blocks
             if flag_mass_conserve:
-                if forecast_hour == 1:
+                if forecast_step == 1:
                     x_init = x.clone()
-
-            # mass conserve using initialization as reference
-            if flag_mass_conserve:
                 input_dict = {"y_pred": y_pred, "x": x_init}
                 input_dict = opt_mass(input_dict)
                 y_pred = input_dict["y_pred"]
 
-            # water conserve use previous step output as reference
             if flag_water_conserve:
                 input_dict = {"y_pred": y_pred, "x": x}
                 input_dict = opt_water(input_dict)
                 y_pred = input_dict["y_pred"]
 
-            # energy conserve use previous step output as reference
             if flag_energy_conserve:
                 input_dict = {"y_pred": y_pred, "x": x}
                 input_dict = opt_energy(input_dict)
                 y_pred = input_dict["y_pred"]
-            # ============================================= #
 
-            # y_pred with unit
+            # Transform predictions
             y_pred = state_transformer.inverse_transform(y_pred.cpu())
-            # y_target with unit
-            y = state_transformer.inverse_transform(y.cpu())
 
-            if (
-                "use_laplace_filter" in conf["predict"]
-                and conf["predict"]["use_laplace_filter"]
-            ):
-                y_pred = (
-                    dpf.diff_lap2d_filt(y_pred.to(device).squeeze())
-                    .unsqueeze(0)
-                    .unsqueeze(2)
-                    .cpu()
+            if "use_laplace_filter" in conf["predict"] and conf["predict"]["use_laplace_filter"]:
+                y_pred = dpf.diff_lap2d_filt(y_pred.to(device).squeeze()).unsqueeze(0).unsqueeze(2).cpu()
+
+            # Calculate correct datetime for current forecast
+            utc_datetimes = [
+                datetime.utcfromtimestamp(batch["datetime"][i].item()) + timedelta(hours=lead_time_periods)
+                for i in range(batch_size)
+            ]
+
+            # Convert to xarray and handle results
+            for j in range(batch_size):
+                darray_upper_air, darray_single_level = make_xarray(
+                    y_pred[j:j+1],  # Process each forecast step
+                    utc_datetimes[j],
+                    latlons.latitude.values,
+                    latlons.longitude.values,
+                    conf,
                 )
 
-            # Compute metrics
-            metrics_dict = metrics(
-                y_pred.float(), y.float(), forecast_datetime=forecast_hour
-            )
-            for k, m in metrics_dict.items():
-                metrics_results[k].append(m.item())
-            metrics_results["forecast_hour"].append(forecast_hour)
+                # Save the current forecast hour data in parallel
+                result = p.apply_async(
+                    save_netcdf_increment,
+                    (
+                        darray_upper_air,
+                        darray_single_level,
+                        save_datetimes[forecast_count + j],  # Use correct index for current batch item
+                        lead_time_periods * forecast_step,
+                        meta_data,
+                        conf,
+                    ),
+                )
+                results.append(result)
 
-            # Save the current forecast hour data in parallel
-            utc_datetime = init_datetime + timedelta(
-                hours=lead_time_periods * forecast_hour
-            )
+                print_str = f"Forecast: {forecast_count + 1 + j} "
+                print_str += f"Date: {utc_datetimes[j].strftime('%Y-%m-%d %H:%M:%S')} "
+                print_str += f"Hour: {forecast_step * lead_time_periods} "
+                print(print_str)
 
-            # convert the current step result as x-array
-            darray_upper_air, darray_single_level = make_xarray(
-                y_pred,
-                utc_datetime,
-                latlons.latitude.values,
-                latlons.longitude.values,
-                conf,
-            )
-
-            # Save the current forecast hour data in parallel
-            result = p.apply_async(
-                save_netcdf_increment,
-                (
-                    darray_upper_air,
-                    darray_single_level,
-                    init_datetime_str,
-                    lead_time_periods * forecast_hour,
-                    meta_data,
-                    conf,
-                ),
-            )
-            results.append(result)
-
-            metrics_results["datetime"].append(utc_datetime)
-
-            print_str = f"Forecast: {forecast_count} "
-            print_str += f"Date: {utc_datetime.strftime('%Y-%m-%d %H:%M:%S')} "
-            print_str += f"Hour: {batch['forecast_hour'].item()} "
-            print_str += f"ACC: {metrics_dict['acc']} "
-
-            # Update the input
-            # setup for next iteration, transform to z-space and send to device
+            # Prepare for next iteration
             y_pred = state_transformer.transform_array(y_pred).to(device)
 
-            # ============================================================ #
-            # use previous step y_pred as the next step input
             if history_len == 1:
-                # cut diagnostic vars from y_pred, they are not inputs
                 if "y_diag" in batch:
                     x = y_pred[:, :-varnum_diag, ...].detach()
                 else:
                     x = y_pred.detach()
-
-            # multi-step in
             else:
                 if static_dim_size == 0:
                     x_detach = x[:, :, 1:, ...].detach()
                 else:
                     x_detach = x[:, :-static_dim_size, 1:, ...].detach()
 
-                # cut diagnostic vars from y_pred, they are not inputs
                 if "y_diag" in batch:
-                    x = torch.cat(
-                        [x_detach, y_pred[:, :-varnum_diag, ...].detach()], dim=2
-                    )
+                    x = torch.cat([x_detach, y_pred[:, :-varnum_diag, ...].detach()], dim=2)
                 else:
                     x = torch.cat([x_detach, y_pred.detach()], dim=2)
-            # ============================================================ #
 
-            # Explicitly release GPU memory
+            # Memory cleanup
             torch.cuda.empty_cache()
             gc.collect()
 
             if batch["stop_forecast"][0]:
-                # Wait for all processes to finish in order
+                # Wait for processes to finish
                 for result in results:
                     result.get()
 
-                # save metrics file
-                save_location = os.path.join(
-                    os.path.expandvars(conf["save_loc"]), "forecasts", "metrics"
-                )
-                os.makedirs(
-                    save_location, exist_ok=True
-                )  # should already be made above
-                df = pd.DataFrame(metrics_results)
-                df.to_csv(
-                    os.path.join(save_location, f"metrics{init_datetime_str}.csv")
-                )
-
-                # forecast count = a constant for each run
-                forecast_count += 1
-
-                # y_pred allocation
                 y_pred = None
-
                 gc.collect()
 
                 if distributed:
                     torch.distributed.barrier()
 
-    if distributed:
-        torch.distributed.barrier()
+                forecast_count += batch_size
+
+        if distributed:
+            torch.distributed.barrier()
 
     return 1
 
@@ -559,16 +429,13 @@ if __name__ == "__main__":
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
-    # ======================================================== #
     # handling config args
     conf = credit_main_parser(
         conf, parse_training=False, parse_predict=True, print_summary=False
     )
     predict_data_check(conf, print_summary=False)
-    # ======================================================== #
 
     # create a save location for rollout
-    # ---------------------------------------------------- #
     assert (
         "save_forecast" in conf["predict"]
     ), "Please specify the output dir through conf['predict']['save_forecast']"
@@ -576,7 +443,7 @@ if __name__ == "__main__":
     forecast_save_loc = conf["predict"]["save_forecast"]
     os.makedirs(forecast_save_loc, exist_ok=True)
 
-    print("Save roll-outs to {}".format(forecast_save_loc))
+    logging.info("Save roll-outs to {}".format(forecast_save_loc))
 
     # Create a project directory (to save launch.sh and model.yml) if they do not exist
     save_loc = os.path.expandvars(conf["save_loc"])
@@ -614,7 +481,7 @@ if __name__ == "__main__":
             forecasts = subsets[subset - 1]  # Select the subset based on subset_size
             conf["predict"]["forecasts"] = forecasts
 
-    seed = 1000 if "seed" not in conf else conf["seed"]
+    seed = conf["seed"]
     seed_everything(seed)
 
     local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])

@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 def load_loss(loss_type, reduction="mean"):
     """Load a specified loss function by its type.
+    Helper function of VariableTotalLoss2D
 
     This function returns a loss function based on the specified
     `loss_type`. It supports several common loss functions, including
@@ -44,6 +45,7 @@ def load_loss(loss_type, reduction="mean"):
         "logcosh": LogCoshLoss,
         "xtanh": XTanhLoss,
         "xsigmoid": XSigmoidLoss,
+        "KCRPS": KCRPSLoss,
     }
 
     if loss_type in losses:
@@ -187,6 +189,69 @@ class MSLELoss(nn.Module):
         loss = F.mse_loss(log_prediction, log_target, reduction=self.reduction)
         return loss
 
+
+class KCRPSLoss(nn.Module):
+    """Adapted from Nvidia Modulus 
+    
+    Estimate the CRPS from a finite ensemble
+
+    Computes the local Continuous Ranked Probability Score (CRPS) by using
+    the kernel version of CRPS. The cost is O(m log m).
+
+    Creates a map of CRPS and does not accumulate over lat/lon regions.
+    Approximates:
+    .. math::
+        CRPS(X, y) = E[X - y] - 0.5 E[X-X']
+
+    with
+    .. math::
+        sum_i=1^m |X_i - y| / m - 1/(2m^2) sum_i,j=1^m |x_i - x_j|
+    """
+
+    def __init__(self, reduction, biased: bool = False):
+        super().__init__()
+        self.biased = biased
+        self.batched_forward = torch.vmap(self.single_sample_forward)
+    
+    def forward(self, target, pred):
+        # integer division but will error out next op if there is a remainder
+        ensemble_size = pred.shape[0] // target.shape[0] + pred.shape[0] % target.shape[0]
+        pred = pred.view(target.shape[0], ensemble_size, *target.shape[1:]) #b, ensemble, c, t, lat, lon
+        # apply single_sample_forward to each dim
+        target = target.unsqueeze(1)
+        return self.batched_forward(target, pred).squeeze(1)
+
+    def single_sample_forward(self, target, pred):
+        """Forward pass for KCRPS loss for a single sample 
+
+        Args:
+            prediction (torch.Tensor): Predicted tensor.
+            target (torch.Tensor): Target tensor.
+
+        Returns:
+            torch.Tensor: CRPS loss values at each lat/lon
+        """
+        pred = torch.movedim(pred, 0, -1)
+        return self._kernel_crps_implementation(pred, target, self.biased)
+    
+    def _kernel_crps_implementation(self, pred: torch.Tensor, obs: torch.Tensor, biased: bool) -> torch.Tensor:
+        """An O(m log m) implementation of the kernel CRPS formulas"""
+        skill = torch.abs(pred - obs[..., None]).mean(-1)
+        pred, _ = torch.sort(pred)
+
+        # derivation of fast implementation of spread-portion of CRPS formula when x is sorted
+        # sum_(i,j=1)^m |x_i - x_j| = sum_(i<j) |x_i -x_j| + sum_(i > j) |x_i - x_j|
+        #                           = 2 sum_(i <= j) |x_i -x_j|
+        #                           = 2 sum_(i <= j) (x_j - x_i)
+        #                           = 2 sum_(i <= j) x_j - 2 sum_(i <= j) x_i
+        #                           = 2 sum_(j=1)^m j x_j - 2 sum (m - i + 1) x_i
+        #                           = 2 sum_(i=1)^m (2i - m - 1) x_i
+        m = pred.size(-1)
+        i = torch.arange(1, m + 1, device=pred.device, dtype=pred.dtype)
+        denom = m * m if biased else m * (m - 1)
+        factor = (2 * i - m - 1) / denom
+        spread = torch.sum(factor * pred, dim=-1)
+        return skill - spread
 
 class SpectralLoss2D(torch.nn.Module):
     """Spectral Loss in 2D.
@@ -369,7 +434,7 @@ def latitude_weights(conf):
     return L
 
 
-def variable_weights(conf, channels, surface_channels, frames):
+def variable_weights(conf, channels, frames):
     """Create variable-specific weights for different atmospheric
     and surface channels.
 
@@ -382,7 +447,6 @@ def variable_weights(conf, channels, surface_channels, frames):
         conf (dict): Configuration dictionary containing the
             variable weights.
         channels (int): Number of channels for atmospheric variables.
-        surface_channels (int): Number of channels for surface variables.
         frames (int): Number of time frames.
 
     Returns:
@@ -393,41 +457,25 @@ def variable_weights(conf, channels, surface_channels, frames):
     varname_upper_air = conf["data"]["variables"]
     varname_surface = conf["data"]["surface_variables"]
     varname_diagnostics = conf["data"]["diagnostic_variables"]
-    # N_levels = conf['data']['levels']
 
-    # weights_UVTQ = torch.tensor([
-    #     conf["loss"]["variable_weights"]["U"],
-    #     conf["loss"]["variable_weights"]["V"],
-    #     conf["loss"]["variable_weights"]["T"],
-    #     conf["loss"]["variable_weights"]["Q"]
-    # ]).view(1, channels * frames, 1, 1)
+    # surface + diag channels
+    N_channels_single = len(varname_surface) + len(varname_diagnostics)
 
-    weights_UVTQ = torch.tensor(
+    weights_upper_air = torch.tensor(
         [conf["loss"]["variable_weights"][var] for var in varname_upper_air]
     ).view(1, channels * frames, 1, 1)
 
-    # Load weights for SP, t2m, V500, U500, T500, Z500, Q500
-    # weights_sfc = torch.tensor([
-    #     conf["loss"]["variable_weights"]["SP"],
-    #     conf["loss"]["variable_weights"]["t2m"],
-    #     conf["loss"]["variable_weights"]["V500"],
-    #     conf["loss"]["variable_weights"]["U500"],
-    #     conf["loss"]["variable_weights"]["T500"],
-    #     conf["loss"]["variable_weights"]["Z500"],
-    #     conf["loss"]["variable_weights"]["Q500"]
-    # ]).view(1, surface_channels, 1, 1)
-
-    weights_sfc = torch.tensor(
+    weights_single = torch.tensor(
         [
             conf["loss"]["variable_weights"][var]
             for var in (varname_surface + varname_diagnostics)
         ]
-    ).view(1, surface_channels, 1, 1)
+    ).view(1, N_channels_single, 1, 1)
 
     # Combine all weights along the color channel
-    variable_weights = torch.cat([weights_UVTQ, weights_sfc], dim=1)
+    var_weights = torch.cat([weights_upper_air, weights_single], dim=1)
 
-    return variable_weights
+    return var_weights
 
 
 class VariableTotalLoss2D(torch.nn.Module):
@@ -471,17 +519,24 @@ class VariableTotalLoss2D(torch.nn.Module):
             logger.info("Using latitude weights in loss calculations")
             self.lat_weights = latitude_weights(conf)[:, 10].unsqueeze(0).unsqueeze(-1)
 
+        # ------------------------------------------------------------- #
+        # variable weights
+        # order: upper air --> surface --> diagnostics
         self.var_weights = None
         if conf["loss"]["use_variable_weights"]:
             logger.info("Using variable weights in loss calculations")
+
             var_weights = [
                 value if isinstance(value, list) else [value]
                 for value in conf["loss"]["variable_weights"].values()
             ]
+
             var_weights = np.array(
                 [item for sublist in var_weights for item in sublist]
             )
+
             self.var_weights = torch.from_numpy(var_weights)
+        # ------------------------------------------------------------- #
 
         self.use_spectral_loss = conf["loss"]["use_spectral_loss"]
         if self.use_spectral_loss:
@@ -502,11 +557,13 @@ class VariableTotalLoss2D(torch.nn.Module):
             )
 
         self.validation = validation
-        if self.validation:
+        if conf["loss"]["training_loss"] == "KCRPS": # for ensembles, load same loss for train and valid
+            self.loss_fn = load_loss(self.training_loss, reduction="none")
+        elif self.validation:
             self.loss_fn = nn.L1Loss(reduction="none")
         else:
             self.loss_fn = load_loss(self.training_loss, reduction="none")
-
+    
     def forward(self, target, pred):
         """Calculate the total loss for the given target and prediction.
 

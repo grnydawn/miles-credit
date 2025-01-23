@@ -44,6 +44,7 @@ data:
     
     # data workflow
     scaler_type: 'std_new'  
+    data_clamp: [-16, 16]
     
     # number of input states
     # FuXi has 2 input states

@@ -16,13 +16,11 @@ Content:
 """
 
 # system tools
-import os
-from typing import Optional, Callable, TypedDict, Union
+from typing import TypedDict, Union
 
 # data utils
 import datetime
 import numpy as np
-import pandas as pd
 import xarray as xr
 
 # Pytorch utils
@@ -1135,7 +1133,7 @@ class ERA5_Dataset_Distributed(torch.utils.data.Dataset):
 
 class Predict_Dataset(torch.utils.data.IterableDataset):
     """
-    Same as ERA5_and_Forcing_Dataset() but works with rollout_to_netcdf.py.
+    Same as ERA5_and_Forcing_Dataset() but work with rollout_to_netcdf_new.py
     """
 
     def __init__(
@@ -1146,11 +1144,13 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         varname_dyn_forcing,
         varname_forcing,
         varname_static,
+        varname_diagnostic,
         filenames,
         filename_surface,
         filename_dyn_forcing,
         filename_forcing,
         filename_static,
+        filename_diagnostic,
         fcst_datetime,
         history_len,
         rank,
@@ -1170,8 +1170,6 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         self.history_len = history_len
         self.init_datetime = fcst_datetime
 
-        print(self.init_datetime)
-
         self.which_forecast = (
             which_forecast  # <-- got from the old roll-out script. Dont know
         )
@@ -1183,6 +1181,7 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         self.filename_dyn_forcing = filename_dyn_forcing  # <-- a list of files
         self.filename_forcing = filename_forcing  # <-- single file
         self.filename_static = filename_static  # <---- single file
+        self.filename_diagnostic = filename_diagnostic  # <---- single file
 
         # -------------------------------------- #
         # var names
@@ -1191,6 +1190,7 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         self.varname_dyn_forcing = varname_dyn_forcing
         self.varname_forcing = varname_forcing
         self.varname_static = varname_static
+        self.varname_diagnostic = varname_diagnostic
 
         # ====================================== #
         # import all upper air zarr files
@@ -1220,7 +1220,7 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
         sliced_x = drop_var_from_dataset(sliced_x, varnames)
         return sliced_x
 
-    def load_zarr_as_input(self, i_file, i_init_start, i_init_end):
+    def load_zarr_as_input(self, i_file, i_init_start, i_init_end, mode="input"):
         # get the needed file from a list of zarr files
         # open the zarr file as xr.dataset and subset based on the needed time
 
@@ -1240,49 +1240,72 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
             sliced_surface["time"] = sliced_x["time"]
             sliced_x = sliced_x.merge(sliced_surface)
 
-        # dynamic forcing variables
-        if self.filename_dyn_forcing is not None:
-            sliced_dyn_forcing = self.ds_read_and_subset(
-                self.filename_dyn_forcing[i_file],
-                i_init_start,
-                i_init_end + 1,
-                self.varname_dyn_forcing,
-            )
-            # merge surface to sliced_x
-            sliced_dyn_forcing["time"] = sliced_x["time"]
-            sliced_x = sliced_x.merge(sliced_dyn_forcing)
+        if mode == "input":
+            # dynamic forcing variables
+            if self.filename_dyn_forcing is not None:
+                sliced_dyn_forcing = self.ds_read_and_subset(
+                    self.filename_dyn_forcing[i_file],
+                    i_init_start,
+                    i_init_end + 1,
+                    self.varname_dyn_forcing,
+                )
+                # merge surface to sliced_x
+                sliced_dyn_forcing["time"] = sliced_x["time"]
+                sliced_x = sliced_x.merge(sliced_dyn_forcing)
 
-        # forcing / static
-        if self.filename_forcing is not None:
-            sliced_forcing = xr.open_dataset(self.filename_forcing)
-            sliced_forcing = drop_var_from_dataset(sliced_forcing, self.varname_forcing)
+            # forcing / static
+            if self.filename_forcing is not None:
+                sliced_forcing = get_forward_data(self.filename_forcing)
+                sliced_forcing = drop_var_from_dataset(
+                    sliced_forcing, self.varname_forcing
+                )
 
-            # See also `ERA5_and_Forcing_Dataset`
-            # =============================================================================== #
-            # matching month, day, hour between forcing and upper air [time]
-            # this approach handles leap year forcing file and non-leap-year upper air file
-            month_day_forcing = extract_month_day_hour(np.array(sliced_forcing["time"]))
-            month_day_inputs = extract_month_day_hour(np.array(sliced_x["time"]))
-            # indices to subset
-            ind_forcing, _ = find_common_indices(month_day_forcing, month_day_inputs)
-            sliced_forcing = sliced_forcing.isel(time=ind_forcing)
-            # forcing and upper air have different years but the same mon/day/hour
-            # safely replace forcing time with upper air time
-            sliced_forcing["time"] = sliced_x["time"]
-            # =============================================================================== #
+                # See also `ERA5_and_Forcing_Dataset`
+                # =============================================================================== #
+                # matching month, day, hour between forcing and upper air [time]
+                # this approach handles leap year forcing file and non-leap-year upper air file
+                month_day_forcing = extract_month_day_hour(
+                    np.array(sliced_forcing["time"])
+                )
+                month_day_inputs = extract_month_day_hour(np.array(sliced_x["time"]))
+                # indices to subset
+                ind_forcing, _ = find_common_indices(
+                    month_day_forcing, month_day_inputs
+                )
+                sliced_forcing = sliced_forcing.isel(time=ind_forcing)
+                # forcing and upper air have different years but the same mon/day/hour
+                # safely replace forcing time with upper air time
+                sliced_forcing["time"] = sliced_x["time"]
+                # =============================================================================== #
 
-            # merge forcing to sliced_x
-            sliced_x = sliced_x.merge(sliced_forcing)
+                # merge forcing to sliced_x
+                sliced_x = sliced_x.merge(sliced_forcing)
 
-        if self.filename_static is not None:
-            sliced_static = xr.open_dataset(self.filename_static)
-            sliced_static = drop_var_from_dataset(sliced_static, self.varname_static)
-            sliced_static = sliced_static.expand_dims(
-                dim={"time": len(sliced_x["time"])}
-            )
-            sliced_static["time"] = sliced_x["time"]
-            # merge static to sliced_x
-            sliced_x = sliced_x.merge(sliced_static)
+            if self.filename_static is not None:
+                sliced_static = get_forward_data(self.filename_static)
+                sliced_static = drop_var_from_dataset(
+                    sliced_static, self.varname_static
+                )
+                sliced_static = sliced_static.expand_dims(
+                    dim={"time": len(sliced_x["time"])}
+                )
+                sliced_static["time"] = sliced_x["time"]
+                # merge static to sliced_x
+                sliced_x = sliced_x.merge(sliced_static)
+
+        elif mode == "target":
+            # diagnostic
+            if self.filename_diagnostic is not None:
+                sliced_diagnostic = self.ds_read_and_subset(
+                    self.filename_diagnostic[i_file],
+                    i_init_start,
+                    i_init_end + 1,
+                    self.varname_diagnostic,
+                )
+                # merge diagnostics to sliced_x
+                sliced_diagnostic["time"] = sliced_x["time"]
+                sliced_x = sliced_x.merge(sliced_diagnostic)
+
         return sliced_x
 
     def find_start_stop_indices(self, index):
@@ -1313,49 +1336,58 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
             np.datetime64(date.strftime("%Y-%m-%d %H:%M:%S"))
             for date in self.init_datetime[index]
         ]
+
+        # init_time_list_np: a list of python datetime objects, each is a forecast step
+        # init_time_list_np[0]: the first initialization time
+        # init_time_list_np[t]: the forcasted time of the (t-1)th step; the initialization time of the t-th step
         self.init_time_list_np = [
             np.datetime64(str(dt_obj) + ".000000000").astype(datetime.datetime)
             for dt_obj in init_time_list_dt
         ]
 
-        for i_file, ds in enumerate(self.all_files):
-            # get the year of the current file
-            ds_year = int(np.datetime_as_string(ds["time"][0].values, unit="Y"))
+        info = []
+        for init_time in self.init_time_list_np:
+            for i_file, ds in enumerate(self.all_files):
+                # get the year of the current file
+                ds_year = int(np.datetime_as_string(ds["time"][0].values, unit="Y"))
 
-            # get the first and last years of init times
-            init_year0 = nanoseconds_to_year(self.init_time_list_np[0])
+                # get the first and last years of init times
+                init_year0 = nanoseconds_to_year(init_time)
 
-            # found the right yearly file
-            if init_year0 == ds_year:
-                # convert ds['time'] to a list of nanosecondes
-                ds_time_list = [
-                    np.datetime64(ds_time.values).astype(datetime.datetime)
-                    for ds_time in ds["time"]
-                ]
-                ds_start_time = ds_time_list[0]
-                ds_end_time = ds_time_list[-1]
+                # found the right yearly file
+                if init_year0 == ds_year:
+                    N_times = len(ds["time"])
+                    # convert ds['time'] to a list of nanosecondes
+                    ds_time_list = [
+                        np.datetime64(ds_time.values).astype(datetime.datetime)
+                        for ds_time in ds["time"]
+                    ]
+                    ds_start_time = ds_time_list[0]
+                    ds_end_time = ds_time_list[-1]
 
-                init_time_start = self.init_time_list_np[0]
-                # if initalization time is within this (yearly) xr.Dataset
-                if ds_start_time <= init_time_start <= ds_end_time:
-                    # try getting the index of the first initalization time
-                    i_init_start = ds_time_list.index(init_time_start)
+                    init_time_start = init_time
+                    # if initalization time is within this (yearly) xr.Dataset
+                    if ds_start_time <= init_time_start <= ds_end_time:
+                        # try getting the index of the first initalization time
+                        i_init_start = ds_time_list.index(init_time_start)
 
-                    # for multiple init time inputs (history_len > 1), init_end is different for init_start
-                    init_time_end = init_time_start + hour_to_nanoseconds(shifted_hours)
+                        # for multiple init time inputs (history_len > 1), init_end is different for init_start
+                        init_time_end = init_time_start + hour_to_nanoseconds(
+                            shifted_hours
+                        )
 
-                    # see if init_time_end is alos in this file
-                    if ds_start_time <= init_time_end <= ds_end_time:
-                        # try getting the index
-                        i_init_end = ds_time_list.index(init_time_end)
-                    else:
-                        # this set of initalizations have crossed years
-                        # get the last element of the current file
-                        # we have anthoer section that checks additional input data
-                        i_init_end = len(ds_time_list) - 1
+                        # see if init_time_end is alos in this file
+                        if ds_start_time <= init_time_end <= ds_end_time:
+                            # try getting the index
+                            i_init_end = ds_time_list.index(init_time_end)
+                        else:
+                            # this set of initalizations have crossed years
+                            # get the last element of the current file
+                            # we have anthoer section that checks additional input data
+                            i_init_end = len(ds_time_list) - 1
 
-                    info = [i_file, i_init_start, i_init_end]
-                    return info
+                        info.append([i_file, i_init_start, i_init_end, N_times])
+        return info
 
     def __len__(self):
         return len(self.init_datetime)
@@ -1376,65 +1408,80 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
 
             for k, _ in enumerate(self.init_time_list_np):
                 # the first initialization time: get initalization from data
-                if k == 0:
-                    i_file, i_init_start, i_init_end = data_lookup
+                i_file, i_init_start, i_init_end, N_times = data_lookup[k]
 
-                    # allocate output dict
-                    output_dict = {}
+                # allocate output dict
+                output_dict = {}
 
-                    # get all inputs in one xr.Dataset
-                    sliced_x = self.load_zarr_as_input(i_file, i_init_start, i_init_end)
+                # get all inputs in one xr.Dataset
+                sliced_x = self.load_zarr_as_input(
+                    i_file, i_init_start, i_init_end, mode="input"
+                )
 
-                    # Check if additional data from the next file is needed
-                    if len(sliced_x["time"]) < self.history_len:
-                        # Load excess data from the next file
-                        next_file_idx = self.filenames.index(self.filenames[i_file]) + 1
+                # Check if additional data from the next file is needed
+                if (len(sliced_x["time"]) < self.history_len) or (
+                    i_init_end + 1 >= N_times
+                ):
+                    # Load excess data from the next file
+                    next_file_idx = self.filenames.index(self.filenames[i_file]) + 1
 
-                        if next_file_idx >= len(self.filenames):
-                            # not enough input data to support this forecast
-                            raise OSError(
-                                "You have reached the end of the available data. Exiting."
-                            )
+                    if next_file_idx >= len(self.filenames):
+                        # not enough input data to support this forecast
+                        raise OSError(
+                            "You have reached the end of the available data. Exiting."
+                        )
 
-                        else:
-                            # i_init_start = 0 because we need the beginning of the next file only
-                            sliced_x_next = self.load_zarr_as_input(
-                                next_file_idx, 0, self.history_len
-                            )
+                    else:
+                        sliced_y = self.load_zarr_as_input(
+                            i_file, i_init_end, i_init_end, mode="target"
+                        )
 
-                            # Concatenate excess data from the next file with the current data
-                            sliced_x = xr.concat([sliced_x, sliced_x_next], dim="time")
-                            sliced_x = sliced_x.isel(time=slice(0, self.history_len))
+                        # i_init_start = 0 because we need the beginning of the next file only
+                        sliced_x_next = self.load_zarr_as_input(
+                            next_file_idx, 0, self.history_len, mode="input"
+                        )
+                        sliced_y_next = self.load_zarr_as_input(
+                            next_file_idx, 0, 1, mode="target"
+                        )
+                        # 1 becuase taregt is one step a time
 
-                    # key 'historical_ERA5_images' is recongnized as input in credit.transform
+                        # Concatenate excess data from the next file with the current data
+                        sliced_x_combine = xr.concat(
+                            [sliced_x, sliced_x_next], dim="time"
+                        )
+                        sliced_y_combine = xr.concat(
+                            [sliced_y, sliced_y_next], dim="time"
+                        )
 
-                    print(np.array(sliced_x["time"]))
-
-                    sample_x = {"historical_ERA5_images": sliced_x}
-
-                    if self.transform:
-                        sample_x = self.transform(sample_x)
-
-                    for key in sample_x.keys():
-                        output_dict[key] = sample_x[key]
-
-                    # <--- !! 'forecast_hour' is actually "forecast_step" but named by assuming hourly
-                    output_dict["forecast_hour"] = k + 1
-                    # Adjust stopping condition
-                    output_dict["stop_forecast"] = k == (
-                        len(self.init_time_list_np) - 1
-                    )
-                    output_dict["datetime"] = sliced_x.time.values.astype(
-                        "datetime64[s]"
-                    ).astype(int)[-1]
-
-                # other later initialization time: the same initalization as in k=0, but add more forecast steps
+                        sliced_x = sliced_x_combine.isel(
+                            time=slice(0, self.history_len)
+                        )
+                        sliced_y = sliced_y_combine.isel(
+                            time=slice(self.history_len, self.history_len + 1)
+                        )
                 else:
-                    output_dict["forecast_hour"] = k + 1
-                    # Adjust stopping condition
-                    output_dict["stop_forecast"] = k == (
-                        len(self.init_time_list_np) - 1
+                    sliced_y = self.load_zarr_as_input(
+                        i_file, i_init_end + 1, i_init_end + 1, mode="target"
                     )
+
+                sample_x = {
+                    "historical_ERA5_images": sliced_x,
+                    "target_ERA5_images": sliced_y,
+                }
+
+                if self.transform:
+                    sample_x = self.transform(sample_x)
+
+                for key in sample_x.keys():
+                    output_dict[key] = sample_x[key]
+
+                # <--- !! 'forecast_hour' is actually "forecast_step" but named by assuming hourly
+                output_dict["forecast_hour"] = k + 1
+                # Adjust stopping condition
+                output_dict["stop_forecast"] = k == (len(self.init_time_list_np) - 1)
+                output_dict["datetime"] = sliced_x.time.values.astype(
+                    "datetime64[s]"
+                ).astype(int)[-1]
 
                 # return output_dict
                 yield output_dict
@@ -1442,412 +1489,411 @@ class Predict_Dataset(torch.utils.data.IterableDataset):
                 if output_dict["stop_forecast"]:
                     break
 
+# # =============================================== #
+# # This dataset works for hourly model only
+# # it does not support forcing & static here
+# # but it pairs to the ToTensor that adds
+# # TOA (which has problem) and other static fields
+# # =============================================== #
+# class ERA5Dataset(torch.utils.data.Dataset):
+#     def __init__(
+#         self,
+#         filenames: list = (
+#             "/glade/derecho/scratch/wchapman/STAGING/TOTAL_2012-01-01_2012-12-31_staged.zarr",
+#             "/glade/derecho/scratch/wchapman/STAGING/TOTAL_2013-01-01_2013-12-31_staged.zarr",
+#         ),
+#         history_len: int = 1,
+#         forecast_len: int = 2,
+#         transform: Optional[Callable] = None,
+#         seed=42,
+#         skip_periods=None,
+#         one_shot=None,
+#         max_forecast_len=None,
+#     ):
+#         self.history_len = history_len
+#         self.forecast_len = forecast_len
+#         self.transform = transform
+#         self.skip_periods = skip_periods
+#         self.one_shot = one_shot
+#         self.total_seq_len = self.history_len + self.forecast_len
+#         all_fils = []
+#         filenames = sorted(filenames)
+#         for fn in filenames:
+#             all_fils.append(get_forward_data(filename=fn))
+#         self.all_fils = all_fils
+#         self.data_array = all_fils[0]
+#         self.rng = np.random.default_rng(seed=seed)
+#         self.max_forecast_len = max_forecast_len
 
-# =============================================== #
-# This dataset works for hourly model only
-# it does not support forcing & static here
-# but it pairs to the ToTensor that adds
-# TOA (which has problem) and other static fields
-# =============================================== #
-class ERA5Dataset(torch.utils.data.Dataset):
-    def __init__(
-        self,
-        filenames: list = (
-            "/glade/derecho/scratch/wchapman/STAGING/TOTAL_2012-01-01_2012-12-31_staged.zarr",
-            "/glade/derecho/scratch/wchapman/STAGING/TOTAL_2013-01-01_2013-12-31_staged.zarr",
-        ),
-        history_len: int = 1,
-        forecast_len: int = 2,
-        transform: Optional[Callable] = None,
-        seed=42,
-        skip_periods=None,
-        one_shot=None,
-        max_forecast_len=None,
-    ):
-        self.history_len = history_len
-        self.forecast_len = forecast_len
-        self.transform = transform
-        self.skip_periods = skip_periods
-        self.one_shot = one_shot
-        self.total_seq_len = self.history_len + self.forecast_len
-        all_fils = []
-        filenames = sorted(filenames)
-        for fn in filenames:
-            all_fils.append(get_forward_data(filename=fn))
-        self.all_fils = all_fils
-        self.data_array = all_fils[0]
-        self.rng = np.random.default_rng(seed=seed)
-        self.max_forecast_len = max_forecast_len
+#         # set data places:
+#         indo = 0
+#         self.meta_data_dict = {}
+#         for ee, bb in enumerate(self.all_fils):
+#             self.meta_data_dict[str(ee)] = [
+#                 len(bb["time"]),
+#                 indo,
+#                 indo + len(bb["time"]),
+#             ]
+#             indo += len(bb["time"]) + 1
 
-        # set data places:
-        indo = 0
-        self.meta_data_dict = {}
-        for ee, bb in enumerate(self.all_fils):
-            self.meta_data_dict[str(ee)] = [
-                len(bb["time"]),
-                indo,
-                indo + len(bb["time"]),
-            ]
-            indo += len(bb["time"]) + 1
+#         # set out of bounds indexes...
+#         OOB = []
+#         for kk in self.meta_data_dict.keys():
+#             OOB.append(generate_integer_list_around(self.meta_data_dict[kk][2]))
+#         self.OOB = flatten_list(OOB)
 
-        # set out of bounds indexes...
-        OOB = []
-        for kk in self.meta_data_dict.keys():
-            OOB.append(generate_integer_list_around(self.meta_data_dict[kk][2]))
-        self.OOB = flatten_list(OOB)
+#     def __post_init__(self):
+#         # Total sequence length of each sample.
+#         self.total_seq_len = self.history_len + self.forecast_len
 
-    def __post_init__(self):
-        # Total sequence length of each sample.
-        self.total_seq_len = self.history_len + self.forecast_len
+#     def __len__(self):
+#         tlen = 0
+#         for bb in self.all_fils:
+#             tlen += len(bb["time"]) - self.total_seq_len + 1
+#         return tlen
 
-    def __len__(self):
-        tlen = 0
-        for bb in self.all_fils:
-            tlen += len(bb["time"]) - self.total_seq_len + 1
-        return tlen
+#     def __getitem__(self, index):
+#         # find the result key:
+#         result_key = find_key_for_number(index, self.meta_data_dict)
 
-    def __getitem__(self, index):
-        # find the result key:
-        result_key = find_key_for_number(index, self.meta_data_dict)
+#         # get the data selection:
+#         true_ind = index - self.meta_data_dict[result_key][1]
 
-        # get the data selection:
-        true_ind = index - self.meta_data_dict[result_key][1]
+#         if true_ind > (
+#             len(self.all_fils[int(result_key)]["time"])
+#             - (self.history_len + self.forecast_len + 1)
+#         ):
+#             true_ind = len(self.all_fils[int(result_key)]["time"]) - (
+#                 self.history_len + self.forecast_len + 1
+#             )
 
-        if true_ind > (
-            len(self.all_fils[int(result_key)]["time"])
-            - (self.history_len + self.forecast_len + 1)
-        ):
-            true_ind = len(self.all_fils[int(result_key)]["time"]) - (
-                self.history_len + self.forecast_len + 1
-            )
+#         datasel = self.all_fils[int(result_key)].isel(
+#             time=slice(true_ind, true_ind + self.history_len + self.forecast_len + 1)
+#         )
 
-        datasel = self.all_fils[int(result_key)].isel(
-            time=slice(true_ind, true_ind + self.history_len + self.forecast_len + 1)
-        )
+#         if (self.skip_periods is not None) and (self.one_shot is None):
+#             sample = Sample(
+#                 historical_ERA5_images=datasel.isel(
+#                     time=slice(0, self.history_len, self.skip_periods)
+#                 ),
+#                 target_ERA5_images=datasel.isel(
+#                     time=slice(
+#                         self.history_len, len(datasel["time"]), self.skip_periods
+#                     )
+#                 ),
+#                 datetime_index=datasel.time.values.astype("datetime64[s]").astype(int),
+#             )
 
-        if (self.skip_periods is not None) and (self.one_shot is None):
-            sample = Sample(
-                historical_ERA5_images=datasel.isel(
-                    time=slice(0, self.history_len, self.skip_periods)
-                ),
-                target_ERA5_images=datasel.isel(
-                    time=slice(
-                        self.history_len, len(datasel["time"]), self.skip_periods
-                    )
-                ),
-                datetime_index=datasel.time.values.astype("datetime64[s]").astype(int),
-            )
+#         elif (self.skip_periods is not None) and (self.one_shot is not None):
+#             target_ERA5_images = datasel.isel(
+#                 time=slice(self.history_len, len(datasel["time"]), self.skip_periods)
+#             )
+#             target_ERA5_images = target_ERA5_images.isel(time=slice(0, 1))
 
-        elif (self.skip_periods is not None) and (self.one_shot is not None):
-            target_ERA5_images = datasel.isel(
-                time=slice(self.history_len, len(datasel["time"]), self.skip_periods)
-            )
-            target_ERA5_images = target_ERA5_images.isel(time=slice(0, 1))
+#             sample = Sample(
+#                 historical_ERA5_images=datasel.isel(
+#                     time=slice(0, self.history_len, self.skip_periods)
+#                 ),
+#                 target_ERA5_images=target_ERA5_images,
+#                 datetime_index=datasel.time.values.astype("datetime64[s]").astype(int),
+#             )
 
-            sample = Sample(
-                historical_ERA5_images=datasel.isel(
-                    time=slice(0, self.history_len, self.skip_periods)
-                ),
-                target_ERA5_images=target_ERA5_images,
-                datetime_index=datasel.time.values.astype("datetime64[s]").astype(int),
-            )
+#         elif self.one_shot is not None:
+#             historical_data = datasel.isel(time=slice(0, self.history_len)).load()
+#             target_data = datasel.isel(time=slice(-1, None)).load()
+#             # Create the Sample object with the loaded data
+#             sample = Sample(
+#                 historical_ERA5_images=historical_data,
+#                 target_ERA5_images=target_data,
+#                 datetime_index=[
+#                     int(
+#                         historical_data.time.values[0]
+#                         .astype("datetime64[s]")
+#                         .astype(int)
+#                     ),
+#                     int(target_data.time.values[0].astype("datetime64[s]").astype(int)),
+#                 ],
+#             )
+#         else:
+#             sample = Sample(
+#                 historical_ERA5_images=datasel.isel(time=slice(0, self.history_len)),
+#                 target_ERA5_images=datasel.isel(
+#                     time=slice(self.history_len, len(datasel["time"]))
+#                 ),
+#                 datetime_index=datasel.time.values.astype("datetime64[s]").astype(int),
+#             )
 
-        elif self.one_shot is not None:
-            historical_data = datasel.isel(time=slice(0, self.history_len)).load()
-            target_data = datasel.isel(time=slice(-1, None)).load()
-            # Create the Sample object with the loaded data
-            sample = Sample(
-                historical_ERA5_images=historical_data,
-                target_ERA5_images=target_data,
-                datetime_index=[
-                    int(
-                        historical_data.time.values[0]
-                        .astype("datetime64[s]")
-                        .astype(int)
-                    ),
-                    int(target_data.time.values[0].astype("datetime64[s]").astype(int)),
-                ],
-            )
-        else:
-            sample = Sample(
-                historical_ERA5_images=datasel.isel(time=slice(0, self.history_len)),
-                target_ERA5_images=datasel.isel(
-                    time=slice(self.history_len, len(datasel["time"]))
-                ),
-                datetime_index=datasel.time.values.astype("datetime64[s]").astype(int),
-            )
+#         if self.transform:
+#             sample = self.transform(sample)
 
-        if self.transform:
-            sample = self.transform(sample)
+#         sample["index"] = index
 
-        sample["index"] = index
-
-        return sample
-
-
-# ================================= #
-# This dataset is old, but not sure
-# if anyone still uses it
-# ================================= #
-class Dataset_BridgeScaler(torch.utils.data.Dataset):
-    def __init__(
-        self,
-        conf,
-        conf_dataset,
-        transform: Optional[Callable] = None,
-    ):
-        years_do = list(conf["data"][conf_dataset])
-        self.available_dates = pd.date_range(
-            str(years_do[0]), str(years_do[1]), freq="1H"
-        )
-        self.data_path = str(conf["data"]["bs_data_path"])
-        self.history_len = int(conf["data"]["history_len"])
-        self.forecast_len = int(conf["data"]["forecast_len"])
-        self.forecast_len = 1 if self.forecast_len == 0 else self.forecast_len
-        self.file_format = str(conf["data"]["bs_file_format"])
-        self.transform = transform
-        self.skip_periods = conf["data"]["skip_periods"]
-        self.one_shot = conf["data"]["one_shot"]
-        self.total_seq_len = self.history_len + self.forecast_len
-        self.first_date = self.available_dates[0]
-        self.last_date = self.available_dates[-1]
-
-    def __post_init__(self):
-        # Total sequence length of each sample.
-        self.total_seq_len = self.history_len + self.forecast_len
-
-    def __len__(self):
-        tlen = 0
-        tlen = len(self.available_dates)
-        return tlen
-
-    def evenly_spaced_indlist(self, index, skip_periods, forecast_len, history_len):
-        # Initialize the list with the base index
-        indlist = [index]
-
-        # Add forecast indices
-        for i in range(1, forecast_len + 1):
-            indlist.append(index + i * skip_periods)
-
-        # Add history indices
-        for i in range(1, history_len + 1):
-            indlist.append(index - i * skip_periods)
-
-        # Sort the list to maintain order
-        indlist = sorted(indlist)
-        return indlist
-
-    def __getitem__(self, index):
-        if (self.skip_periods is None) & (self.one_shot is None):
-            date_index = self.available_dates[index]
-
-            indlist = sorted(
-                [index]
-                + [index + (i) + 1 for i in range(self.forecast_len)]
-                + [index - i - 1 for i in range(self.history_len)]
-            )
-
-            if np.min(indlist) < 0:
-                indlist = list(np.array(indlist) + np.abs(np.min(indlist)))
-                index += np.abs(np.min(indlist))
-            if np.max(indlist) >= self.__len__():
-                indlist = list(
-                    np.array(indlist) - np.abs(np.max(indlist)) + self.__len__() - 1
-                )
-                index -= np.abs(np.max(indlist))
-            date_index = self.available_dates[indlist]
-            str_tot_find = f"%Y/%m/%d/{self.file_format}"
-            fs = [f"{self.data_path}/{bb.strftime(str_tot_find)}" for bb in date_index]
-            if len(fs) < 2:
-                raise "Must be greater than one day in the list [x and x+1 minimum]"
-
-            fe = [1 if os.path.exists(fn) else 0 for fn in fs]
-            if np.sum(fe) == len(fs):
-                pass
-            else:
-                raise "weve left the training dataset, check your dataloader logic"
-
-            DShist = xr.open_mfdataset(fs[1 : self.history_len + 1]).load()
-            DSfor = xr.open_mfdataset(
-                fs[self.history_len + 1 : self.history_len + 1 + self.forecast_len]
-            ).load()
-
-            sample = Sample(
-                historical_ERA5_images=DShist,
-                target_ERA5_images=DSfor,
-                datetime_index=date_index,
-            )
-
-            if self.transform:
-                sample = self.transform(sample)
-            return sample
-        if self.one_shot is not None:
-            date_index = self.available_dates[index]
-
-            indlist = sorted(
-                [index]
-                + [index + (i) + 1 for i in range(self.forecast_len)]
-                + [index - i - 1 for i in range(self.history_len)]
-            )
-            # indlist.append(index+self.one_shot)
-
-            if np.min(indlist) < 0:
-                indlist = list(np.array(indlist) + np.abs(np.min(indlist)))
-                index += np.abs(np.min(indlist))
-            if np.max(indlist) >= self.__len__():
-                indlist = list(
-                    np.array(indlist) - np.abs(np.max(indlist)) + self.__len__() - 1
-                )
-                index -= np.abs(np.max(indlist))
-
-            date_index = self.available_dates[indlist]
-            str_tot_find = f"%Y/%m/%d/{self.file_format}"
-            fs = [f"{self.data_path}/{bb.strftime(str_tot_find)}" for bb in date_index]
-
-            if len(fs) < 2:
-                raise "Must be greater than one day in the list [x and x+1 minimum]"
-
-            fe = [1 if os.path.exists(fn) else 0 for fn in fs]
-            if np.sum(fe) == len(fs):
-                pass
-            else:
-                raise "weve left the training dataset, check your dataloader logic"
-
-            DShist = xr.open_mfdataset(fs[: self.history_len]).load()
-            DSfor = xr.open_mfdataset(fs[-2]).load()
-
-            sample = Sample(
-                historical_ERA5_images=DShist,
-                target_ERA5_images=DSfor,
-                datetime_index=date_index,
-            )
-
-            if self.transform:
-                sample = self.transform(sample)
-            return sample
-
-        if (self.skip_periods is not None) and (self.one_shot is None):
-            date_index = self.available_dates[index]
-            indlist = self.evenly_spaced_indlist(
-                index, self.skip_periods, self.forecast_len, self.history_len
-            )
-
-            if np.min(indlist) < 0:
-                indlist = list(np.array(indlist) + np.abs(np.min(indlist)))
-                index += np.abs(np.min(indlist))
-            if np.max(indlist) >= self.__len__():
-                indlist = list(
-                    np.array(indlist) - np.abs(np.max(indlist)) + self.__len__() - 1
-                )
-                index -= np.abs(np.max(indlist))
-
-            date_index = self.available_dates[indlist]
-            str_tot_find = f"%Y/%m/%d/{self.file_format}"
-            fs = [f"{self.data_path}/{bb.strftime(str_tot_find)}" for bb in date_index]
-
-            if len(fs) < 2:
-                raise "Must be greater than one day in the list [x and x+1 minimum]"
-
-            fe = [1 if os.path.exists(fn) else 0 for fn in fs]
-            if np.sum(fe) == len(fs):
-                pass
-            else:
-                raise "weve left the training dataset, check your dataloader logic"
-
-            DShist = xr.open_mfdataset(fs[: self.history_len]).load()
-            DSfor = xr.open_mfdataset(
-                fs[self.history_len : self.history_len + self.forecast_len]
-            ).load()
-
-            sample = Sample(
-                historical_ERA5_images=DShist,
-                target_ERA5_images=DSfor,
-                datetime_index=date_index,
-            )
-
-            if self.transform:
-                sample = self.transform(sample)
-            return sample
+#         return sample
 
 
-# ================================================================== #
-# Note: DistributedSequentialDataset & DistributedSequentialDataset
-# are legacy; they wrap ERA5Dataset to send data batches to GPUs for
-# (1 class of?) huge sharded models, but otherwise have been
-# superseded by ERA5Dataset.
-# ================================================================== #
-class SequentialDataset(torch.utils.data.Dataset):
-    def __init__(
-        self,
-        filenames,
-        history_len=1,
-        forecast_len=2,
-        skip_periods=1,
-        transform=None,
-        random_forecast=True,
-    ):
-        self.dataset = ERA5Dataset(
-            filenames=filenames,
-            history_len=history_len,
-            forecast_len=forecast_len,
-            transform=transform,
-        )
-        self.meta_data_dict = self.dataset.meta_data_dict
-        self.all_fils = self.dataset.all_fils
-        self.history_len = history_len
-        self.forecast_len = forecast_len
-        self.filenames = filenames
-        self.transform = transform
-        self.skip_periods = skip_periods
-        self.random_forecast = random_forecast
-        self.iteration_count = 0
-        self.current_epoch = 0
-        self.adjust_forecast = 0
+# # ================================= #
+# # This dataset is old, but not sure
+# # if anyone still uses it
+# # ================================= #
+# class Dataset_BridgeScaler(torch.utils.data.Dataset):
+#     def __init__(
+#         self,
+#         conf,
+#         conf_dataset,
+#         transform: Optional[Callable] = None,
+#     ):
+#         years_do = list(conf["data"][conf_dataset])
+#         self.available_dates = pd.date_range(
+#             str(years_do[0]), str(years_do[1]), freq="1H"
+#         )
+#         self.data_path = str(conf["data"]["bs_data_path"])
+#         self.history_len = int(conf["data"]["history_len"])
+#         self.forecast_len = int(conf["data"]["forecast_len"])
+#         self.forecast_len = 1 if self.forecast_len == 0 else self.forecast_len
+#         self.file_format = str(conf["data"]["bs_file_format"])
+#         self.transform = transform
+#         self.skip_periods = conf["data"]["skip_periods"]
+#         self.one_shot = conf["data"]["one_shot"]
+#         self.total_seq_len = self.history_len + self.forecast_len
+#         self.first_date = self.available_dates[0]
+#         self.last_date = self.available_dates[-1]
 
-        self.index_list = []
-        for i, x in enumerate(self.all_fils):
-            times = x["time"].values
-            slices = np.arange(0, times.shape[0] - (self.forecast_len + 1))
-            self.index_list += [(i, slice) for slice in slices]
+#     def __post_init__(self):
+#         # Total sequence length of each sample.
+#         self.total_seq_len = self.history_len + self.forecast_len
 
-    def __len__(self):
-        return len(self.index_list)
+#     def __len__(self):
+#         tlen = 0
+#         tlen = len(self.available_dates)
+#         return tlen
 
-    def set_params(self, epoch):
-        self.current_epoch = epoch
-        self.iteration_count = 0
+#     def evenly_spaced_indlist(self, index, skip_periods, forecast_len, history_len):
+#         # Initialize the list with the base index
+#         indlist = [index]
 
-    def __getitem__(self, index):
-        if self.random_forecast and (self.iteration_count % self.forecast_len == 0):
-            # Randomly choose a starting point within a valid range
-            max_start = len(self.index_list) - (self.forecast_len + 1)
-            self.adjust_forecast = np.random.randint(0, max_start + 1)
+#         # Add forecast indices
+#         for i in range(1, forecast_len + 1):
+#             indlist.append(index + i * skip_periods)
 
-        index = (index + self.adjust_forecast) % self.__len__()
-        file_id, slice_idx = self.index_list[index]
+#         # Add history indices
+#         for i in range(1, history_len + 1):
+#             indlist.append(index - i * skip_periods)
 
-        dataset = xr.open_zarr(self.filenames[file_id], consolidated=True).isel(
-            time=slice(slice_idx, slice_idx + self.skip_periods + 1, self.skip_periods)
-        )
+#         # Sort the list to maintain order
+#         indlist = sorted(indlist)
+#         return indlist
 
-        sample = {
-            "x": dataset.isel(time=slice(0, 1, 1)),
-            "y": dataset.isel(time=slice(1, 2, 1)),
-        }
+#     def __getitem__(self, index):
+#         if (self.skip_periods is None) & (self.one_shot is None):
+#             date_index = self.available_dates[index]
 
-        if self.transform:
-            sample = self.transform(sample)
+#             indlist = sorted(
+#                 [index]
+#                 + [index + (i) + 1 for i in range(self.forecast_len)]
+#                 + [index - i - 1 for i in range(self.history_len)]
+#             )
 
-        sample["forecast_hour"] = self.iteration_count
-        sample["forecast_datetime"] = dataset.time.values.astype(
-            "datetime64[s]"
-        ).astype(int)
-        sample["stop_forecast"] = False
+#             if np.min(indlist) < 0:
+#                 indlist = list(np.array(indlist) + np.abs(np.min(indlist)))
+#                 index += np.abs(np.min(indlist))
+#             if np.max(indlist) >= self.__len__():
+#                 indlist = list(
+#                     np.array(indlist) - np.abs(np.max(indlist)) + self.__len__() - 1
+#                 )
+#                 index -= np.abs(np.max(indlist))
+#             date_index = self.available_dates[indlist]
+#             str_tot_find = f"%Y/%m/%d/{self.file_format}"
+#             fs = [f"{self.data_path}/{bb.strftime(str_tot_find)}" for bb in date_index]
+#             if len(fs) < 2:
+#                 raise "Must be greater than one day in the list [x and x+1 minimum]"
 
-        if self.iteration_count == self.forecast_len - 1:
-            sample["stop_forecast"] = True
+#             fe = [1 if os.path.exists(fn) else 0 for fn in fs]
+#             if np.sum(fe) == len(fs):
+#                 pass
+#             else:
+#                 raise "weve left the training dataset, check your dataloader logic"
 
-        # Increment the iteration count
-        self.iteration_count += 1
+#             DShist = xr.open_mfdataset(fs[1 : self.history_len + 1]).load()
+#             DSfor = xr.open_mfdataset(
+#                 fs[self.history_len + 1 : self.history_len + 1 + self.forecast_len]
+#             ).load()
 
-        return sample
+#             sample = Sample(
+#                 historical_ERA5_images=DShist,
+#                 target_ERA5_images=DSfor,
+#                 datetime_index=date_index,
+#             )
+
+#             if self.transform:
+#                 sample = self.transform(sample)
+#             return sample
+#         if self.one_shot is not None:
+#             date_index = self.available_dates[index]
+
+#             indlist = sorted(
+#                 [index]
+#                 + [index + (i) + 1 for i in range(self.forecast_len)]
+#                 + [index - i - 1 for i in range(self.history_len)]
+#             )
+#             # indlist.append(index+self.one_shot)
+
+#             if np.min(indlist) < 0:
+#                 indlist = list(np.array(indlist) + np.abs(np.min(indlist)))
+#                 index += np.abs(np.min(indlist))
+#             if np.max(indlist) >= self.__len__():
+#                 indlist = list(
+#                     np.array(indlist) - np.abs(np.max(indlist)) + self.__len__() - 1
+#                 )
+#                 index -= np.abs(np.max(indlist))
+
+#             date_index = self.available_dates[indlist]
+#             str_tot_find = f"%Y/%m/%d/{self.file_format}"
+#             fs = [f"{self.data_path}/{bb.strftime(str_tot_find)}" for bb in date_index]
+
+#             if len(fs) < 2:
+#                 raise "Must be greater than one day in the list [x and x+1 minimum]"
+
+#             fe = [1 if os.path.exists(fn) else 0 for fn in fs]
+#             if np.sum(fe) == len(fs):
+#                 pass
+#             else:
+#                 raise "weve left the training dataset, check your dataloader logic"
+
+#             DShist = xr.open_mfdataset(fs[: self.history_len]).load()
+#             DSfor = xr.open_mfdataset(fs[-2]).load()
+
+#             sample = Sample(
+#                 historical_ERA5_images=DShist,
+#                 target_ERA5_images=DSfor,
+#                 datetime_index=date_index,
+#             )
+
+#             if self.transform:
+#                 sample = self.transform(sample)
+#             return sample
+
+#         if (self.skip_periods is not None) and (self.one_shot is None):
+#             date_index = self.available_dates[index]
+#             indlist = self.evenly_spaced_indlist(
+#                 index, self.skip_periods, self.forecast_len, self.history_len
+#             )
+
+#             if np.min(indlist) < 0:
+#                 indlist = list(np.array(indlist) + np.abs(np.min(indlist)))
+#                 index += np.abs(np.min(indlist))
+#             if np.max(indlist) >= self.__len__():
+#                 indlist = list(
+#                     np.array(indlist) - np.abs(np.max(indlist)) + self.__len__() - 1
+#                 )
+#                 index -= np.abs(np.max(indlist))
+
+#             date_index = self.available_dates[indlist]
+#             str_tot_find = f"%Y/%m/%d/{self.file_format}"
+#             fs = [f"{self.data_path}/{bb.strftime(str_tot_find)}" for bb in date_index]
+
+#             if len(fs) < 2:
+#                 raise "Must be greater than one day in the list [x and x+1 minimum]"
+
+#             fe = [1 if os.path.exists(fn) else 0 for fn in fs]
+#             if np.sum(fe) == len(fs):
+#                 pass
+#             else:
+#                 raise "weve left the training dataset, check your dataloader logic"
+
+#             DShist = xr.open_mfdataset(fs[: self.history_len]).load()
+#             DSfor = xr.open_mfdataset(
+#                 fs[self.history_len : self.history_len + self.forecast_len]
+#             ).load()
+
+#             sample = Sample(
+#                 historical_ERA5_images=DShist,
+#                 target_ERA5_images=DSfor,
+#                 datetime_index=date_index,
+#             )
+
+#             if self.transform:
+#                 sample = self.transform(sample)
+#             return sample
+
+
+# # ================================================================== #
+# # Note: DistributedSequentialDataset & DistributedSequentialDataset
+# # are legacy; they wrap ERA5Dataset to send data batches to GPUs for
+# # (1 class of?) huge sharded models, but otherwise have been
+# # superseded by ERA5Dataset.
+# # ================================================================== #
+# class SequentialDataset(torch.utils.data.Dataset):
+#     def __init__(
+#         self,
+#         filenames,
+#         history_len=1,
+#         forecast_len=2,
+#         skip_periods=1,
+#         transform=None,
+#         random_forecast=True,
+#     ):
+#         self.dataset = ERA5Dataset(
+#             filenames=filenames,
+#             history_len=history_len,
+#             forecast_len=forecast_len,
+#             transform=transform,
+#         )
+#         self.meta_data_dict = self.dataset.meta_data_dict
+#         self.all_fils = self.dataset.all_fils
+#         self.history_len = history_len
+#         self.forecast_len = forecast_len
+#         self.filenames = filenames
+#         self.transform = transform
+#         self.skip_periods = skip_periods
+#         self.random_forecast = random_forecast
+#         self.iteration_count = 0
+#         self.current_epoch = 0
+#         self.adjust_forecast = 0
+
+#         self.index_list = []
+#         for i, x in enumerate(self.all_fils):
+#             times = x["time"].values
+#             slices = np.arange(0, times.shape[0] - (self.forecast_len + 1))
+#             self.index_list += [(i, slice) for slice in slices]
+
+#     def __len__(self):
+#         return len(self.index_list)
+
+#     def set_params(self, epoch):
+#         self.current_epoch = epoch
+#         self.iteration_count = 0
+
+#     def __getitem__(self, index):
+#         if self.random_forecast and (self.iteration_count % self.forecast_len == 0):
+#             # Randomly choose a starting point within a valid range
+#             max_start = len(self.index_list) - (self.forecast_len + 1)
+#             self.adjust_forecast = np.random.randint(0, max_start + 1)
+
+#         index = (index + self.adjust_forecast) % self.__len__()
+#         file_id, slice_idx = self.index_list[index]
+
+#         dataset = xr.open_zarr(self.filenames[file_id], consolidated=True).isel(
+#             time=slice(slice_idx, slice_idx + self.skip_periods + 1, self.skip_periods)
+#         )
+
+#         sample = {
+#             "x": dataset.isel(time=slice(0, 1, 1)),
+#             "y": dataset.isel(time=slice(1, 2, 1)),
+#         }
+
+#         if self.transform:
+#             sample = self.transform(sample)
+
+#         sample["forecast_hour"] = self.iteration_count
+#         sample["forecast_datetime"] = dataset.time.values.astype(
+#             "datetime64[s]"
+#         ).astype(int)
+#         sample["stop_forecast"] = False
+
+#         if self.iteration_count == self.forecast_len - 1:
+#             sample["stop_forecast"] = True
+
+#         # Increment the iteration count
+#         self.iteration_count += 1
+
+#         return sample
