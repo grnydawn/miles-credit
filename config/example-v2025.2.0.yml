@@ -394,7 +394,11 @@ predict:
     mode: none
 
     # Set the batch_size for the prediction inference mode (default is 1)
+    # this batches init_datetimes together so that we are fully utilizing the GPUs 
     batch_size: 1
+    # set the ensemble size for inference mode (default is 1 if not set)
+    ensemble_size: 1
+
 
     forecasts:
         type: "custom"       # keep it as "custom". See also credit.forecast

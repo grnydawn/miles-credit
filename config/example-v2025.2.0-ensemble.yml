@@ -397,6 +397,8 @@ predict:
 
     # Set the batch_size for the prediction inference mode (default is 1)
     batch_size: 1
+    # set the ensemble size for inference mode (default is 1 if not set)
+    ensemble_size: 1
 
     forecasts:
         type: "custom"       # keep it as "custom". See also credit.forecast
