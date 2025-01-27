@@ -92,6 +92,15 @@ The predict field in the config file allows one to speficy start and end dates t
 python applications/rollout_to_netcdf.py -c config/wxformer_1dg_test.yml
 ```
 
+# Model Weights and Data
+Model weights for the CREDIT 6-hour WXFormer and FuXi models and the 1-hour WXFormer are available on huggingface.
+
+* [6-Hour WXFormer](https://huggingface.co/djgagne2/wxformer_6h)
+* [1-Hour WXFormer](https://huggingface.co/djgagne2/wxformer_1h)
+* [6-Hour FuXi](https://huggingface.co/djgagne2/fuxi_6h)
+
+Processed ERA5 Zarr Data are available for download through Globus (requires free account) through the [CREDIT ERA5 Zarr Files](https://app.globus.org/file-manager?origin_id=2fc90d8f-10b7-44e1-a6a5-cf844112822e&origin_path=%2F) collection.
+
 # Support
 This software is based upon work supported by the NSF National Center for Atmospheric Research, a major facility sponsored by the 
 U.S. National Science Foundation  under Cooperative Agreement No. 1852977 and managed by the University Corporation for Atmospheric Research. Any opinions, findings and conclusions or recommendations 
