@@ -192,6 +192,7 @@ trainer:
     # for ddp and fsdp, actual batch size = batch_size * number of GPUs
     train_batch_size: 1
     valid_batch_size: 1
+    ensemble_size: 1  # default 1 means deterministic training behavior
 
     # number of batches per epoch for training and validation
     batches_per_epoch: 1000 # Set to 0 to use len(dataloader)

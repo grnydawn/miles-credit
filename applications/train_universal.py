@@ -51,7 +51,7 @@ def load_model_states_and_optimizer(conf, model, device):
     """
     Load the model states, optimizer, scheduler, and gradient scaler.
 
-    Args:jo
+    Args:
         conf (dict): Configuration dictionary containing training parameters.
         model (torch.nn.Module): The model to be trained.
         device (torch.device): The device (CPU or GPU) where the model is located.
