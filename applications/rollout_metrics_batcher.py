@@ -85,9 +85,12 @@ def predict(rank, world_size, conf, backend=None, p=None):
     # length of forecast steps
     lead_time_periods = conf["data"]["lead_time_periods"]
 
-    # batch size
+    # batch and ensemble size
     batch_size = conf["predict"].get("batch_size", 1)
-
+    ensemble_size = conf["predict"].get("ensemble_size", 1)
+    if ensemble_size > 1:
+        logger.info(f"Rolling out with ensemble size {ensemble_size}")
+    
     # transform and ToTensor class
     logger.info("Loading z-score transforms")
     if conf["data"]["scaler_type"] == "std_new":
@@ -195,6 +198,7 @@ def predict(rank, world_size, conf, backend=None, p=None):
 
     model.eval()
 
+
     # Set up metrics and containers
     if 'climatology' in conf['predict']:
         metrics = LatWeightedMetricsClimatology(
@@ -202,7 +206,7 @@ def predict(rank, world_size, conf, backend=None, p=None):
             climatology=xr.open_dataset(conf['predict']['climatology'])
         )
     else:
-        metrics = LatWeightedMetrics(conf)
+        metrics = LatWeightedMetrics(conf, training_mode=False)
     metrics_results = defaultdict(list)
     dpf = None
 
@@ -224,12 +228,12 @@ def predict(rank, world_size, conf, backend=None, p=None):
 
         # y_pred allocation and results tracking
         results = []
+        save_datetimes = [0] * batch_size
 
         # model inference loop
         for k, batch in enumerate(data_loader):
             batch_size = batch["datetime"].shape[0]
             forecast_step = batch["forecast_step"].item()
-            save_datetimes = [0] * batch_size
 
             # Initial input processing
             if forecast_step == 1:
@@ -239,7 +243,6 @@ def predict(rank, world_size, conf, backend=None, p=None):
                 # Process the entire batch at once
                 init_datetimes = [datetime.utcfromtimestamp(batch["datetime"][i].item()).strftime("%Y-%m-%dT%HZ") for i in range(batch_size)]
                 save_datetimes[forecast_count:forecast_count + batch_size] = init_datetimes
-
                 if "x_surf" in batch:
                     x = concat_and_reshape(
                         batch["x"],
@@ -247,10 +250,15 @@ def predict(rank, world_size, conf, backend=None, p=None):
                     ).to(device).float()
                 else:
                     x = reshape_only(batch["x"]).to(device).float()
+                # create ensemble:
+                if ensemble_size > 1:
+                    x = torch.repeat_interleave(x, ensemble_size, 0)
 
             # Add forcing and static variables
             if "x_forcing_static" in batch:
                 x_forcing_batch = batch["x_forcing_static"].to(device).permute(0, 2, 1, 3, 4).float()
+                if ensemble_size > 1: 
+                    x_forcing_batch = torch.repeat_interleave(x_forcing_batch, ensemble_size, 0)
                 x = torch.cat((x, x_forcing_batch), dim=1)
 
             # Load y-truth
@@ -305,26 +313,13 @@ def predict(rank, world_size, conf, backend=None, p=None):
 
             # Prepare for next iteration
             y_pred = state_transformer.transform_array(y_pred).to(device)
-
-            if history_len == 1:
-                if "y_diag" in batch:
-                    x = y_pred[:, :-varnum_diag, ...].detach()
-                else:
-                    x = y_pred.detach()
-            else:
-                if static_dim_size == 0:
-                    x_detach = x[:, :, 1:, ...].detach()
-                else:
-                    x_detach = x[:, :-static_dim_size, 1:, ...].detach()
-
-                if "y_diag" in batch:
-                    x = torch.cat([x_detach, y_pred[:, :-varnum_diag, ...].detach()], dim=2)
-                else:
-                    x = torch.cat([x_detach, y_pred.detach()], dim=2)
-
-            # Process each item in the batch
+            
+            if ensemble_size > 1:
+                _y_pred = _y_pred.view(batch_size, ensemble_size, *_y_pred.shape[1:])
+            # Process each item in the batch (batch idx corresponds to init time)
             for j in range(batch_size):
                 # Compute the metrics in parallel
+                # if ensemble_size > 1, latWeightedMetrics also computes some ensemble metrics
                 result = p.apply_async(
                     compute_metrics,
                     (
@@ -344,8 +339,24 @@ def predict(rank, world_size, conf, backend=None, p=None):
                 print_str += f"Hour: {forecast_step * lead_time_periods} "
                 print(print_str)
 
-                torch.cuda.empty_cache()
-                gc.collect()
+            if history_len == 1:
+                if "y_diag" in batch:
+                    x = y_pred[:, :-varnum_diag, ...].detach()
+                else:
+                    x = y_pred.detach()
+            else:
+                if static_dim_size == 0:
+                    x_detach = x[:, :, 1:, ...].detach()
+                else:
+                    x_detach = x[:, :-static_dim_size, 1:, ...].detach()
+
+                if "y_diag" in batch:
+                    x = torch.cat([x_detach, y_pred[:, :-varnum_diag, ...].detach()], dim=2)
+                else:
+                    x = torch.cat([x_detach, y_pred.detach()], dim=2)
+
+            torch.cuda.empty_cache()
+            gc.collect()
 
             if batch["stop_forecast"].item():
                 # Wait for processes to finish and collect metrics
