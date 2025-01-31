@@ -119,6 +119,7 @@ def distributed_model_wrapper(conf, neural_network, device):
         if "activation_checkpoint" in conf["trainer"]
         else False
     )
+    checkpoint_all_layers = conf["trainer"].get("checkpoint_all_layers", False)
 
     # Configure FSDP layers for paralle policies AND/OR activation checkpointing
     # in either DDP or FSDP
@@ -222,52 +223,8 @@ def distributed_model_wrapper(conf, neural_network, device):
             cpu_offload=CPUOffload(offload_params=cpu_offload),
         )
 
-        # activation checkpointing on the transformer blocks
-
-        # logging.info(f"Activation checkpointing on FSDP: {activation_checkpoint}")
-
-        # if activation_checkpoint:
-        #     # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
-
-        #     non_reentrant_wrapper = functools.partial(
-        #         checkpoint_wrapper,
-        #         checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-        #     )
-
-        #     check_fn = lambda submodule: any(
-        #         isinstance(submodule, cls) for cls in transformer_layers_cls
-        #     )
-
-        #     apply_activation_checkpointing(
-        #         model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=check_fn
-        #     )
-
-        # # attempting to get around the launch issue we are having
-        # torch.distributed.barrier()
-
     elif conf["trainer"]["mode"] == "ddp":
         model = DDP(neural_network, device_ids=[device])
-
-        # logging.info(f"Activation checkpointing on DDP: {activation_checkpoint}")
-
-        # if activation_checkpoint:
-        #     # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
-
-        #     non_reentrant_wrapper = functools.partial(
-        #         checkpoint_wrapper,
-        #         checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-        #     )
-
-        #     check_fn = lambda submodule: any(
-        #         isinstance(submodule, cls) for cls in transformer_layers_cls
-        #     )
-
-        #     apply_activation_checkpointing(
-        #         model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=check_fn
-        #     )
-
-        # # attempting to get around the launch issue we are having
-        # torch.distributed.barrier()
 
     else:
         model = neural_network
@@ -282,9 +239,12 @@ def distributed_model_wrapper(conf, neural_network, device):
             checkpoint_impl=CheckpointImpl.NO_REENTRANT,
         )
 
-        check_fn = lambda submodule: any(
-            isinstance(submodule, cls) for cls in transformer_layers_cls
-        )
+        if checkpoint_all_layers:
+            check_fn = lambda submodule: submodule is not None
+        else:
+            check_fn = lambda submodule: any(
+                isinstance(submodule, cls) for cls in transformer_layers_cls
+            )
 
         apply_activation_checkpointing(
             model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=check_fn

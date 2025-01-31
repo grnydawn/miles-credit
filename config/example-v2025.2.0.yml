@@ -153,6 +153,7 @@ trainer:
     cpu_offload: False
     # save forward pass activation to checkpoints and free GPU memory
     activation_checkpoint: True
+    checkpoint_all_layers: False
 
     # (optional) use torch.compile: False. May not be compatible with custom models
     compile: False
