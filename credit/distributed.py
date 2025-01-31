@@ -1,4 +1,5 @@
 import torch.distributed as dist
+import torch.nn as nn
 import numpy as np
 import socket
 import torch
@@ -19,6 +20,7 @@ from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import (
     apply_activation_checkpointing,
 )
 from credit.models.checkpoint import TorchFSDPModel
+from credit.models import load_fsdp_or_checkpoint_policy
 from torch.nn.parallel import DistributedDataParallel as DDP
 from credit.mixed_precision import parse_dtype
 import functools
@@ -97,6 +99,42 @@ def get_rank_info(trainer_mode):
     return LOCAL_RANK, WORLD_RANK, WORLD_SIZE
 
 
+def should_not_checkpoint(module):
+    exclude_types = (
+        # Regularization & Normalization
+        nn.Dropout,
+        nn.BatchNorm1d,
+        nn.BatchNorm2d,
+        nn.BatchNorm3d,
+        nn.LayerNorm,
+        # Activations (stateless, cheap to recompute)
+        nn.ReLU,
+        nn.GELU,
+        nn.SiLU,
+        nn.Sigmoid,
+        nn.Tanh,
+        # Pooling (lightweight, no significant memory savings)
+        nn.MaxPool1d,
+        nn.MaxPool2d,
+        nn.MaxPool3d,
+        nn.AvgPool1d,
+        nn.AvgPool2d,
+        nn.AvgPool3d,
+        nn.AdaptiveMaxPool1d,
+        nn.AdaptiveMaxPool2d,
+        nn.AdaptiveMaxPool3d,
+        nn.AdaptiveAvgPool1d,
+        nn.AdaptiveAvgPool2d,
+        nn.AdaptiveAvgPool3d,
+        # Embeddings (usually large but don’t require recomputation)
+        nn.Embedding,
+        # Identity & Reshaping (no computation)
+        nn.Identity,
+        nn.Flatten,
+    )
+    return isinstance(module, exclude_types)
+
+
 def distributed_model_wrapper(conf, neural_network, device):
     """Wraps the neural network model for distributed training.
 
@@ -124,52 +162,16 @@ def distributed_model_wrapper(conf, neural_network, device):
     # Configure FSDP layers for paralle policies AND/OR activation checkpointing
     # in either DDP or FSDP
     if mode == "fsdp" or activation_checkpoint:
-        # crossformer
-        if "crossformer" in conf["model"]["type"]:
-            from credit.models.crossformer import (
-                Attention,
-                DynamicPositionBias,
-                FeedForward,
-                CrossEmbedLayer,
-            )
+        transformer_layers_cls = load_fsdp_or_checkpoint_policy(conf)
 
-            transformer_layers_cls = {
-                Attention,
-                DynamicPositionBias,
-                FeedForward,
-                CrossEmbedLayer,
-            }
-
-        # FuXi
-        # FuXi supports "spectral_nrom = True" only
-        elif "fuxi" in conf["model"]["type"]:
-            from timm.models.swin_transformer_v2 import SwinTransformerV2Stage
-
-            transformer_layers_cls = {SwinTransformerV2Stage}
-
-        # Swin by itself
-        elif "swin" in conf["model"]["type"]:
-            from credit.models.swin import (
-                SwinTransformerV2CrBlock,
-                WindowMultiHeadAttentionNoPos,
-                WindowMultiHeadAttention,
-            )
-
-            transformer_layers_cls = {
-                SwinTransformerV2CrBlock,
-                WindowMultiHeadAttentionNoPos,
-                WindowMultiHeadAttention,
-            }
-
-        # other models not supported
-        else:
-            raise OSError(
-                "You asked for FSDP but only crossformer and fuxi are currently supported."
-            )
-
+    # logger announcement
     if activation_checkpoint:
+        logging.info(f"Activation checkpointing on {mode}: {activation_checkpoint}")
         if checkpoint_all_layers:
             logging.info("Checkpointing all available layers in your model")
+            logging.warning(
+                "This may cause performance degredation -- consider supplying a list to checkpoint"
+            )
         else:
             logging.info(f"Checkpointing custom layers {transformer_layers_cls}")
 
@@ -235,8 +237,6 @@ def distributed_model_wrapper(conf, neural_network, device):
     else:
         model = neural_network
 
-    logging.info(f"Activation checkpointing on {mode}: {activation_checkpoint}")
-
     if activation_checkpoint:
         # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
 
@@ -246,7 +246,7 @@ def distributed_model_wrapper(conf, neural_network, device):
         )
 
         if checkpoint_all_layers:
-            check_fn = lambda submodule: submodule is not None
+            check_fn = lambda submodule: not should_not_checkpoint(submodule)
         else:
             check_fn = lambda submodule: any(
                 isinstance(submodule, cls) for cls in transformer_layers_cls
