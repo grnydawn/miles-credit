@@ -79,7 +79,10 @@ def get_rank_info(trainer_mode):
                 WORLD_SIZE = int(os.environ["PMI_SIZE"])
                 WORLD_RANK = int(os.environ["PMI_RANK"])
             else:
-                sys.exit("Can't find the environment variables for local rank")
+                sys.exit(
+                    "Can't find the environment variables for local rank. "
+                    "If you are on casper you'll want to use torchrun for now."
+                )
 
         # Set MASTER_ADDR and MASTER_PORT if not already set
         if "MASTER_ADDR" not in os.environ:
@@ -109,9 +112,17 @@ def distributed_model_wrapper(conf, neural_network, device):
     # convert $USER to the actual user name
     conf["save_loc"] = os.path.expandvars(conf["save_loc"])
 
-    # FSDP polices
-    if conf["trainer"]["mode"] == "fsdp":
-        # Define the sharding policies
+    mode = conf["trainer"]["mode"]
+
+    activation_checkpoint = (
+        conf["trainer"]["activation_checkpoint"]
+        if "activation_checkpoint" in conf["trainer"]
+        else False
+    )
+
+    # Configure FSDP layers for paralle policies AND/OR activation checkpointing
+    # in either DDP or FSDP
+    if mode == "fsdp" or activation_checkpoint:
         # crossformer
         if "crossformer" in conf["model"]["type"]:
             from credit.models.crossformer import (
@@ -155,6 +166,9 @@ def distributed_model_wrapper(conf, neural_network, device):
                 "You asked for FSDP but only crossformer and fuxi are currently supported."
             )
 
+    # FSDP polices
+    if conf["trainer"]["mode"] == "fsdp":
+        # Define the sharding policies
         auto_wrap_policy1 = functools.partial(
             transformer_auto_wrap_policy, transformer_layer_cls=transformer_layers_cls
         )
@@ -210,36 +224,73 @@ def distributed_model_wrapper(conf, neural_network, device):
 
         # activation checkpointing on the transformer blocks
 
-        activation_checkpoint = (
-            conf["trainer"]["activation_checkpoint"]
-            if "activation_checkpoint" in conf["trainer"]
-            else False
-        )
+        # logging.info(f"Activation checkpointing on FSDP: {activation_checkpoint}")
 
-        logging.info(f"Activation checkpointing: {activation_checkpoint}")
+        # if activation_checkpoint:
+        #     # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
 
-        if activation_checkpoint:
-            # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
+        #     non_reentrant_wrapper = functools.partial(
+        #         checkpoint_wrapper,
+        #         checkpoint_impl=CheckpointImpl.NO_REENTRANT,
+        #     )
 
-            non_reentrant_wrapper = functools.partial(
-                checkpoint_wrapper,
-                checkpoint_impl=CheckpointImpl.NO_REENTRANT,
-            )
+        #     check_fn = lambda submodule: any(
+        #         isinstance(submodule, cls) for cls in transformer_layers_cls
+        #     )
 
-            check_fn = lambda submodule: any(
-                isinstance(submodule, cls) for cls in transformer_layers_cls
-            )
+        #     apply_activation_checkpointing(
+        #         model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=check_fn
+        #     )
 
-            apply_activation_checkpointing(
-                model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=check_fn
-            )
-
-        # attempting to get around the launch issue we are having
-        torch.distributed.barrier()
+        # # attempting to get around the launch issue we are having
+        # torch.distributed.barrier()
 
     elif conf["trainer"]["mode"] == "ddp":
         model = DDP(neural_network, device_ids=[device])
+
+        # logging.info(f"Activation checkpointing on DDP: {activation_checkpoint}")
+
+        # if activation_checkpoint:
+        #     # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
+
+        #     non_reentrant_wrapper = functools.partial(
+        #         checkpoint_wrapper,
+        #         checkpoint_impl=CheckpointImpl.NO_REENTRANT,
+        #     )
+
+        #     check_fn = lambda submodule: any(
+        #         isinstance(submodule, cls) for cls in transformer_layers_cls
+        #     )
+
+        #     apply_activation_checkpointing(
+        #         model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=check_fn
+        #     )
+
+        # # attempting to get around the launch issue we are having
+        # torch.distributed.barrier()
+
     else:
         model = neural_network
+
+    logging.info(f"Activation checkpointing on {mode}: {activation_checkpoint}")
+
+    if activation_checkpoint:
+        # https://pytorch.org/blog/efficient-large-scale-training-with-pytorch/
+
+        non_reentrant_wrapper = functools.partial(
+            checkpoint_wrapper,
+            checkpoint_impl=CheckpointImpl.NO_REENTRANT,
+        )
+
+        check_fn = lambda submodule: any(
+            isinstance(submodule, cls) for cls in transformer_layers_cls
+        )
+
+        apply_activation_checkpointing(
+            model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=check_fn
+        )
+
+    # attempting to get around the launch issue we are having
+    torch.distributed.barrier()
 
     return model
