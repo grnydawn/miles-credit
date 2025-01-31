@@ -167,6 +167,12 @@ def distributed_model_wrapper(conf, neural_network, device):
                 "You asked for FSDP but only crossformer and fuxi are currently supported."
             )
 
+    if activation_checkpoint:
+        if checkpoint_all_layers:
+            logging.info("Checkpointing all available layers in your model")
+        else:
+            logging.info(f"Checkpointing custom layers {transformer_layers_cls}")
+
     # FSDP polices
     if conf["trainer"]["mode"] == "fsdp":
         # Define the sharding policies
