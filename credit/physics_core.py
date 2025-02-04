@@ -2,7 +2,7 @@
 Tools for physics-based constraints and derivations for CREDIT models
 --------------------------------------------------------------------------
 Content:
-    - physics_pressure_level        
+    - physics_pressure_level
     - physics_hybrid_sigma_level
 
 Reference:
@@ -261,9 +261,8 @@ class physics_pressure_level:
         return TWC
 
 
-
 class physics_hybrid_sigma_level:
-    '''
+    """
     Hybrid sigma-pressure level physics
 
     Attributes:
@@ -274,20 +273,22 @@ class physics_hybrid_sigma_level:
         coef_b (torch.Tensor): Hybrid sigma-pressure coefficient 'b' [unitless].
         area (torch.Tensor): Area of grid cells [m^2].
         integral (function): Vertical integration method (midpoint or trapezoidal).
-    '''
+    """
 
-    def __init__(self,
-                 lon: torch.Tensor,
-                 lat: torch.Tensor,
-                 coef_a: torch.Tensor,
-                 coef_b: torch.Tensor,
-                 midpoint: bool = False):
-        '''
+    def __init__(
+        self,
+        lon: torch.Tensor,
+        lat: torch.Tensor,
+        coef_a: torch.Tensor,
+        coef_b: torch.Tensor,
+        midpoint: bool = False,
+    ):
+        """
         Initialize the class with longitude, latitude, and hybrid sigma-pressure levels.
         All inputs must be on the same torch device.
         Full order of dimensions: (batch, level, time, latitude, longitude)
         Accepted dimensions: (batch, level, latitude, longitude)
-        
+
         Args:
             lon (torch.Tensor): Longitude in degrees.
             lat (torch.Tensor): Latitude in degrees.
@@ -297,7 +298,7 @@ class physics_hybrid_sigma_level:
 
         Note:
             pressure = coef_a + coef_b * surface_pressure
-        '''
+        """
         self.lon = lon
         self.lat = lat
         self.coef_a = coef_a  # (level,)
@@ -308,7 +309,7 @@ class physics_hybrid_sigma_level:
         # Reshape coef_a and coef_b for broadcasting
         self.coef_a = coef_a.view(1, -1, 1, 1)  # (1, level, 1, 1)
         self.coef_b = coef_b.view(1, -1, 1, 1)  # (1, level, 1, 1)
-        
+
         # ========================================================================= #
         # compute gtid area
         # area = R^2 * d_sin(lat) * d_lon
@@ -329,10 +330,12 @@ class physics_hybrid_sigma_level:
             self.integral = self.pressure_integral_trapz
             self.integral_sliced = self.pressure_integral_trapz_sliced
 
-    def pressure_integral_midpoint(self, 
-                                   q_mid: torch.Tensor,
-                                   surface_pressure: torch.Tensor,) -> torch.Tensor:
-        '''
+    def pressure_integral_midpoint(
+        self,
+        q_mid: torch.Tensor,
+        surface_pressure: torch.Tensor,
+    ) -> torch.Tensor:
+        """
         Compute the pressure level integral of a given quantity; assuming its mid-point
         values are pre-computed.
 
@@ -342,12 +345,15 @@ class physics_hybrid_sigma_level:
 
         Returns:
             Pressure level integrals of q
-        '''
+        """
         # (batch, 1, lat, lon)
         surface_pressure = surface_pressure.unsqueeze(1)
 
         # (batch, level, lat, lon)
-        pressure = self.coef_a.to(q_mid.device) + self.coef_b.to(q_mid.device) * surface_pressure
+        pressure = (
+            self.coef_a.to(q_mid.device)
+            + self.coef_b.to(q_mid.device) * surface_pressure
+        )
 
         # (batch, level-1, lat, lon)
         delta_p = pressure.diff(dim=1).to(q_mid.device)
@@ -357,38 +363,43 @@ class physics_hybrid_sigma_level:
 
         # Sum over level dimension
         q_integral = torch.sum(q_area, dim=1)
-        
+
         return q_integral
-        
-    def pressure_integral_midpoint_sliced(self,
-                                          q_mid: torch.Tensor,
-                                          surface_pressure: torch.Tensor,
-                                          ind_start: int,
-                                          ind_end: int) -> torch.Tensor:
-        '''
+
+    def pressure_integral_midpoint_sliced(
+        self,
+        q_mid: torch.Tensor,
+        surface_pressure: torch.Tensor,
+        ind_start: int,
+        ind_end: int,
+    ) -> torch.Tensor:
+        """
         As in `pressure_integral_midpoint`, but supports pressure level indexing,
         so it can calculate integrals of a subset of levels.
-        '''
+        """
         # (batch, 1, lat, lon)
         surface_pressure = surface_pressure.unsqueeze(1)
 
         # (batch, level, lat, lon)
-        pressure = self.coef_a.to(q_mid.device) + self.coef_b.to(q_mid.device) * surface_pressure
+        pressure = (
+            self.coef_a.to(q_mid.device)
+            + self.coef_b.to(q_mid.device) * surface_pressure
+        )
 
         # (batch, level-1, lat, lon)
         pressure_thickness = pressure.diff(dim=1)
-        
+
         delta_p = pressure_thickness[:, ind_start:ind_end, ...].to(q_mid.device)
-        
+
         q_mid_sliced = q_mid[:, ind_start:ind_end, ...]
         q_area = q_mid_sliced * delta_p
         q_integral = torch.sum(q_area, dim=1)
         return q_integral
 
-    def pressure_integral_trapz(self, 
-                                q: torch.Tensor,
-                                surface_pressure: torch.Tensor) -> torch.Tensor:
-        '''
+    def pressure_integral_trapz(
+        self, q: torch.Tensor, surface_pressure: torch.Tensor
+    ) -> torch.Tensor:
+        """
         Compute the pressure level integral of a given quantity using the trapezoidal rule.
 
         Args:
@@ -396,12 +407,14 @@ class physics_hybrid_sigma_level:
 
         Returns:
             Pressure level integrals of q
-        '''
+        """
         # (batch, 1, lat, lon)
         surface_pressure = surface_pressure.unsqueeze(1)
 
         # (batch, level, lat, lon)
-        pressure = self.coef_a.to(q.device) + self.coef_b.to(q.device) * surface_pressure
+        pressure = (
+            self.coef_a.to(q.device) + self.coef_b.to(q.device) * surface_pressure
+        )
 
         # (batch, level-1, lat, lon)
         delta_p = pressure.diff(dim=1).to(q.device)
@@ -411,24 +424,28 @@ class physics_hybrid_sigma_level:
         q2 = q[:, 1:, ...]
         q_area = 0.5 * (q1 + q2) * delta_p
         q_trapz = torch.sum(q_area, dim=1)
-        
+
         return q_trapz
 
-    def pressure_integral_trapz_sliced(self,
-                                       q: torch.Tensor,
-                                       surface_pressure: torch.Tensor,
-                                       ind_start: int,
-                                       ind_end: int) -> torch.Tensor:
-        '''
+    def pressure_integral_trapz_sliced(
+        self,
+        q: torch.Tensor,
+        surface_pressure: torch.Tensor,
+        ind_start: int,
+        ind_end: int,
+    ) -> torch.Tensor:
+        """
         As in `pressure_integral_trapz`, but supports pressure level indexing,
         so it can calculate integrals of a subset of levels.
-        '''
+        """
         # (batch, 1, lat, lon)
         surface_pressure = surface_pressure.unsqueeze(1)
 
         # (batch, level, lat, lon)
-        pressure = self.coef_a.to(q.device) + self.coef_b.to(q.device) * surface_pressure
-        
+        pressure = (
+            self.coef_a.to(q.device) + self.coef_b.to(q.device) * surface_pressure
+        )
+
         delta_p = pressure[:, ind_start:ind_end, ...].diff(dim=1).to(q.device)
 
         # trapz
@@ -437,57 +454,47 @@ class physics_hybrid_sigma_level:
         q2 = q_slice[:, 1:, ...]
         q_area = 0.5 * (q1 + q2) * delta_p
         q_trapz = torch.sum(q_area, dim=1)
-        
+
         return q_trapz
 
-    def weighted_sum(self,
-                     q: torch.Tensor,
-                     axis: Dict[tuple, None] = None, 
-                     keepdims: bool = False) -> torch.Tensor:
-        '''
+    def weighted_sum(
+        self, q: torch.Tensor, axis: Dict[tuple, None] = None, keepdims: bool = False
+    ) -> torch.Tensor:
+        """
         Compute the weighted sum of a given quantity for PyTorch tensors.
-        
+
         Args:
             data: the quantity to be summed (PyTorch tensor)
             axis: dims to compute the sum (can be int or tuple of ints)
             keepdims: whether to keep the reduced dimensions or not
-    
+
         Returns:
             Weighted sum (PyTorch tensor)
-        '''
+        """
         q_w = q * self.area.to(q.device)
         q_sum = torch.sum(q_w, dim=axis, keepdim=keepdims)
         return q_sum
 
-    def total_dry_air_mass(self, 
-                           q: torch.Tensor,
-                           surface_pressure: torch.Tensor) -> torch.Tensor:
-        '''
+    def total_dry_air_mass(
+        self, q: torch.Tensor, surface_pressure: torch.Tensor
+    ) -> torch.Tensor:
+        """
         Compute the total mass of dry air over the entire globe [kg]
-        '''
-        mass_dry_per_area = self.integral(1-q, surface_pressure) / GRAVITY # kg/m^2
+        """
+        mass_dry_per_area = self.integral(1 - q, surface_pressure) / GRAVITY  # kg/m^2
         # weighted sum on latitude and longitude dimensions
-        mass_dry_sum = self.weighted_sum(mass_dry_per_area, axis=(-2, -1)) # kg
-        
+        mass_dry_sum = self.weighted_sum(mass_dry_per_area, axis=(-2, -1))  # kg
+
         return mass_dry_sum
 
-    def total_column_water(self, 
-                           q: torch.Tensor,
-                           surface_pressure: torch.Tensor,) -> torch.Tensor:
-        '''
+    def total_column_water(
+        self,
+        q: torch.Tensor,
+        surface_pressure: torch.Tensor,
+    ) -> torch.Tensor:
+        """
         Compute total column water (TCW) per air column [kg/m2]
-        '''
-        TWC = self.integral(q, surface_pressure) / GRAVITY # kg/m^2
-        
+        """
+        TWC = self.integral(q, surface_pressure) / GRAVITY  # kg/m^2
+
         return TWC
-
-
-
-
-
-
-
-
-
-
-
