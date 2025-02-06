@@ -389,6 +389,9 @@ class Trainer(BaseTrainer):
                 np.mean(results_dict["train_mae"]),
                 forecast_length + 1,
             )
+            ensemble_size = conf["trainer"].get("ensemble_size", 0)
+            if ensemble_size > 1:
+                to_print += f" std: {np.mean(results_dict['train_std'])}"
             to_print += " lr: {:.12f}".format(optimizer.param_groups[0]["lr"])
             if self.rank == 0:
                 batch_group_generator.update(1)
@@ -686,6 +689,9 @@ class Trainer(BaseTrainer):
                     np.mean(results_dict["valid_acc"]),
                     np.mean(results_dict["valid_mae"]),
                 )
+                ensemble_size = conf["trainer"].get("ensemble_size", 0)
+                if ensemble_size > 1:
+                    to_print += f" std: {np.mean(results_dict['valid_std']):.6f}"
                 if self.rank == 0:
                     batch_group_generator.update(1)
                     batch_group_generator.set_description(to_print)
