@@ -391,7 +391,7 @@ class Trainer(BaseTrainer):
             )
             ensemble_size = conf["trainer"].get("ensemble_size", 0)
             if ensemble_size > 1:
-                to_print += f" std: {np.mean(results_dict['train_std'])}"
+                to_print += f" std: {np.mean(results_dict['train_std']):.6f}"
             to_print += " lr: {:.12f}".format(optimizer.param_groups[0]["lr"])
             if self.rank == 0:
                 batch_group_generator.update(1)
