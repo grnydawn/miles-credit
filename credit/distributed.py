@@ -232,8 +232,7 @@ def distributed_model_wrapper(conf, neural_network, device):
         )
 
     elif conf["trainer"]["mode"] == "ddp":
-        model = DDP(neural_network, device_ids=[device]) 
-        # model = DDP(neural_network, device_ids=[device], find_unused_parameters=True) # Use this if you have a model with layers/modules/parameters unused in the forward method
+        model = DDP(neural_network, device_ids=[device], find_unused_parameters=True) 
 
     else:
         model = neural_network
