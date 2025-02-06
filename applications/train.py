@@ -580,7 +580,7 @@ def main(rank, world_size, conf, backend, trial=False):
 
     # Initialize a trainer object
     trainer_cls = load_trainer(conf)
-    trainer = trainer_cls(model, rank, module=(conf["trainer"]["mode"] == "ddp"))
+    trainer = trainer_cls(model, rank)
 
     # Fit the model
 
