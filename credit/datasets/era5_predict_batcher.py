@@ -31,26 +31,18 @@ os.environ["MKL_NUM_THREADS"] = "1"
 
 
 class BatchForecastLenDataLoader:
-    """
-    A custom DataLoader that supports datasets with a non-trivial forecast length.
-
-    This DataLoader is designed to iterate over datasets that provide a
-     `forecast_len` attribute, optionally incorporating batch-specific
-     properties like `batches_per_epoch()` if available.
-
-    Attributes:
-        dataset: The dataset object, which must have a `forecast_len` attribute
-                  and may optionally have a `batches_per_epoch()` method.
-        forecast_len: The forecast length incremented by 1.
-    """
-
     def __init__(self, dataset):
         """
-        Initializes the BatchForecastLenDataLoader.
+        A custom DataLoader that supports datasets with a non-trivial forecast length.
 
-        Args:
-            dataset: A dataset object with a `forecast_len` attribute and
-                      optionally a `batches_per_epoch()` method.
+        This DataLoader is designed to iterate over datasets that provide a
+         `forecast_len` attribute, optionally incorporating batch-specific
+         properties like `batches_per_epoch()` if available.
+
+        Attributes:
+            dataset: The dataset object, which must have a `forecast_len` attribute
+                      and may optionally have a `batches_per_epoch()` method.
+            forecast_len: The forecast length incremented by 1.
         """
         self.dataset = dataset
         self.forecast_len = dataset.forecast_period
@@ -81,20 +73,12 @@ class BatchForecastLenDataLoader:
         Returns:
             int: The total number of samples or iterations.
         """
-        return self.forecast_len * math.ceil(len(self.dataset) / self.dataset.batch_size)
+        return self.forecast_len * math.ceil(
+            len(self.dataset) / self.dataset.batch_size
+        )
 
 
 class Predict_Dataset_Batcher(torch.utils.data.Dataset):
-    """
-    A Pytorch Dataset class that works on:
-        - upper-air variables (time, level, lat, lon)
-        - surface variables (time, lat, lon)
-        - dynamic forcing variables (time, lat, lon)
-        - foring variables (time, lat, lon)
-        - diagnostic variables (time, lat, lon)
-        - static variables (lat, lon)
-    """
-
     def __init__(
         self,
         varname_upper_air,
@@ -119,9 +103,17 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
         world_size=1,
         skip_periods=None,
         batch_size=1,
-        skip_target=False
+        skip_target=False,
     ):
         """
+        A Pytorch Dataset class that works on:
+            - upper-air variables (time, level, lat, lon)
+            - surface variables (time, lat, lon)
+            - dynamic forcing variables (time, lat, lon)
+            - foring variables (time, lat, lon)
+            - diagnostic variables (time, lat, lon)
+            - static variables (lat, lon)
+
         Initialize the ERA5_and_Forcing_Dataset
 
         Parameters:
@@ -329,11 +321,13 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
             self.init_datetime[0][1], "%Y-%m-%d %H:%M:%S"
         ) - timedelta(hours=shifted_hours)
         # convert the 1st & last init times to a list of init times
-        self.forecast_period = len(generate_datetime(
-            fcst_datetime_0,
-            fcst_datetime_1,
-            self.lead_time_periods,
-        ))
+        self.forecast_period = len(
+            generate_datetime(
+                fcst_datetime_0,
+                fcst_datetime_1,
+                self.lead_time_periods,
+            )
+        )
         if self.forecast_period < self.batch_size:
             self.batch_size = self.forecast_period
 
@@ -344,7 +338,7 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
             rank=rank,
             shuffle=False,
             seed=seed,
-            drop_last=False
+            drop_last=False,
         )
 
         # Initialze the batch indices by faking the epoch number here and resetting to None
@@ -486,13 +480,15 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
         info = []
         for init_time in self.init_time_list_np:
             for i_file, ds in enumerate(self.all_files):
-                # get the year of the current file 
+                # get the year of the current file
                 # looks messy because extra code needed to handle cftime
-                ds_year = int((
-                    np.datetime_as_string(ds["time"][0]
-                                          .astype('datetime64[ns]')
-                                          .values, 
-                                          unit="Y")))
+                ds_year = int(
+                    (
+                        np.datetime_as_string(
+                            ds["time"][0].astype("datetime64[ns]").values, unit="Y"
+                        )
+                    )
+                )
 
                 # get the first and last years of init times
                 init_year0 = nanoseconds_to_year(init_time)
@@ -502,7 +498,7 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
                     N_times = len(ds["time"])
                     # convert ds['time'] to a list of nanosecondes
                     ds_time_list = [
-                        ds_time.astype('datetime64[ns]').values.astype(datetime)
+                        ds_time.astype("datetime64[ns]").values.astype(datetime)
                         for ds_time in ds["time"]
                     ]
                     ds_start_time = ds_time_list[0]
@@ -543,7 +539,9 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
 
         # Set epoch for DistributedSampler to ensure consistent shuffling across devices
         if self.current_epoch is None:
-            logging.warning("You must first set the epoch number using set_epoch method.")
+            logging.warning(
+                "You must first set the epoch number using set_epoch method."
+            )
 
         # Retrieve indices for this GPU
         total_indices = len(self.batch_indices)
@@ -564,7 +562,9 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
             self.batch_call_count = 0  # Reset for next cycle
 
         # Assign batch indices
-        self.current_batch_indices = list(indices)  # this will be the local indices used in getitem
+        self.current_batch_indices = list(
+            indices
+        )  # this will be the local indices used in getitem
         self.time_steps = [0] * len(self.current_batch_indices)
         self.forecast_step_counts = [0] * len(self.current_batch_indices)
 
@@ -583,7 +583,9 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
             self.initialize_batch()
 
         if self.forecast_step_counts[0] == 0:
-            self.data_lookup = [self.find_start_stop_indices(idx) for idx in self.current_batch_indices]
+            self.data_lookup = [
+                self.find_start_stop_indices(idx) for idx in self.current_batch_indices
+            ]
 
         for k, idx in enumerate(self.current_batch_indices):
             # Get data for current timestep
@@ -591,24 +593,39 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
             i_file, i_init_start, i_init_end, N_times = self.data_lookup[k][current_t]
 
             # Load input data
-            sliced_x = self.load_zarr_as_input(i_file, i_init_start, i_init_end, mode="input")
+            sliced_x = self.load_zarr_as_input(
+                i_file, i_init_start, i_init_end, mode="input"
+            )
 
             # Handle cross-file data if needed
-            if (len(sliced_x["time"]) < self.history_len) or (i_init_end + 1 >= N_times):
+            if (len(sliced_x["time"]) < self.history_len) or (
+                i_init_end + 1 >= N_times
+            ):
                 next_file_idx = self.filenames.index(self.filenames[i_file]) + 1
                 if next_file_idx >= len(self.filenames):
                     raise OSError("End of available data reached.")
                 # Input data
-                sliced_x_next = self.load_zarr_as_input(next_file_idx, 0, self.history_len, mode="input")
-                sliced_x = xr.concat([sliced_x, sliced_x_next], dim="time").isel(time=slice(0, self.history_len))
+                sliced_x_next = self.load_zarr_as_input(
+                    next_file_idx, 0, self.history_len, mode="input"
+                )
+                sliced_x = xr.concat([sliced_x, sliced_x_next], dim="time").isel(
+                    time=slice(0, self.history_len)
+                )
                 # Truth data
                 if not self.skip_target:
-                    sliced_y = self.load_zarr_as_input(i_file, i_init_end, i_init_end, mode="target")
-                    sliced_y_next = self.load_zarr_as_input(next_file_idx, 0, 1, mode="target")
+                    sliced_y = self.load_zarr_as_input(
+                        i_file, i_init_end, i_init_end, mode="target"
+                    )
+                    sliced_y_next = self.load_zarr_as_input(
+                        next_file_idx, 0, 1, mode="target"
+                    )
                     sliced_y = xr.concat([sliced_y, sliced_y_next], dim="time").isel(
-                        time=slice(self.history_len, self.history_len + 1))
+                        time=slice(self.history_len, self.history_len + 1)
+                    )
             elif not self.skip_target:
-                sliced_y = self.load_zarr_as_input(i_file, i_init_end + 1, i_init_end + 1, mode="target")
+                sliced_y = self.load_zarr_as_input(
+                    i_file, i_init_end + 1, i_init_end + 1, mode="target"
+                )
 
             # Transform data
             sample = {"historical_ERA5_images": sliced_x}
@@ -619,7 +636,9 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
 
             # Add metadata
             sample["index"] = idx + current_t
-            sample["datetime"] = sliced_x.time.values.astype("datetime64[s]").astype(int)[-1]
+            sample["datetime"] = sliced_x.time.values.astype("datetime64[s]").astype(
+                int
+            )[-1]
 
             # Convert and add to batch
             for key, value in sample.items():

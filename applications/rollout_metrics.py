@@ -38,8 +38,9 @@ from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
 from credit.metrics import LatWeightedMetrics
 from credit.forecast import load_forecasts
 from credit.distributed import distributed_model_wrapper, setup, get_rank_info
-from credit.models.checkpoint import load_model_state
+from credit.models.checkpoint import load_model_state, load_state_dict_error_handler
 from credit.parser import credit_main_parser, predict_data_check
+from credit.postblock import GlobalMassFixer, GlobalWaterFixer, GlobalEnergyFixer
 
 logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")
@@ -57,6 +58,8 @@ def predict(rank, world_size, conf, p):
     if torch.cuda.is_available():
         device = torch.device(f"cuda:{rank % torch.cuda.device_count()}")
         torch.cuda.set_device(rank % torch.cuda.device_count())
+    elif torch.mps.is_available():
+        device = torch.device("mps")
     else:
         device = torch.device("cpu")
 
@@ -201,8 +204,8 @@ def predict(rank, world_size, conf, p):
     distributed = conf["predict"]["mode"] in ["ddp", "fsdp"]
     # ================================================================================ #
     if conf["predict"]["mode"] == "none":
-        model = load_model(conf, load_weights=True).to(device) 
-        
+        model = load_model(conf, load_weights=True).to(device)
+
     elif conf["predict"]["mode"] == "ddp":
         model = load_model(conf).to(device)
         # if conf["trainer"].get("compile", False):
@@ -210,9 +213,11 @@ def predict(rank, world_size, conf, p):
         model = distributed_model_wrapper(conf, model, device)
         ckpt = os.path.join(save_loc, "checkpoint.pt")
         checkpoint = torch.load(ckpt, map_location=device)
-        load_msg = model.module.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        load_msg = model.module.load_state_dict(
+            checkpoint["model_state_dict"], strict=False
+        )
         load_state_dict_error_handler(load_msg)
-        
+
     elif conf["predict"]["mode"] == "fsdp":
         model = load_model(conf, load_weights=True).to(device)
         model = distributed_model_wrapper(conf, model, device)
@@ -292,11 +297,9 @@ def predict(rank, world_size, conf, p):
 
             # adding diagnostic vars to y
             if "y_diag" in batch:
-                y_diag_batch = (
-                    batch["y_diag"].to(device).permute(0, 2, 1, 3, 4)
-                )
+                y_diag_batch = batch["y_diag"].to(device).permute(0, 2, 1, 3, 4)
                 y = torch.cat((y, y_diag_batch), dim=1).to(device).float()
-            
+
             # -------------------------------------------------------------------------------------- #
             # start prediction
 

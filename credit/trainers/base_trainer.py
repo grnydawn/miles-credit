@@ -35,16 +35,14 @@ logger = logging.getLogger(__name__)
 
 
 class BaseTrainer(ABC):
-    """
-    Abstract base class for training and validating machine learning models.
-
-    This class provides a framework for training, validating, and saving model checkpoints.
-    It supports both single-GPU and distributed training. Subclasses must implement
-    the `train_one_epoch` and `validate` methods.
-    """
-
     def __init__(self, model: torch.nn.Module, rank: int):
         """
+        Abstract base class for training and validating machine learning models.
+
+        This class provides a framework for training, validating, and saving model checkpoints.
+        It supports both single-GPU and distributed training. Subclasses must implement
+        the `train_one_epoch` and `validate` methods.
+
         Attributes:
             model (torch.nn.Module): The model to be trained.
             rank (int): The rank of the process in distributed training.
@@ -298,7 +296,9 @@ class BaseTrainer(ABC):
             if not conf["trainer"]["skip_validation"]:
                 with torch.no_grad():
                     # set the epoch in the dataset and sampler to ensure distributed randomness is handled correctly
-                    if hasattr(valid_loader, "sampler") and hasattr(valid_loader.sampler, "set_epoch"):
+                    if hasattr(valid_loader, "sampler") and hasattr(
+                        valid_loader.sampler, "set_epoch"
+                    ):
                         valid_loader.sampler.set_epoch(epoch)
 
                     if hasattr(valid_loader.dataset, "set_epoch"):
@@ -429,7 +429,7 @@ class BaseTrainer(ABC):
                         )
                         if conf["trainer"]["mode"] == "ddp":
                             model_state_dict = self.model.module.state_dict()
-                        else : 
+                        else:
                             model_state_dict = self.model.state_dict()
                         state_dict = {
                             "epoch": epoch,
