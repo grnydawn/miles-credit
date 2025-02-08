@@ -21,33 +21,32 @@ logger = logging.getLogger(__name__)
 
 
 class Trainer(BaseTrainer):
-    """
-    Trainer class for handling the training, validation, and checkpointing of models.
-
-    This class is responsible for executing the training loop, validating the model
-    on a separate dataset, and managing checkpoints during training. It supports
-    both single-GPU and distributed (FSDP, DDP) training.
-
-    Attributes:
-        model (torch.nn.Module): The model to be trained.
-        rank (int): The rank of the process in distributed training.
-        module (bool): If True, use model with module parallelism (default: False).
-
-    Methods:
-        train_one_epoch(epoch, conf, trainloader, optimizer, criterion, scaler,
-                        scheduler, metrics):
-            Perform training for one epoch and return training metrics.
-
-        validate(epoch, conf, valid_loader, criterion, metrics):
-            Validate the model on the validation dataset and return validation metrics.
-
-        fit_deprecated(conf, train_loader, valid_loader, optimizer, train_criterion,
-                       valid_criterion, scaler, scheduler, metrics, trial=False):
-            Perform the full training loop across multiple epochs, including validation
-            and checkpointing.
-    """
-
     def __init__(self, model: torch.nn.Module, rank: int):
+        """
+        Trainer class for handling the training, validation, and checkpointing of models.
+
+        This class is responsible for executing the training loop, validating the model
+        on a separate dataset, and managing checkpoints during training. It supports
+        both single-GPU and distributed (FSDP, DDP) training.
+
+        Attributes:
+            model (torch.nn.Module): The model to be trained.
+            rank (int): The rank of the process in distributed training.
+
+
+        Methods:
+            train_one_epoch(epoch, conf, trainloader, optimizer, criterion, scaler,
+                            scheduler, metrics):
+                Perform training for one epoch and return training metrics.
+
+            validate(epoch, conf, valid_loader, criterion, metrics):
+                Validate the model on the validation dataset and return validation metrics.
+
+            fit_deprecated(conf, train_loader, valid_loader, optimizer, train_criterion,
+                           valid_criterion, scaler, scheduler, metrics, trial=False):
+                Perform the full training loop across multiple epochs, including validation
+                and checkpointing.
+        """
         super().__init__(model, rank)
         # Add any additional initialization if needed
         logger.info("Loading a multi-step trainer class")

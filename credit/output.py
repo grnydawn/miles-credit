@@ -76,19 +76,19 @@ def make_xarray(pred, forecast_datetime, lat, lon, conf):
     """
     Create two xarray.DataArray objects for upper air and surface variables.
 
-    Args
+    Args:
         pred (torch.Tensor or np.ndarray): Prediction tensor containing both upper air and surface variables.
-    forecast_datetime (datetime): The forecast initialization datetime.
-    lat (np.ndarray or list): Latitude values.
-    lon (np.ndarray or list): Longitude values.
-    conf (dict): Configuration dictionary containing details about the data structure
-        and variables.
+        forecast_datetime (datetime): The forecast initialization datetime.
+        lat (np.ndarray or list): Latitude values.
+        lon (np.ndarray or list): Longitude values.
+        conf (dict): Configuration dictionary containing details about the data structure
+            and variables.
 
     Returns:
         darray_upper_air (xarray.DataArray): DataArray containing upper air variables with dimensions
             [time, vars, level, latitude, longitude].
-    darray_single_level (xarray.DataArray): DataArray containing surface variables with dimensions
-        [time, vars, latitude, longitude].
+        darray_single_level (xarray.DataArray): DataArray containing surface variables with dimensions
+            [time, vars, latitude, longitude].
     """
 
     # subset upper air and surface variables
@@ -157,6 +157,7 @@ def save_netcdf_increment(
         forecast_hour (int):  how many hours since the initialization of the model.
         meta_data (dict): metadata dictionary for output variables
         conf (dict): configuration dictionary for training and/or rollout
+
     """
     try:
         """

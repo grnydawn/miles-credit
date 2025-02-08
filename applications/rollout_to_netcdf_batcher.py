@@ -25,7 +25,7 @@ from credit.distributed import get_rank_info
 from credit.datasets import setup_data_loading
 from credit.datasets.era5_predict_batcher import (
     BatchForecastLenDataLoader,
-    Predict_Dataset_Batcher
+    Predict_Dataset_Batcher,
 )
 
 from credit.data import (
@@ -62,6 +62,8 @@ def predict(rank, world_size, conf, p):
     if torch.cuda.is_available():
         device = torch.device(f"cuda:{rank % torch.cuda.device_count()}")
         torch.cuda.set_device(rank % torch.cuda.device_count())
+    elif torch.mps.is_available():
+        device = torch.device("mps")
     else:
         device = torch.device("cpu")
 
@@ -133,32 +135,33 @@ def predict(rank, world_size, conf, p):
     # Load the forecasts we wish to compute
     forecasts = load_forecasts(conf)
     if len(forecasts) < batch_size:
-        logger.warning(f"number of forecast init times {len(forecasts)} is less than batch_size {batch_size}, will result in under-utilization")
-
+        logger.warning(
+            f"number of forecast init times {len(forecasts)} is less than batch_size {batch_size}, will result in under-utilization"
+        )
 
     dataset = Predict_Dataset_Batcher(
-        varname_upper_air=data_config['varname_upper_air'],
-        varname_surface=data_config['varname_surface'],
-        varname_dyn_forcing=data_config['varname_dyn_forcing'],
-        varname_forcing=data_config['varname_forcing'],
-        varname_static=data_config['varname_static'],
-        varname_diagnostic=data_config['varname_diagnostic'],
-        filenames=data_config['all_ERA_files'],
-        filename_surface=data_config['surface_files'],
-        filename_dyn_forcing=data_config['dyn_forcing_files'],
-        filename_forcing=data_config['forcing_files'],
-        filename_static=data_config['static_files'],
-        filename_diagnostic=data_config['diagnostic_files'],
+        varname_upper_air=data_config["varname_upper_air"],
+        varname_surface=data_config["varname_surface"],
+        varname_dyn_forcing=data_config["varname_dyn_forcing"],
+        varname_forcing=data_config["varname_forcing"],
+        varname_static=data_config["varname_static"],
+        varname_diagnostic=data_config["varname_diagnostic"],
+        filenames=data_config["all_ERA_files"],
+        filename_surface=data_config["surface_files"],
+        filename_dyn_forcing=data_config["dyn_forcing_files"],
+        filename_forcing=data_config["forcing_files"],
+        filename_static=data_config["static_files"],
+        filename_diagnostic=data_config["diagnostic_files"],
         fcst_datetime=forecasts,
         lead_time_periods=lead_time_periods,
-        history_len=data_config['history_len'],
-        skip_periods=data_config['skip_periods'],
+        history_len=data_config["history_len"],
+        skip_periods=data_config["skip_periods"],
         transform=load_transforms(conf),
-        sst_forcing=data_config['sst_forcing'],
+        sst_forcing=data_config["sst_forcing"],
         batch_size=batch_size,
         rank=rank,
         world_size=world_size,
-        skip_target=True
+        skip_target=True,
     )
 
     # Use a custom DataLoader so we get the len correct
@@ -175,7 +178,9 @@ def predict(rank, world_size, conf, p):
         model = distributed_model_wrapper(conf, model, device)
         ckpt = os.path.join(save_loc, "checkpoint.pt")
         checkpoint = torch.load(ckpt, map_location=device)
-        load_msg = model.module.load_state_dict(checkpoint["model_state_dict"], strict=False)
+        load_msg = model.module.load_state_dict(
+            checkpoint["model_state_dict"], strict=False
+        )
         load_state_dict_error_handler(load_msg)
     elif conf["predict"]["mode"] == "fsdp":
         model = load_model(conf, load_weights=True).to(device)
@@ -219,27 +224,38 @@ def predict(rank, world_size, conf, p):
             # Initial input processing
             if forecast_step == 1:
                 # Process the entire batch at once
-                init_datetimes = [datetime.utcfromtimestamp(batch["datetime"][i].item()).strftime("%Y-%m-%dT%HZ") for i in range(batch_size)]
-                save_datetimes[forecast_count:forecast_count + batch_size] = init_datetimes
+                init_datetimes = [
+                    datetime.utcfromtimestamp(batch["datetime"][i].item()).strftime(
+                        "%Y-%m-%dT%HZ"
+                    )
+                    for i in range(batch_size)
+                ]
+                save_datetimes[forecast_count : forecast_count + batch_size] = (
+                    init_datetimes
+                )
 
                 if "x_surf" in batch:
-                    x = concat_and_reshape(
-                        batch["x"],
-                        batch["x_surf"]
-                    ).to(device).float()
+                    x = (
+                        concat_and_reshape(batch["x"], batch["x_surf"])
+                        .to(device)
+                        .float()
+                    )
                 else:
                     x = reshape_only(batch["x"]).to(device).float()
-                
+
                 # create ensemble:
                 if ensemble_size > 1:
                     x = torch.repeat_interleave(x, ensemble_size, 0)
-                
 
             # Add forcing and static variables for the entire batch
             if "x_forcing_static" in batch:
-                x_forcing_batch = batch["x_forcing_static"].to(device).permute(0, 2, 1, 3, 4).float()
-                if ensemble_size > 1: 
-                    x_forcing_batch = torch.repeat_interleave(x_forcing_batch, ensemble_size, 0)
+                x_forcing_batch = (
+                    batch["x_forcing_static"].to(device).permute(0, 2, 1, 3, 4).float()
+                )
+                if ensemble_size > 1:
+                    x_forcing_batch = torch.repeat_interleave(
+                        x_forcing_batch, ensemble_size, 0
+                    )
                 x = torch.cat((x, x_forcing_batch), dim=1)
 
             # Clamp if needed
@@ -269,20 +285,31 @@ def predict(rank, world_size, conf, p):
 
             # Transform predictions
             y_pred = state_transformer.inverse_transform(y_pred.cpu())
-            
-            if "use_laplace_filter" in conf["predict"] and conf["predict"]["use_laplace_filter"]:
-                y_pred = dpf.diff_lap2d_filt(y_pred.to(device).squeeze()).unsqueeze(0).unsqueeze(2).cpu()
+
+            if (
+                "use_laplace_filter" in conf["predict"]
+                and conf["predict"]["use_laplace_filter"]
+            ):
+                y_pred = (
+                    dpf.diff_lap2d_filt(y_pred.to(device).squeeze())
+                    .unsqueeze(0)
+                    .unsqueeze(2)
+                    .cpu()
+                )
 
             # Calculate correct datetime for current forecast
             utc_datetimes = [
-                datetime.utcfromtimestamp(batch["datetime"][i].item()) + timedelta(hours=lead_time_periods)
+                datetime.utcfromtimestamp(batch["datetime"][i].item())
+                + timedelta(hours=lead_time_periods)
                 for i in range(batch_size)
             ]
 
             # Convert to xarray and handle results
             for j in range(batch_size):
-                upper_air_list, single_level_list = [], [] 
-                for i in range(ensemble_size): # ensemble_size default is 1, will run with i=0 retaining behavior of non-ensemble loop
+                upper_air_list, single_level_list = [], []
+                for i in range(
+                    ensemble_size
+                ):  # ensemble_size default is 1, will run with i=0 retaining behavior of non-ensemble loop
                     darray_upper_air, darray_single_level = make_xarray(
                         y_pred[j + i : j + i + 1],  # Process each ensemble member
                         utc_datetimes[j],
@@ -292,11 +319,17 @@ def predict(rank, world_size, conf, p):
                     )
                     upper_air_list.append(darray_upper_air)
                     single_level_list.append(darray_single_level)
-                
+
                 if ensemble_size > 1:
-                    ensemble_index = xr.DataArray(np.arange(ensemble_size), dims="ensemble_member_label")
-                    all_upper_air = xr.concat(upper_air_list, ensemble_index)#.transpose("time", ...)
-                    all_single_level = xr.concat(single_level_list, ensemble_index)#.transpose("time", ...)
+                    ensemble_index = xr.DataArray(
+                        np.arange(ensemble_size), dims="ensemble_member_label"
+                    )
+                    all_upper_air = xr.concat(
+                        upper_air_list, ensemble_index
+                    )  # .transpose("time", ...)
+                    all_single_level = xr.concat(
+                        single_level_list, ensemble_index
+                    )  # .transpose("time", ...)
                 else:
                     all_upper_air = darray_upper_air
                     all_single_level = darray_single_level
@@ -307,7 +340,9 @@ def predict(rank, world_size, conf, p):
                     (
                         all_upper_air,
                         all_single_level,
-                        save_datetimes[forecast_count + j],  # Use correct index for current batch item
+                        save_datetimes[
+                            forecast_count + j
+                        ],  # Use correct index for current batch item
                         lead_time_periods * forecast_step,
                         meta_data,
                         conf,
@@ -325,7 +360,7 @@ def predict(rank, world_size, conf, p):
 
             # y_diag is not drawn in predict batcher, if diag is specified in config, it will not be in the input to the model
             if history_len == 1:
-                    x = y_pred[:, :-varnum_diag, ...].detach()
+                x = y_pred[:, :-varnum_diag, ...].detach()
             else:
                 if static_dim_size == 0:
                     x_detach = x[:, :, 1:, ...].detach()
