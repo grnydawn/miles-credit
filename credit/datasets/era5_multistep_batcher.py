@@ -10,6 +10,7 @@ from queue import Queue
 from threading import Thread
 
 import numpy as np
+import xarray as xr 
 import torch
 from torch.utils.data import DistributedSampler
 
