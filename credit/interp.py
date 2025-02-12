@@ -229,6 +229,7 @@ def interp_geopotential_to_pressure_levels(
     surface_pressure,
     surface_geopotential,
     temperature_lowest_level_k,
+    temp_level_index=-6,
 ):
     """
     Interpolate geopotential field from hybrid sigma-pressure vertical coordinates to pressure levels.
@@ -242,7 +243,8 @@ def interp_geopotential_to_pressure_levels(
         surface_pressure (np.ndarray): pressure at the surface in units Pa or hPa.
         surface_geopotential (np.ndarray): geopotential at the surface in units m^2/s^2.
         temperature_lowest_level_k (np.ndarray): lowest model level temperature in Kelvin.
-
+        temp_level_index (int): index of vertical level where temperature is extracted for extrapolation to
+            surface.
     Returns:
         pressure_var (np.ndarray): 3D field on pressure levels with shape (len(interp_pressures), y, x).
     """
@@ -262,13 +264,13 @@ def interp_geopotential_to_pressure_levels(
                 temp_surface_k = temperature_lowest_level_k[
                     i, j
                 ] + ALPHA * temperature_lowest_level_k[i, j] * (
-                    surface_pressure[i, j] / model_pressure[-1, i, j] - 1
+                    surface_pressure[i, j] / model_pressure[temp_level_index, i, j] - 1
                 )
                 ln_p_ps = np.log(interp_pressure / surface_pressure[i, j])
                 pressure_var[pl, i, j] = surface_geopotential[
                     i, j
                 ] - RDGAS * temp_surface_k * ln_p_ps * (
-                    1 + 0.5 * ALPHA * ln_p_ps + 1 / 6.0 * (ALPHA * ln_p_ps) ** 2
+                    1 + ALPHA * ln_p_ps / 2.0 + (ALPHA * ln_p_ps) ** 2 / 6.0
                 )
     return pressure_var
 
@@ -280,7 +282,7 @@ def interp_temperature_to_pressure_levels(
     interp_pressures,
     surface_pressure,
     surface_geopotential,
-    temperature_lowest_level_k,
+    temp_level_index=-6,
 ):
     """
     Interpolate temperature field from hybrid sigma-pressure vertical coordinates to pressure levels.
@@ -293,7 +295,8 @@ def interp_temperature_to_pressure_levels(
         interp_pressures: (np.ndarray): pressure levels for interpolation in units Pa or.
         surface_pressure (np.ndarray): pressure at the surface in units Pa or hPa.
         surface_geopotential (np.ndarray): geopotential at the surface in units m^2/s^2.
-        temperature_lowest_level_k (np.ndarray): lowest model level temperature in Kelvin.
+        temp_level_index (int): index of vertical level where temperature is extracted for extrapolation to
+            surface.
 
     Returns:
         pressure_var (np.ndarray): 3D field on pressure levels with shape (len(interp_pressures), y, x).
@@ -311,31 +314,38 @@ def interp_temperature_to_pressure_levels(
         )
         for pl, interp_pressure in enumerate(interp_pressures):
             if interp_pressure > surface_pressure[i, j]:
-                temp_surface_k = temperature_lowest_level_k[
-                    i, j
-                ] + ALPHA * temperature_lowest_level_k[i, j] * (
-                    surface_pressure[i, j] / model_pressure[-1, i, j] - 1
+                model_level_temp = model_var[temp_level_index, i, j]
+                temp_surface_k = model_level_temp + ALPHA * model_level_temp * (
+                    surface_pressure[i, j] / model_pressure[temp_level_index, i, j] - 1
                 )
                 surface_height = surface_geopotential[i, j] / GRAVITY
                 temp_sea_level_k = temp_surface_k + LAPSE_RATE * surface_height
-                temp_pl = np.minimum(temp_surface_k, 298.0)
+                temp_pl = np.minimum(temp_sea_level_k, 298.0)
                 if surface_height > 2500.0:
-                    a_adjusted = (
-                        RDGAS * (temp_pl - temp_surface_k) / surface_geopotential[i, j]
+                    gamma = (
+                        GRAVITY
+                        / surface_geopotential[i, j]
+                        * np.maximum(temp_pl - temp_surface_k, 0)
                     )
+
                 elif 2000.0 <= surface_height <= 2500.0:
                     t_adjusted = 0.002 * (
                         (2500 - surface_height) * temp_sea_level_k
                         + (surface_height - 2000.0) * temp_pl
                     )
-                    a_adjusted = (
-                        RDGAS
-                        * (t_adjusted - temp_surface_k)
+                    gamma = (
+                        GRAVITY
                         / surface_geopotential[i, j]
+                        * (t_adjusted - temp_surface_k)
                     )
                 else:
-                    a_adjusted = ALPHA
-                a_ln_p = a_adjusted * np.log(interp_pressure / surface_pressure[i, j])
+                    gamma = LAPSE_RATE
+                a_ln_p = (
+                    gamma
+                    * RDGAS
+                    / GRAVITY
+                    * np.log(interp_pressure / surface_pressure[i, j])
+                )
                 pressure_var[pl, i, j] = temp_surface_k * (
                     1 + a_ln_p + 0.5 * a_ln_p**2 + 1 / 6.0 * a_ln_p**3
                 )
@@ -435,23 +445,25 @@ def mean_sea_level_pressure(
             )
 
             if (temp_surface_k <= 290.5) and (temp_sealevel_k > 290.5):
-                alpha_adjusted = (
-                    RDGAS / surface_geopotential[i, j] * (290.5 - temp_surface_k)
-                )
+                gamma = GRAVITY / surface_geopotential[i, j] * (290.5 - temp_surface_k)
             elif (temp_surface_k > 290.5) and (temp_sealevel_k > 290.5):
-                alpha_adjusted = 0.0
+                gamma = 0.0
                 temp_surface_k = 0.5 * (290.5 + temp_surface_k)
             else:
-                alpha_adjusted = ALPHA
+                gamma = LAPSE_RATE
                 if temp_surface_k < 255:
                     temp_surface_k = 0.5 * (255.0 + temp_surface_k)
             beta = surface_geopotential[i, j] / (RDGAS * temp_surface_k)
+            x = gamma * surface_geopotential[i, j] / (GRAVITY * temp_surface_k)
+            # mslp[i, j] = surface_pressure_pa[i, j] * np.exp(
+            #    beta
+            #    * (
+            #        1
+            #        - alpha_adjusted * beta / 2.0
+            #        + ((alpha_adjusted * beta) ** 2) / 3.0
+            #    )
+            # )
             mslp[i, j] = surface_pressure_pa[i, j] * np.exp(
-                beta
-                * (
-                    1
-                    - alpha_adjusted * beta / 2.0
-                    + ((alpha_adjusted * beta) ** 2) / 3.0
-                )
+                beta * (1.0 - x / 2.0 + x**2 / 3.0)
             )
     return mslp
