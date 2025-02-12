@@ -1,46 +1,44 @@
 # ---------- #
 # System
-import os
 import gc
-import sys
-import yaml
 import logging
-import warnings
 import multiprocessing as mp
-from pathlib import Path
+import os
+import sys
+import warnings
 from argparse import ArgumentParser
 from collections import defaultdict
 
 # ---------- #
 # Numerics
 from datetime import datetime, timedelta
-import pandas as pd
-import xarray as xr
+from pathlib import Path
+
 import numpy as np
+import pandas as pd
 
 # ---------- #
 import torch
-
+import xarray as xr
+import yaml
 # ---------- #
 # credit
-from credit.models import load_model
-from credit.seed import seed_everything
 from credit.data import concat_and_reshape, reshape_only
 from credit.datasets import setup_data_loading
-from credit.transforms import load_transforms, Normalize_ERA5_and_Forcing
+from credit.datasets.era5_multistep_batcher import Predict_Dataset_Batcher
+from credit.datasets.load_dataset_and_dataloader import BatchForecastLenDataLoader
+from credit.distributed import distributed_model_wrapper, get_rank_info, setup
+from credit.forecast import load_forecasts
+from credit.metrics import LatWeightedMetrics, LatWeightedMetricsClimatology
+
+from credit.models import load_model
+from credit.models.checkpoint import load_model_state, load_state_dict_error_handler
+from credit.parser import credit_main_parser, predict_data_check
 from credit.pbs import launch_script, launch_script_mpi
 from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
-from credit.metrics import LatWeightedMetrics, LatWeightedMetricsClimatology
-from credit.forecast import load_forecasts
-from credit.distributed import distributed_model_wrapper, setup, get_rank_info
-from credit.models.checkpoint import load_model_state, load_state_dict_error_handler
-from credit.postblock import GlobalMassFixer, GlobalWaterFixer, GlobalEnergyFixer
-from credit.parser import credit_main_parser, predict_data_check
-from credit.datasets.era5_predict_batcher import (
-    BatchForecastLenDataLoader,
-    Predict_Dataset_Batcher,
-)
-
+from credit.postblock import GlobalEnergyFixer, GlobalMassFixer, GlobalWaterFixer
+from credit.seed import seed_everything
+from credit.transforms import Normalize_ERA5_and_Forcing, load_transforms
 
 logger = logging.getLogger(__name__)
 warnings.filterwarnings("ignore")
@@ -146,6 +144,10 @@ def predict(rank, world_size, conf, backend=None, p=None):
 
     # Load the forecasts we wish to compute
     forecasts = load_forecasts(conf)
+    if len(forecasts) % world_size != 0:
+        raise ValueError(
+            f'Number of forecast inits ({len(forecasts)}) given by conf["predict"]["duration"] x len(conf["predict"]["start_hours"]) should be divisible by number of processes/GPUs ({world_size})'
+        )
 
     dataset = Predict_Dataset_Batcher(
         varname_upper_air=data_config["varname_upper_air"],
@@ -229,8 +231,6 @@ def predict(rank, world_size, conf, backend=None, p=None):
 
         # y_pred allocation and results tracking
         results = []
-        save_datetimes = [0] * batch_size
-
         # model inference loop
         for k, batch in enumerate(data_loader):
             batch_size = batch["datetime"].shape[0]
@@ -248,9 +248,6 @@ def predict(rank, world_size, conf, backend=None, p=None):
                     )
                     for i in range(batch_size)
                 ]
-                save_datetimes[forecast_count : forecast_count + batch_size] = (
-                    init_datetimes
-                )
                 if "x_surf" in batch:
                     x = (
                         concat_and_reshape(batch["x"], batch["x_surf"])
@@ -353,7 +350,7 @@ def predict(rank, world_size, conf, backend=None, p=None):
                 results.append((j, result))  # Store the batch index with the result
 
                 # Print to screen
-                print_str = f"Forecast: {forecast_count + 1 + j} "
+                print_str = f"{rank=:} Forecast: {forecast_count + 1 + j} "
                 print_str += f"Date: {utc_datetime[j].strftime('%Y-%m-%d %H:%M:%S')} "
                 print_str += f"Hour: {forecast_step * lead_time_periods} "
                 print(print_str)
@@ -401,13 +398,10 @@ def predict(rank, world_size, conf, backend=None, p=None):
                 y_pred = None
                 gc.collect()
 
-                if distributed:
-                    torch.distributed.barrier()
-
                 forecast_count += batch_size
 
         if distributed:
-            torch.distributed.barrier()
+            torch.distributed.destroy_process_group()
 
     return 1
 
@@ -517,9 +511,9 @@ if __name__ == "__main__":
     data_config = setup_data_loading(conf)
 
     # create a save location for rollout
-    assert (
-        "save_forecast" in conf["predict"]
-    ), "Please specify the output dir through conf['predict']['save_forecast']"
+    assert "save_forecast" in conf["predict"], (
+        "Please specify the output dir through conf['predict']['save_forecast']"
+    )
 
     forecast_save_loc = conf["predict"]["save_forecast"]
     os.makedirs(forecast_save_loc, exist_ok=True)
