@@ -17,6 +17,7 @@ import numpy as np
 import torch
 import xarray as xr
 import yaml
+
 # ---------- #
 # credit
 from credit.data import (
@@ -354,16 +355,22 @@ def predict(rank, world_size, conf, p):
 
             # y_diag is not drawn in predict batcher, if diag is specified in config, it will not be in the input to the model
             if history_len == 1:
-                # x = y_pred[:, :-varnum_diag, ...].detach()
-                x = y_pred.detach()
+                if varnum_diag:
+                    x = y_pred[:, :-varnum_diag, ...].detach()
+                else:
+                    x = y_pred.detach()
             else:
                 if static_dim_size == 0:
                     x_detach = x[:, :, 1:, ...].detach()
                 else:
                     x_detach = x[:, :-static_dim_size, 1:, ...].detach()
 
-                # x = torch.cat([x_detach, y_pred[:, :-varnum_diag, ...].detach()], dim=2)
-                x = torch.cat([x_detach, y_pred.detach()], dim=2)
+                if varnum_diag:
+                    x = torch.cat(
+                        [x_detach, y_pred[:, :-varnum_diag, ...].detach()], dim=2
+                    )
+                else:
+                    x = torch.cat([x_detach, y_pred.detach()], dim=2)
 
             # Memory cleanup
             torch.cuda.empty_cache()
