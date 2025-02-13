@@ -25,6 +25,7 @@ def full_state_pressure_interpolation(
     verbose: int = 1,
     a_coord: str = "a_model",
     b_coord: str = "b_model",
+    temp_level_index: int = -2,
 ) -> xr.Dataset:
     """
     Interpolate full model state variables from model levels to pressure levels.
@@ -48,6 +49,7 @@ def full_state_pressure_interpolation(
         verbose (int): verbosity level. If verbose > 0, print progress.
         a_coord (str): Name of A weight in sigma coordinate formula. 'a_model' by default.
         b_coord (str): Name of B weight in sigma coordinate formula. 'b_model' by default.
+        temp_level_index (int): vertical index of the temperature level used for interpolation below ground.
     Returns:
         pressure_ds (xr.Dataset): Dataset containing pressure interpolated variables.
     """
@@ -57,9 +59,15 @@ def full_state_pressure_interpolation(
         model_a = mod_lev_ds[a_coord].loc[state_dataset[level_var]].values
         model_b = mod_lev_ds[b_coord].loc[state_dataset[level_var]].values
     pres_dims = (time_var, pres_var, lat_var, lon_var)
+    surface_dims = (time_var, lat_var, lon_var)
     coords = {
         time_var: state_dataset[time_var],
         pres_var: pressure_levels,
+        lat_var: state_dataset[lat_var],
+        lon_var: state_dataset[lon_var],
+    }
+    coords_surface = {
+        time_var: state_dataset[time_var],
         lat_var: state_dataset[lat_var],
         lon_var: state_dataset[lon_var],
     }
@@ -76,15 +84,16 @@ def full_state_pressure_interpolation(
         coords=coords,
     )
     pressure_ds[geopotential_var + pres_ending] = xr.DataArray(
-        coords=coords, dims=pres_dims, name=geopotential_var
+        coords=coords, dims=pres_dims, name=geopotential_var + pres_ending
+    )
+    pressure_ds["mean_sea_level_" + pres_var] = xr.DataArray(
+        coords=coords_surface, dims=surface_dims, name="mean_sea_level_" + pres_var
     )
     disable = False
     if verbose == 0:
         disable = True
     for t, time in tqdm(enumerate(state_dataset[time_var]), disable=disable):
-        pressure_grid = create_pressure_grid(
-            state_dataset[surface_pressure_var][t].values, model_a, model_b
-        )
+        pressure_grid = create_pressure_grid(state_dataset[surface_pressure_var][t].values, model_a, model_b)
         geopotential_grid = geopotential_from_model_vars(
             surface_geopotential,
             state_dataset[surface_pressure_var][t].values,
@@ -95,33 +104,33 @@ def full_state_pressure_interpolation(
         )
         for interp_field in interp_fields:
             if interp_field == temperature_var:
-                pressure_ds[interp_field + pres_ending][t] = (
-                    interp_temperature_to_pressure_levels(
-                        state_dataset[interp_field][t].values,
-                        pressure_grid / 100.0,
-                        pressure_levels,
-                        state_dataset[surface_pressure_var][t].values / 100.0,
-                        surface_geopotential,
-                        state_dataset[temperature_var][t, -1].values,
-                    )
+                pressure_ds[interp_field + pres_ending][t] = interp_temperature_to_pressure_levels(
+                    state_dataset[interp_field][t].values,
+                    pressure_grid / 100.0,
+                    pressure_levels,
+                    state_dataset[surface_pressure_var][t].values / 100.0,
+                    surface_geopotential,
                 )
             else:
-                pressure_ds[interp_field + pres_ending][t] = (
-                    interp_hybrid_to_pressure_levels(
-                        state_dataset[interp_field][t].values,
-                        pressure_grid / 100.0,
-                        pressure_levels,
-                    )
+                pressure_ds[interp_field + pres_ending][t] = interp_hybrid_to_pressure_levels(
+                    state_dataset[interp_field][t].values,
+                    pressure_grid / 100.0,
+                    pressure_levels,
                 )
-        pressure_ds[geopotential_var + pres_ending][t] = (
-            interp_geopotential_to_pressure_levels(
-                geopotential_grid,
-                pressure_grid / 100.0,
-                pressure_levels,
-                state_dataset[surface_pressure_var][t].values / 100.0,
-                surface_geopotential,
-                state_dataset[temperature_var][t, -1].values,
-            )
+        pressure_ds[geopotential_var + pres_ending][t] = interp_geopotential_to_pressure_levels(
+            geopotential_grid,
+            pressure_grid / 100.0,
+            pressure_levels,
+            state_dataset[surface_pressure_var][t].values / 100.0,
+            surface_geopotential,
+            state_dataset[temperature_var][t].values,
+            temp_level_index,
+        )
+        pressure_ds["mean_sea_level_" + pres_var][t] = mean_sea_level_pressure(
+            state_dataset[surface_pressure_var][t].values,
+            state_dataset[temperature_var][t, temp_level_index].values,
+            pressure_grid[temp_level_index],
+            surface_geopotential,
         )
     return pressure_ds
 
@@ -140,9 +149,7 @@ def create_pressure_grid(surface_pressure, model_a, model_b):
     Returns:
         pressure_3d: 3D pressure field with dimensions of surface_pressure and number of levels from model_a and model_b.
     """
-    assert (
-        model_a.size == model_b.size
-    ), "Model pressure coefficient arrays do not match."
+    assert model_a.size == model_b.size, "Model pressure coefficient arrays do not match."
     if surface_pressure.ndim == 3:
         # Generate the 3D pressure field for a time series of surface pressure grids
         pressure_3d = np.zeros(
@@ -186,16 +193,12 @@ def interp_hybrid_to_pressure_levels(model_var, model_pressure, interp_pressures
     )
     log_interp_pressures = np.log(interp_pressures)
     for (i, j), v in np.ndenumerate(model_var[0]):
-        pressure_var[:, i, j] = np.interp(
-            log_interp_pressures, np.log(model_pressure[:, i, j]), model_var[:, i, j]
-        )
+        pressure_var[:, i, j] = np.interp(log_interp_pressures, np.log(model_pressure[:, i, j]), model_var[:, i, j])
     return pressure_var
 
 
 @njit
-def interp_pressure_to_hybrid_levels(
-    pressure_var, pressure_levels, model_pressure, surface_pressure
-):
+def interp_pressure_to_hybrid_levels(pressure_var, pressure_levels, model_pressure, surface_pressure):
     """
     Interpolate data field from hybrid sigma-pressure vertical coordinates to pressure levels.
     `model_pressure` and `pressure_levels` and 'surface_pressure' should have consistent units with each other.
@@ -228,8 +231,8 @@ def interp_geopotential_to_pressure_levels(
     interp_pressures,
     surface_pressure,
     surface_geopotential,
-    temperature_lowest_level_k,
-    temp_level_index=-6,
+    temperature_k,
+    temp_level_index=-2,
 ):
     """
     Interpolate geopotential field from hybrid sigma-pressure vertical coordinates to pressure levels.
@@ -242,7 +245,7 @@ def interp_geopotential_to_pressure_levels(
         interp_pressures (np.ndarray): pressure levels for interpolation in units Pa or hPa.
         surface_pressure (np.ndarray): pressure at the surface in units Pa or hPa.
         surface_geopotential (np.ndarray): geopotential at the surface in units m^2/s^2.
-        temperature_lowest_level_k (np.ndarray): lowest model level temperature in Kelvin.
+        temperature_k (np.ndarray):  temperature state on model levels in Kelvin.
         temp_level_index (int): index of vertical level where temperature is extracted for extrapolation to
             surface.
     Returns:
@@ -255,21 +258,16 @@ def interp_geopotential_to_pressure_levels(
         dtype=model_var.dtype,
     )
     log_interp_pressures = np.log(interp_pressures)
+    temperature_lowest_level_k = temperature_k[temp_level_index]
     for (i, j), v in np.ndenumerate(model_var[0]):
-        pressure_var[:, i, j] = np.interp(
-            log_interp_pressures, np.log(model_pressure[:, i, j]), model_var[:, i, j]
-        )
+        pressure_var[:, i, j] = np.interp(log_interp_pressures, np.log(model_pressure[:, i, j]), model_var[:, i, j])
         for pl, interp_pressure in enumerate(interp_pressures):
             if interp_pressure > surface_pressure[i, j]:
-                temp_surface_k = temperature_lowest_level_k[
-                    i, j
-                ] + ALPHA * temperature_lowest_level_k[i, j] * (
+                temp_surface_k = temperature_lowest_level_k[i, j] + ALPHA * temperature_lowest_level_k[i, j] * (
                     surface_pressure[i, j] / model_pressure[temp_level_index, i, j] - 1
                 )
                 ln_p_ps = np.log(interp_pressure / surface_pressure[i, j])
-                pressure_var[pl, i, j] = surface_geopotential[
-                    i, j
-                ] - RDGAS * temp_surface_k * ln_p_ps * (
+                pressure_var[pl, i, j] = surface_geopotential[i, j] - RDGAS * temp_surface_k * ln_p_ps * (
                     1 + ALPHA * ln_p_ps / 2.0 + (ALPHA * ln_p_ps) ** 2 / 6.0
                 )
     return pressure_var
@@ -282,7 +280,7 @@ def interp_temperature_to_pressure_levels(
     interp_pressures,
     surface_pressure,
     surface_geopotential,
-    temp_level_index=-6,
+    temp_level_index=-2,
 ):
     """
     Interpolate temperature field from hybrid sigma-pressure vertical coordinates to pressure levels.
@@ -309,9 +307,7 @@ def interp_temperature_to_pressure_levels(
     )
     log_interp_pressures = np.log(interp_pressures)
     for (i, j), v in np.ndenumerate(model_var[0]):
-        pressure_var[:, i, j] = np.interp(
-            log_interp_pressures, np.log(model_pressure[:, i, j]), model_var[:, i, j]
-        )
+        pressure_var[:, i, j] = np.interp(log_interp_pressures, np.log(model_pressure[:, i, j]), model_var[:, i, j])
         for pl, interp_pressure in enumerate(interp_pressures):
             if interp_pressure > surface_pressure[i, j]:
                 model_level_temp = model_var[temp_level_index, i, j]
@@ -322,40 +318,22 @@ def interp_temperature_to_pressure_levels(
                 temp_sea_level_k = temp_surface_k + LAPSE_RATE * surface_height
                 temp_pl = np.minimum(temp_sea_level_k, 298.0)
                 if surface_height > 2500.0:
-                    gamma = (
-                        GRAVITY
-                        / surface_geopotential[i, j]
-                        * np.maximum(temp_pl - temp_surface_k, 0)
-                    )
+                    gamma = GRAVITY / surface_geopotential[i, j] * np.maximum(temp_pl - temp_surface_k, 0)
 
                 elif 2000.0 <= surface_height <= 2500.0:
                     t_adjusted = 0.002 * (
-                        (2500 - surface_height) * temp_sea_level_k
-                        + (surface_height - 2000.0) * temp_pl
+                        (2500 - surface_height) * temp_sea_level_k + (surface_height - 2000.0) * temp_pl
                     )
-                    gamma = (
-                        GRAVITY
-                        / surface_geopotential[i, j]
-                        * (t_adjusted - temp_surface_k)
-                    )
+                    gamma = GRAVITY / surface_geopotential[i, j] * (t_adjusted - temp_surface_k)
                 else:
                     gamma = LAPSE_RATE
-                a_ln_p = (
-                    gamma
-                    * RDGAS
-                    / GRAVITY
-                    * np.log(interp_pressure / surface_pressure[i, j])
-                )
-                pressure_var[pl, i, j] = temp_surface_k * (
-                    1 + a_ln_p + 0.5 * a_ln_p**2 + 1 / 6.0 * a_ln_p**3
-                )
+                a_ln_p = gamma * RDGAS / GRAVITY * np.log(interp_pressure / surface_pressure[i, j])
+                pressure_var[pl, i, j] = temp_surface_k * (1 + a_ln_p + 0.5 * a_ln_p**2 + 1 / 6.0 * a_ln_p**3)
     return pressure_var
 
 
 @njit
-def geopotential_from_model_vars(
-    surface_geopotential, surface_pressure, temperature, mixing_ratio, model_a, model_b
-):
+def geopotential_from_model_vars(surface_geopotential, surface_pressure, temperature, mixing_ratio, model_a, model_b):
     """
     Calculate geopotential from the base state variables. Geopotential height is calculated by adding thicknesses
     calculated within each half-model-level to account for variations in temperature and moisture between grid cells.
@@ -387,17 +365,17 @@ def geopotential_from_model_vars(
     virtual_temperature = temperature * (1.0 + gamma * mixing_ratio)
     m = model_geopotential.shape[-3] - 1
     h = half_geopotential.shape[-3] - 1
-    model_geopotential[m] = surface_geopotential + RDGAS * virtual_temperature[
-        m
-    ] * np.log(surface_pressure / model_pressure[m])
+    model_geopotential[m] = surface_geopotential + RDGAS * virtual_temperature[m] * np.log(
+        surface_pressure / model_pressure[m]
+    )
     for i in range(1, model_geopotential.shape[-3]):
-        half_geopotential[h] = model_geopotential[m] + RDGAS * virtual_temperature[
-            m
-        ] * np.log(model_pressure[m] / half_pressure[h])
+        half_geopotential[h] = model_geopotential[m] + RDGAS * virtual_temperature[m] * np.log(
+            model_pressure[m] / half_pressure[h]
+        )
         m -= 1
-        model_geopotential[m] = half_geopotential[h] + RDGAS * virtual_temperature[
-            m
-        ] * np.log(half_pressure[h] / model_pressure[m])
+        model_geopotential[m] = half_geopotential[h] + RDGAS * virtual_temperature[m] * np.log(
+            half_pressure[h] / model_pressure[m]
+        )
         h -= 1
     return model_geopotential
 
@@ -435,14 +413,10 @@ def mean_sea_level_pressure(
         if np.abs(surface_geopotential[i, j] / GRAVITY) < 1e-4:
             mslp[i, j] = surface_pressure_pa[i, j]
         else:
-            temp_surface_k = temperature_lowest_level_k[
-                i, j
-            ] + ALPHA * temperature_lowest_level_k[i, j] * (
+            temp_surface_k = temperature_lowest_level_k[i, j] + ALPHA * temperature_lowest_level_k[i, j] * (
                 surface_pressure_pa[i, j] / pressure_lowest_level_pa[i, j] - 1
             )
-            temp_sealevel_k = (
-                temp_surface_k + LAPSE_RATE * surface_geopotential[i, j] / GRAVITY
-            )
+            temp_sealevel_k = temp_surface_k + LAPSE_RATE * surface_geopotential[i, j] / GRAVITY
 
             if (temp_surface_k <= 290.5) and (temp_sealevel_k > 290.5):
                 gamma = GRAVITY / surface_geopotential[i, j] * (290.5 - temp_surface_k)
@@ -455,15 +429,5 @@ def mean_sea_level_pressure(
                     temp_surface_k = 0.5 * (255.0 + temp_surface_k)
             beta = surface_geopotential[i, j] / (RDGAS * temp_surface_k)
             x = gamma * surface_geopotential[i, j] / (GRAVITY * temp_surface_k)
-            # mslp[i, j] = surface_pressure_pa[i, j] * np.exp(
-            #    beta
-            #    * (
-            #        1
-            #        - alpha_adjusted * beta / 2.0
-            #        + ((alpha_adjusted * beta) ** 2) / 3.0
-            #    )
-            # )
-            mslp[i, j] = surface_pressure_pa[i, j] * np.exp(
-                beta * (1.0 - x / 2.0 + x**2 / 3.0)
-            )
+            mslp[i, j] = surface_pressure_pa[i, j] * np.exp(beta * (1.0 - x / 2.0 + x**2 / 3.0))
     return mslp
