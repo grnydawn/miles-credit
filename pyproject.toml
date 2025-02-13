@@ -35,10 +35,10 @@ dependencies = [
     "vector-quantize-pytorch",
     "haversine",
     "pvlib",
-    "geocat-comp",
     "torch-harmonics",
     "torch_geometric",
-    "sphinx",
+    "pre-commit",
+    "ruff"
    ]
 
 [project.optional-dependencies]
