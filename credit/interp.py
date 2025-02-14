@@ -2,7 +2,7 @@ import numpy as np
 from numba import njit
 import xarray as xr
 from tqdm import tqdm
-from .physics_constants import RDGAS, RVGAS, GRAVITY
+from .physics_constants import RDGAS, GRAVITY
 import os
 
 
@@ -23,8 +23,8 @@ def full_state_pressure_interpolation(
     level_var: str = "level",
     model_level_file: str = "../credit/metadata/ERA5_Lev_Info.nc",
     verbose: int = 1,
-    a_coord: str = "a_model",
-    b_coord: str = "b_model",
+    a_coord: str = "a_half",
+    b_coord: str = "b_half",
     temp_level_index: int = -2,
 ) -> xr.Dataset:
     """
@@ -47,8 +47,8 @@ def full_state_pressure_interpolation(
         level_var (str): name of level coordinate
         model_level_file (str): relative path to file containing model levels.
         verbose (int): verbosity level. If verbose > 0, print progress.
-        a_coord (str): Name of A weight in sigma coordinate formula. 'a_model' by default.
-        b_coord (str): Name of B weight in sigma coordinate formula. 'b_model' by default.
+        a_coord (str): Name of A weight in sigma coordinate formula. 'a_half' by default.
+        b_coord (str): Name of B weight in sigma coordinate formula. 'b_half' by default.
         temp_level_index (int): vertical index of the temperature level used for interpolation below ground.
     Returns:
         pressure_ds (xr.Dataset): Dataset containing pressure interpolated variables.
@@ -56,8 +56,8 @@ def full_state_pressure_interpolation(
     path_to_file = os.path.abspath(os.path.dirname(__file__))
     model_level_file = os.path.join(path_to_file, model_level_file)
     with xr.open_dataset(model_level_file) as mod_lev_ds:
-        model_a = mod_lev_ds[a_coord].loc[state_dataset[level_var]].values
-        model_b = mod_lev_ds[b_coord].loc[state_dataset[level_var]].values
+        a_half = mod_lev_ds[a_coord].loc[state_dataset[level_var]].values
+        b_half = mod_lev_ds[b_coord].loc[state_dataset[level_var]].values
     pres_dims = (time_var, pres_var, lat_var, lon_var)
     surface_dims = (time_var, lat_var, lon_var)
     coords = {
@@ -93,14 +93,16 @@ def full_state_pressure_interpolation(
     if verbose == 0:
         disable = True
     for t, time in tqdm(enumerate(state_dataset[time_var]), disable=disable):
-        pressure_grid = create_pressure_grid(state_dataset[surface_pressure_var][t].values, model_a, model_b)
+        pressure_grid, half_pressure_grid = create_pressure_grid(
+            state_dataset[surface_pressure_var][t].values.astype(np.float64), a_half, b_half
+        )
         geopotential_grid = geopotential_from_model_vars(
-            surface_geopotential,
-            state_dataset[surface_pressure_var][t].values,
-            state_dataset[temperature_var][t].values,
-            state_dataset[q_var][t].values,
-            model_a,
-            model_b,
+            surface_geopotential.astype(np.float64),
+            state_dataset[surface_pressure_var][t].values.astype(np.float64),
+            state_dataset[temperature_var][t].values.astype(np.float64),
+            state_dataset[q_var][t].values.astype(np.float64),
+            a_half,
+            b_half,
         )
         for interp_field in interp_fields:
             if interp_field == temperature_var:
@@ -110,6 +112,7 @@ def full_state_pressure_interpolation(
                     pressure_levels,
                     state_dataset[surface_pressure_var][t].values / 100.0,
                     surface_geopotential,
+                    geopotential_grid,
                 )
             else:
                 pressure_ds[interp_field + pres_ending][t] = interp_hybrid_to_pressure_levels(
@@ -123,12 +126,12 @@ def full_state_pressure_interpolation(
             pressure_levels,
             state_dataset[surface_pressure_var][t].values / 100.0,
             surface_geopotential,
+            geopotential_grid,
             state_dataset[temperature_var][t].values,
-            temp_level_index,
         )
         pressure_ds["mean_sea_level_" + pres_var][t] = mean_sea_level_pressure(
             state_dataset[surface_pressure_var][t].values,
-            state_dataset[temperature_var][t, temp_level_index].values,
+            state_dataset[temperature_var][t].values,
             pressure_grid[temp_level_index],
             surface_geopotential,
         )
@@ -136,41 +139,96 @@ def full_state_pressure_interpolation(
 
 
 @njit
-def create_pressure_grid(surface_pressure, model_a, model_b):
+def create_pressure_grid(surface_pressure, model_a_half, model_b_half):
     """
     Create a 3D pressure field at model levels from the surface pressure field and the hybrid sigma-pressure
     coefficients from ECMWF. Conversion is `pressure_3d = a + b * SP`.
 
     Args:
         surface_pressure (np.ndarray): (time, latitude, longitude) or (latitude, longitude) grid in units of Pa.
-        model_a (np.ndarray): a coefficients at each model level being used in units of Pa.
-        model_b (np.ndarray): b coefficients at each model level being used (unitness).
+        model_a_half (np.ndarray): a coefficients at each model level being used in units of Pa.
+        model_b_half (np.ndarray): b coefficients at each model level being used (unitness).
 
     Returns:
         pressure_3d: 3D pressure field with dimensions of surface_pressure and number of levels from model_a and model_b.
     """
-    assert model_a.size == model_b.size, "Model pressure coefficient arrays do not match."
+    assert model_a_half.size == model_b_half.size, "Model pressure coefficient arrays do not match."
     if surface_pressure.ndim == 3:
         # Generate the 3D pressure field for a time series of surface pressure grids
         pressure_3d = np.zeros(
             (
                 surface_pressure.shape[0],
-                model_a.shape[0],
+                model_a_half.shape[0] - 1,
                 surface_pressure.shape[1],
                 surface_pressure.shape[2],
             ),
             dtype=surface_pressure.dtype,
         )
-        model_a_3d = model_a.reshape(-1, 1, 1)
-        model_b_3d = model_b.reshape(-1, 1, 1)
+        pressure_3d_half = np.zeros(
+            (
+                surface_pressure.shape[0],
+                model_a_half.shape[0],
+                surface_pressure.shape[1],
+                surface_pressure.shape[2],
+            ),
+            dtype=surface_pressure.dtype,
+        )
+        model_a_3d = model_a_half.reshape(-1, 1, 1)
+        model_b_3d = model_b_half.reshape(-1, 1, 1)
         for i in range(surface_pressure.shape[0]):
-            pressure_3d[i] = model_a_3d + model_b_3d * surface_pressure[i]
+            pressure_3d_half = model_a_3d + model_b_3d * surface_pressure[i]
+            pressure_3d[i] = 0.5 * (pressure_3d_half[:-1] + pressure_3d_half[1:])
     else:
         # Generate the 3D pressure field for a single surface pressure grid.
-        model_a_3d = model_a.reshape(-1, 1, 1)
-        model_b_3d = model_b.reshape(-1, 1, 1)
-        pressure_3d = model_a_3d + model_b_3d * surface_pressure
-    return pressure_3d
+        model_a_3d = model_a_half.reshape(-1, 1, 1)
+        model_b_3d = model_b_half.reshape(-1, 1, 1)
+        pressure_3d_half = model_a_3d + model_b_3d * surface_pressure
+        pressure_3d = 0.5 * (pressure_3d_half[:-1] + pressure_3d_half[1:])
+    return pressure_3d, pressure_3d_half
+
+
+@njit
+def geopotential_from_model_vars(surface_geopotential, surface_pressure, temperature, mixing_ratio, a_half, b_half):
+    """
+    Calculate geopotential from the base state variables. Geopotential height is calculated by adding thicknesses
+    calculated within each half-model-level to account for variations in temperature and moisture between grid cells.
+    Note that this function is calculating geopotential in units of (m^2 s^-2) not geopential height.
+
+    To convert geopotential to geopotential height, divide geopotential by g (9.806 m s^-2).
+
+    Geopotential height is defined as the height above mean sea level. To get height above ground level, substract
+    the surface geoptential height field from the 3D geopotential height field.
+
+    Args:
+        surface_geopotential (np.ndarray): Surface geopotential in shape (y,x) and units m^2 s^-2.
+        surface_pressure (np.ndarray): Surface pressure in shape (y, x) and units Pa
+        temperature (np.ndarray): temperature in shape (levels, y, x) and units K
+        mixing_ratio (np.ndarray): mixing ratio in shape (levels, y, x) and units kg/kg.
+        a_half (np.ndarray): a coefficients at each model half level being used in units of Pa.
+        b_half (np.ndarray): b coefficients at each model half level being used (unitness).
+
+    Returns:
+        model_geoptential (np.ndarray): geopotential on model levels in shape (levels, y, x)
+    """
+    RDGAS = 287.06
+    gamma = 0.609133  # from MetView
+    model_pressure, half_pressure = create_pressure_grid(surface_pressure, a_half, b_half)
+    model_geopotential = np.zeros(model_pressure.shape, dtype=surface_pressure.dtype)
+    half_geopotential = np.zeros(half_pressure.shape, dtype=surface_pressure.dtype)
+    half_geopotential[-1] = surface_geopotential
+    virtual_temperature = temperature * (1.0 + gamma * mixing_ratio)
+    m = model_geopotential.shape[-3] - 1
+    for i in range(0, model_geopotential.shape[-3]):
+        if m == 0:
+            dlog_p = np.log(half_pressure[m + 1] / 0.1)
+            alpha = np.ones(half_pressure[m + 1].shape) * np.log(2)
+        else:
+            dlog_p = np.log(half_pressure[m + 1] / half_pressure[m])
+            alpha = alpha = 1.0 - ((half_pressure[m] / (half_pressure[m + 1] - half_pressure[m])) * dlog_p)
+        model_geopotential[m] = half_geopotential[m + 1] + RDGAS * virtual_temperature[m] * alpha
+        half_geopotential[m] = half_geopotential[m + 1] + RDGAS * virtual_temperature[m] * dlog_p
+        m -= 1
+    return model_geopotential, half_geopotential
 
 
 @njit
@@ -231,8 +289,9 @@ def interp_geopotential_to_pressure_levels(
     interp_pressures,
     surface_pressure,
     surface_geopotential,
+    geopotential,
     temperature_k,
-    temp_level_index=-2,
+    temp_height=150,
 ):
     """
     Interpolate geopotential field from hybrid sigma-pressure vertical coordinates to pressure levels.
@@ -245,9 +304,9 @@ def interp_geopotential_to_pressure_levels(
         interp_pressures (np.ndarray): pressure levels for interpolation in units Pa or hPa.
         surface_pressure (np.ndarray): pressure at the surface in units Pa or hPa.
         surface_geopotential (np.ndarray): geopotential at the surface in units m^2/s^2.
-        temperature_k (np.ndarray):  temperature state on model levels in Kelvin.
-        temp_level_index (int): index of vertical level where temperature is extracted for extrapolation to
-            surface.
+        geopotential (np.ndarray): geopotential in units m^2/s^2.
+        temperaure_k (np.ndarray): temperature  in units K.
+        temp_height (float): height above ground of nearest vertical grid cell.
     Returns:
         pressure_var (np.ndarray): 3D field on pressure levels with shape (len(interp_pressures), y, x).
     """
@@ -258,13 +317,14 @@ def interp_geopotential_to_pressure_levels(
         dtype=model_var.dtype,
     )
     log_interp_pressures = np.log(interp_pressures)
-    temperature_lowest_level_k = temperature_k[temp_level_index]
     for (i, j), v in np.ndenumerate(model_var[0]):
         pressure_var[:, i, j] = np.interp(log_interp_pressures, np.log(model_pressure[:, i, j]), model_var[:, i, j])
         for pl, interp_pressure in enumerate(interp_pressures):
             if interp_pressure > surface_pressure[i, j]:
-                temp_surface_k = temperature_lowest_level_k[i, j] + ALPHA * temperature_lowest_level_k[i, j] * (
-                    surface_pressure[i, j] / model_pressure[temp_level_index, i, j] - 1
+                height_agl = (geopotential[:, i, j] - surface_geopotential[i, j]) / GRAVITY
+                h = np.argmin(np.abs(height_agl - temp_height))
+                temp_surface_k = temperature_k[h, i, j] + ALPHA * temperature_k[h, i, j] * (
+                    surface_pressure[i, j] / model_pressure[h, i, j] - 1
                 )
                 ln_p_ps = np.log(interp_pressure / surface_pressure[i, j])
                 pressure_var[pl, i, j] = surface_geopotential[i, j] - RDGAS * temp_surface_k * ln_p_ps * (
@@ -275,12 +335,7 @@ def interp_geopotential_to_pressure_levels(
 
 @njit
 def interp_temperature_to_pressure_levels(
-    model_var,
-    model_pressure,
-    interp_pressures,
-    surface_pressure,
-    surface_geopotential,
-    temp_level_index=-2,
+    model_var, model_pressure, interp_pressures, surface_pressure, surface_geopotential, geopotential, temp_height=150
 ):
     """
     Interpolate temperature field from hybrid sigma-pressure vertical coordinates to pressure levels.
@@ -293,8 +348,7 @@ def interp_temperature_to_pressure_levels(
         interp_pressures: (np.ndarray): pressure levels for interpolation in units Pa or.
         surface_pressure (np.ndarray): pressure at the surface in units Pa or hPa.
         surface_geopotential (np.ndarray): geopotential at the surface in units m^2/s^2.
-        temp_level_index (int): index of vertical level where temperature is extracted for extrapolation to
-            surface.
+        temp_height (float): height above ground of nearest vertical grid cell.
 
     Returns:
         pressure_var (np.ndarray): 3D field on pressure levels with shape (len(interp_pressures), y, x).
@@ -310,9 +364,12 @@ def interp_temperature_to_pressure_levels(
         pressure_var[:, i, j] = np.interp(log_interp_pressures, np.log(model_pressure[:, i, j]), model_var[:, i, j])
         for pl, interp_pressure in enumerate(interp_pressures):
             if interp_pressure > surface_pressure[i, j]:
-                model_level_temp = model_var[temp_level_index, i, j]
-                temp_surface_k = model_level_temp + ALPHA * model_level_temp * (
-                    surface_pressure[i, j] / model_pressure[temp_level_index, i, j] - 1
+                # The height above ground of each sigma level varies, especially in complex terrain
+                # To minimize extrapolation error, pick the level closest to 150 m AGL, which is the ECMWF standard.
+                height_agl = (geopotential[:, i, j] - surface_geopotential[i, j]) / GRAVITY
+                h = np.argmin(np.abs(height_agl - temp_height))
+                temp_surface_k = model_var[h, i, j] + ALPHA * model_var[h, i, j] * (
+                    surface_pressure[i, j] / model_pressure[h, i, j] - 1
                 )
                 surface_height = surface_geopotential[i, j] / GRAVITY
                 temp_sea_level_k = temp_surface_k + LAPSE_RATE * surface_height
@@ -333,59 +390,8 @@ def interp_temperature_to_pressure_levels(
 
 
 @njit
-def geopotential_from_model_vars(surface_geopotential, surface_pressure, temperature, mixing_ratio, model_a, model_b):
-    """
-    Calculate geopotential from the base state variables. Geopotential height is calculated by adding thicknesses
-    calculated within each half-model-level to account for variations in temperature and moisture between grid cells.
-    Note that this function is calculating geopotential in units of (m^2 s^-2) not geopential height.
-
-    To convert geopotential to geopotential height, divide geopotential by g (9.806 m s^-2).
-
-    Geopotential height is defined as the height above mean sea level. To get height above ground level, substract
-    the surface geoptential height field from the 3D geopotential height field.
-
-    Args:
-        surface_geopotential (np.ndarray): Surface geopotential in shape (y,x) and units m^2 s^-2.
-        surface_pressure (np.ndarray): Surface pressure in shape (y, x) and units Pa
-        temperature (np.ndarray): temperature in shape (levels, y, x) and units K
-        mixing_ratio (np.ndarray): mixing ratio in shape (levels, y, x) and units kg/kg.
-        model_a (np.ndarray): a coefficients at each model level being used in units of Pa.
-        model_b (np.ndarray): b coefficients at each model level being used (unitness).
-
-    Returns:
-        model_geoptential (np.ndarray): geopotential on model levels in shape (levels, y, x)
-    """
-    gamma = RVGAS / RDGAS - 1.0
-    half_a = 0.5 * (model_a[:-1] + model_a[1:])
-    half_b = 0.5 * (model_b[:-1] + model_b[1:])
-    model_pressure = create_pressure_grid(surface_pressure, model_a, model_b)
-    half_pressure = create_pressure_grid(surface_pressure, half_a, half_b)
-    model_geopotential = np.zeros(model_pressure.shape, dtype=surface_pressure.dtype)
-    half_geopotential = np.zeros(half_pressure.shape, dtype=surface_pressure.dtype)
-    virtual_temperature = temperature * (1.0 + gamma * mixing_ratio)
-    m = model_geopotential.shape[-3] - 1
-    h = half_geopotential.shape[-3] - 1
-    model_geopotential[m] = surface_geopotential + RDGAS * virtual_temperature[m] * np.log(
-        surface_pressure / model_pressure[m]
-    )
-    for i in range(1, model_geopotential.shape[-3]):
-        half_geopotential[h] = model_geopotential[m] + RDGAS * virtual_temperature[m] * np.log(
-            model_pressure[m] / half_pressure[h]
-        )
-        m -= 1
-        model_geopotential[m] = half_geopotential[h] + RDGAS * virtual_temperature[m] * np.log(
-            half_pressure[h] / model_pressure[m]
-        )
-        h -= 1
-    return model_geopotential
-
-
-@njit
 def mean_sea_level_pressure(
-    surface_pressure_pa,
-    temperature_lowest_level_k,
-    pressure_lowest_level_pa,
-    surface_geopotential,
+    surface_pressure_pa, temperature_k, pressure_pa, surface_geopotential, geopotential, temp_height=150.0
 ):
     """
     Calculate mean sea level pressure from surface pressure, lowest model level temperature,
@@ -399,9 +405,11 @@ def mean_sea_level_pressure(
 
     Args:
         surface_pressure_pa: surface pressure in Pascals
-        temperature_lowest_level_k: Temperature at the lowest model level in Kelvin.
-        pressure_lowest_level_pa: Pressure at the lowest model level in Pascals.
+        temperature_k: Temperature at the lowest model level in Kelvin.
+        pressure_pa: Pressure at the lowest model level in Pascals.
         surface_geopotential: Geopotential of the surface in m^2 s^-2.
+        geopotential: Geopotential at all levels.
+        temp_height: height of nearest vertical grid cell
 
     Returns:
         mslp: Mean sea level pressure in Pascals.
@@ -413,8 +421,10 @@ def mean_sea_level_pressure(
         if np.abs(surface_geopotential[i, j] / GRAVITY) < 1e-4:
             mslp[i, j] = surface_pressure_pa[i, j]
         else:
-            temp_surface_k = temperature_lowest_level_k[i, j] + ALPHA * temperature_lowest_level_k[i, j] * (
-                surface_pressure_pa[i, j] / pressure_lowest_level_pa[i, j] - 1
+            height_agl = (geopotential[:, i, j] - surface_geopotential[i, j]) / GRAVITY
+            h = np.argmin(np.abs(height_agl - temp_height))
+            temp_surface_k = temperature_k[h, i, j] + ALPHA * temperature_k[h, i, j] * (
+                surface_pressure_pa[i, j] / pressure_pa[h, i, j] - 1
             )
             temp_sealevel_k = temp_surface_k + LAPSE_RATE * surface_geopotential[i, j] / GRAVITY
 
