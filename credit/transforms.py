@@ -89,6 +89,10 @@ class NormalizeState:
         else:
             return self.transform(sample)
 
+    def transform_dataset(self, DS: xr.Dataset) -> xr.Dataset:
+        DS = (DS - self.mean_ds)/self.std_ds
+        return DS
+
     def transform_array(self, x: torch.Tensor) -> torch.Tensor:
         device = x.device
         tensor = x[:, : (len(self.variables) * self.levels), :, :]
@@ -237,6 +241,10 @@ class Normalize_ERA5_and_Forcing:
         else:
             # Transformation
             return self.transform(sample)
+
+    def transform_dataset(self, DS: xr.Dataset) -> xr.Dataset:
+        DS = (DS - self.mean_ds)/self.std_ds
+        return DS
 
     def transform_array(self, x: torch.Tensor) -> torch.Tensor:
         """
