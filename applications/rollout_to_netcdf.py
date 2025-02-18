@@ -214,9 +214,7 @@ def predict(rank, world_size, conf, p):
         model = distributed_model_wrapper(conf, model, device)
         ckpt = os.path.join(save_loc, "checkpoint.pt")
         checkpoint = torch.load(ckpt, map_location=device)
-        load_msg = model.module.load_state_dict(
-            checkpoint["model_state_dict"], strict=False
-        )
+        load_msg = model.module.load_state_dict(checkpoint["model_state_dict"], strict=False)
         load_state_dict_error_handler(load_msg)
 
     elif conf["predict"]["mode"] == "fsdp":
@@ -234,14 +232,11 @@ def predict(rank, world_size, conf, p):
     meta_data = load_metadata(conf)
 
     # Set up metrics and containers
-    metrics = LatWeightedMetrics(conf, predict_mode=True)
+    metrics = LatWeightedMetrics(conf, training_mode=False)
     metrics_results = defaultdict(list)
 
     # Set up the diffusion and pole filters
-    if (
-        "use_laplace_filter" in conf["predict"]
-        and conf["predict"]["use_laplace_filter"]
-    ):
+    if "use_laplace_filter" in conf["predict"] and conf["predict"]["use_laplace_filter"]:
         dpf = Diffusion_and_Pole_Filter(
             nlat=conf["model"]["image_height"],
             nlon=conf["model"]["image_width"],
@@ -268,11 +263,7 @@ def predict(rank, world_size, conf, p):
                     # combine x and x_surf
                     # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon)
                     # output: (batch_num, var, time, lat, lon), 'x' first and then 'x_surf'
-                    x = (
-                        concat_and_reshape(batch["x"], batch["x_surf"])
-                        .to(device)
-                        .float()
-                    )
+                    x = concat_and_reshape(batch["x"], batch["x_surf"]).to(device).float()
                 else:
                     # no x_surf
                     x = reshape_only(batch["x"]).to(device).float()
@@ -284,9 +275,7 @@ def predict(rank, world_size, conf, p):
             # add forcing and static variables (regardless of fcst hours)
             if "x_forcing_static" in batch:
                 # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
-                x_forcing_batch = (
-                    batch["x_forcing_static"].to(device).permute(0, 2, 1, 3, 4).float()
-                )
+                x_forcing_batch = batch["x_forcing_static"].to(device).permute(0, 2, 1, 3, 4).float()
 
                 # concat on var dimension
                 x = torch.cat((x, x_forcing_batch), dim=1)
@@ -348,29 +337,17 @@ def predict(rank, world_size, conf, p):
             # y_target with unit
             y = state_transformer.inverse_transform(y.cpu())
 
-            if (
-                "use_laplace_filter" in conf["predict"]
-                and conf["predict"]["use_laplace_filter"]
-            ):
-                y_pred = (
-                    dpf.diff_lap2d_filt(y_pred.to(device).squeeze())
-                    .unsqueeze(0)
-                    .unsqueeze(2)
-                    .cpu()
-                )
+            if "use_laplace_filter" in conf["predict"] and conf["predict"]["use_laplace_filter"]:
+                y_pred = dpf.diff_lap2d_filt(y_pred.to(device).squeeze()).unsqueeze(0).unsqueeze(2).cpu()
 
             # Compute metrics
-            metrics_dict = metrics(
-                y_pred.float(), y.float(), forecast_datetime=forecast_hour
-            )
+            metrics_dict = metrics(y_pred.float(), y.float(), forecast_datetime=forecast_hour)
             for k, m in metrics_dict.items():
                 metrics_results[k].append(m.item())
             metrics_results["forecast_hour"].append(forecast_hour)
 
             # Save the current forecast hour data in parallel
-            utc_datetime = init_datetime + timedelta(
-                hours=lead_time_periods * forecast_hour
-            )
+            utc_datetime = init_datetime + timedelta(hours=lead_time_periods * forecast_hour)
 
             # convert the current step result as x-array
             darray_upper_air, darray_single_level = make_xarray(
@@ -424,9 +401,7 @@ def predict(rank, world_size, conf, p):
 
                 # cut diagnostic vars from y_pred, they are not inputs
                 if "y_diag" in batch:
-                    x = torch.cat(
-                        [x_detach, y_pred[:, :-varnum_diag, ...].detach()], dim=2
-                    )
+                    x = torch.cat([x_detach, y_pred[:, :-varnum_diag, ...].detach()], dim=2)
                 else:
                     x = torch.cat([x_detach, y_pred.detach()], dim=2)
             # ============================================================ #
@@ -441,16 +416,10 @@ def predict(rank, world_size, conf, p):
                     result.get()
 
                 # save metrics file
-                save_location = os.path.join(
-                    os.path.expandvars(conf["save_loc"]), "forecasts", "metrics"
-                )
-                os.makedirs(
-                    save_location, exist_ok=True
-                )  # should already be made above
+                save_location = os.path.join(os.path.expandvars(conf["save_loc"]), "forecasts", "metrics")
+                os.makedirs(save_location, exist_ok=True)  # should already be made above
                 df = pd.DataFrame(metrics_results)
-                df.to_csv(
-                    os.path.join(save_location, f"metrics{init_datetime_str}.csv")
-                )
+                df.to_csv(os.path.join(save_location, f"metrics{init_datetime_str}.csv"))
 
                 # forecast count = a constant for each run
                 forecast_count += 1
@@ -563,17 +532,13 @@ if __name__ == "__main__":
 
     # ======================================================== #
     # handling config args
-    conf = credit_main_parser(
-        conf, parse_training=False, parse_predict=True, print_summary=False
-    )
+    conf = credit_main_parser(conf, parse_training=False, parse_predict=True, print_summary=False)
     predict_data_check(conf, print_summary=False)
     # ======================================================== #
 
     # create a save location for rollout
     # ---------------------------------------------------- #
-    assert (
-        "save_forecast" in conf["predict"]
-    ), "Please specify the output dir through conf['predict']['save_forecast']"
+    assert "save_forecast" in conf["predict"], "Please specify the output dir through conf['predict']['save_forecast']"
 
     forecast_save_loc = conf["predict"]["save_forecast"]
     os.makedirs(forecast_save_loc, exist_ok=True)
