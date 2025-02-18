@@ -23,8 +23,10 @@ def full_state_pressure_interpolation(
     level_var: str = "level",
     model_level_file: str = "../credit/metadata/ERA5_Lev_Info.nc",
     verbose: int = 1,
-    a_coord: str = "a_half",
-    b_coord: str = "b_half",
+    a_coord: str = "a_model",
+    b_coord: str = "b_model",
+    a_half: str = "a_half",
+    b_half: str = "b_half",
     temp_level_index: int = -2,
 ) -> xr.Dataset:
     """
@@ -47,8 +49,10 @@ def full_state_pressure_interpolation(
         level_var (str): name of level coordinate
         model_level_file (str): relative path to file containing model levels.
         verbose (int): verbosity level. If verbose > 0, print progress.
-        a_coord (str): Name of A weight in sigma coordinate formula. 'a_half' by default.
-        b_coord (str): Name of B weight in sigma coordinate formula. 'b_half' by default.
+        a_coord (str): Name of A weight in sigma coordinate formula. 'a_model' by default.
+        b_coord (str): Name of B weight in sigma coordinate formula. 'b_model' by default.
+        a_half (str): Name of A weight in sigma coordinate formula at half levels. 'a_half' by default.
+        b_half (str): Name of B weight in sigma coordinate formula at half levels. 'b_half' by default.
         temp_level_index (int): vertical index of the temperature level used for interpolation below ground.
     Returns:
         pressure_ds (xr.Dataset): Dataset containing pressure interpolated variables.
@@ -56,8 +60,8 @@ def full_state_pressure_interpolation(
     path_to_file = os.path.abspath(os.path.dirname(__file__))
     model_level_file = os.path.join(path_to_file, model_level_file)
     with xr.open_dataset(model_level_file) as mod_lev_ds:
-        a_half = mod_lev_ds[a_coord].loc[state_dataset[level_var]].values
-        b_half = mod_lev_ds[b_coord].loc[state_dataset[level_var]].values
+        a_half = mod_lev_ds[a_half].values
+        b_half = mod_lev_ds[b_half].values
     pres_dims = (time_var, pres_var, lat_var, lon_var)
     surface_dims = (time_var, lat_var, lon_var)
     coords = {
@@ -92,23 +96,26 @@ def full_state_pressure_interpolation(
     disable = False
     if verbose == 0:
         disable = True
+    sub_half_levels = np.concatenate([state_dataset[level_var].values, [138]])
+    sub_levels = state_dataset[level_var].values
     for t, time in tqdm(enumerate(state_dataset[time_var]), disable=disable):
         pressure_grid, half_pressure_grid = create_pressure_grid(
             state_dataset[surface_pressure_var][t].values.astype(np.float64), a_half, b_half
         )
+        pressure_sub_grid = pressure_grid[sub_levels - 1]
+        half_pressure_sub_grid = half_pressure_grid[sub_half_levels - 1]
         geopotential_grid = geopotential_from_model_vars(
             surface_geopotential.astype(np.float64),
             state_dataset[surface_pressure_var][t].values.astype(np.float64),
             state_dataset[temperature_var][t].values.astype(np.float64),
             state_dataset[q_var][t].values.astype(np.float64),
-            a_half,
-            b_half,
+            half_pressure_sub_grid,
         )
         for interp_field in interp_fields:
             if interp_field == temperature_var:
                 pressure_ds[interp_field + pres_ending][t] = interp_temperature_to_pressure_levels(
                     state_dataset[interp_field][t].values,
-                    pressure_grid / 100.0,
+                    pressure_sub_grid / 100.0,
                     pressure_levels,
                     state_dataset[surface_pressure_var][t].values / 100.0,
                     surface_geopotential,
@@ -117,12 +124,12 @@ def full_state_pressure_interpolation(
             else:
                 pressure_ds[interp_field + pres_ending][t] = interp_hybrid_to_pressure_levels(
                     state_dataset[interp_field][t].values,
-                    pressure_grid / 100.0,
+                    pressure_sub_grid / 100.0,
                     pressure_levels,
                 )
         pressure_ds[geopotential_var + pres_ending][t] = interp_geopotential_to_pressure_levels(
             geopotential_grid,
-            pressure_grid / 100.0,
+            pressure_sub_grid / 100.0,
             pressure_levels,
             state_dataset[surface_pressure_var][t].values / 100.0,
             surface_geopotential,
@@ -132,8 +139,9 @@ def full_state_pressure_interpolation(
         pressure_ds["mean_sea_level_" + pres_var][t] = mean_sea_level_pressure(
             state_dataset[surface_pressure_var][t].values,
             state_dataset[temperature_var][t].values,
-            pressure_grid[temp_level_index],
+            pressure_sub_grid,
             surface_geopotential,
+            geopotential_grid,
         )
     return pressure_ds
 
@@ -188,7 +196,7 @@ def create_pressure_grid(surface_pressure, model_a_half, model_b_half):
 
 
 @njit
-def geopotential_from_model_vars(surface_geopotential, surface_pressure, temperature, mixing_ratio, a_half, b_half):
+def geopotential_from_model_vars(surface_geopotential, surface_pressure, temperature, mixing_ratio, half_pressure):
     """
     Calculate geopotential from the base state variables. Geopotential height is calculated by adding thicknesses
     calculated within each half-model-level to account for variations in temperature and moisture between grid cells.
@@ -212,8 +220,9 @@ def geopotential_from_model_vars(surface_geopotential, surface_pressure, tempera
     """
     RDGAS = 287.06
     gamma = 0.609133  # from MetView
-    model_pressure, half_pressure = create_pressure_grid(surface_pressure, a_half, b_half)
-    model_geopotential = np.zeros(model_pressure.shape, dtype=surface_pressure.dtype)
+    model_geopotential = np.zeros(
+        (half_pressure.shape[0] - 1, half_pressure.shape[1], half_pressure.shape[2]), dtype=surface_pressure.dtype
+    )
     half_geopotential = np.zeros(half_pressure.shape, dtype=surface_pressure.dtype)
     half_geopotential[-1] = surface_geopotential
     virtual_temperature = temperature * (1.0 + gamma * mixing_ratio)
@@ -224,11 +233,11 @@ def geopotential_from_model_vars(surface_geopotential, surface_pressure, tempera
             alpha = np.ones(half_pressure[m + 1].shape) * np.log(2)
         else:
             dlog_p = np.log(half_pressure[m + 1] / half_pressure[m])
-            alpha = alpha = 1.0 - ((half_pressure[m] / (half_pressure[m + 1] - half_pressure[m])) * dlog_p)
+            alpha = 1.0 - ((half_pressure[m] / (half_pressure[m + 1] - half_pressure[m])) * dlog_p)
         model_geopotential[m] = half_geopotential[m + 1] + RDGAS * virtual_temperature[m] * alpha
         half_geopotential[m] = half_geopotential[m + 1] + RDGAS * virtual_temperature[m] * dlog_p
         m -= 1
-    return model_geopotential, half_geopotential
+    return model_geopotential
 
 
 @njit
