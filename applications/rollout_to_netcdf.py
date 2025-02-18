@@ -8,14 +8,12 @@ from glob import glob
 from pathlib import Path
 from argparse import ArgumentParser
 import multiprocessing as mp
-from collections import defaultdict
 
 # ---------- #
 # Numerics
 from datetime import datetime, timedelta
 import xarray as xr
 import numpy as np
-import pandas as pd
 
 # ---------- #
 import torch
@@ -35,7 +33,6 @@ from credit.data import (
 from credit.transforms import load_transforms, Normalize_ERA5_and_Forcing
 from credit.pbs import launch_script, launch_script_mpi
 from credit.pol_lapdiff_filt import Diffusion_and_Pole_Filter
-from credit.metrics import LatWeightedMetrics
 from credit.forecast import load_forecasts
 from credit.distributed import distributed_model_wrapper, setup
 from credit.models.checkpoint import load_model_state, load_state_dict_error_handler
@@ -222,6 +219,8 @@ def predict(rank, world_size, conf, p):
         model = distributed_model_wrapper(conf, model, device)
         # Load model weights (if any), an optimizer, scheduler, and gradient scaler
         model = load_model_state(conf, model, device)
+    else:
+        model = None
     # ================================================================================ #
 
     model.eval()
@@ -230,11 +229,6 @@ def predict(rank, world_size, conf, p):
     latlons = xr.open_dataset(conf["loss"]["latitude_weights"])
 
     meta_data = load_metadata(conf)
-
-    # Set up metrics and containers
-    metrics = LatWeightedMetrics(conf, training_mode=False)
-    metrics_results = defaultdict(list)
-
     # Set up the diffusion and pole filters
     if "use_laplace_filter" in conf["predict"] and conf["predict"]["use_laplace_filter"]:
         dpf = Diffusion_and_Pole_Filter(
@@ -334,17 +328,9 @@ def predict(rank, world_size, conf, p):
 
             # y_pred with unit
             y_pred = state_transformer.inverse_transform(y_pred.cpu())
-            # y_target with unit
-            y = state_transformer.inverse_transform(y.cpu())
 
             if "use_laplace_filter" in conf["predict"] and conf["predict"]["use_laplace_filter"]:
                 y_pred = dpf.diff_lap2d_filt(y_pred.to(device).squeeze()).unsqueeze(0).unsqueeze(2).cpu()
-
-            # Compute metrics
-            metrics_dict = metrics(y_pred.float(), y.float(), forecast_datetime=forecast_hour)
-            for k, m in metrics_dict.items():
-                metrics_results[k].append(m.item())
-            metrics_results["forecast_hour"].append(forecast_hour)
 
             # Save the current forecast hour data in parallel
             utc_datetime = init_datetime + timedelta(hours=lead_time_periods * forecast_hour)
@@ -371,13 +357,6 @@ def predict(rank, world_size, conf, p):
                 ),
             )
             results.append(result)
-
-            metrics_results["datetime"].append(utc_datetime)
-
-            print_str = f"Forecast: {forecast_count} "
-            print_str += f"Date: {utc_datetime.strftime('%Y-%m-%d %H:%M:%S')} "
-            print_str += f"Hour: {batch['forecast_hour'].item()} "
-            print_str += f"ACC: {metrics_dict['acc']} "
 
             # Update the input
             # setup for next iteration, transform to z-space and send to device
@@ -414,13 +393,6 @@ def predict(rank, world_size, conf, p):
                 # Wait for all processes to finish in order
                 for result in results:
                     result.get()
-
-                # save metrics file
-                save_location = os.path.join(os.path.expandvars(conf["save_loc"]), "forecasts", "metrics")
-                os.makedirs(save_location, exist_ok=True)  # should already be made above
-                df = pd.DataFrame(metrics_results)
-                df.to_csv(os.path.join(save_location, f"metrics{init_datetime_str}.csv"))
-
                 # forecast count = a constant for each run
                 forecast_count += 1
 
@@ -592,6 +564,6 @@ if __name__ == "__main__":
         else:  # single device inference
             _ = predict(0, 1, conf, p=p)
 
-    # Ensure all processes are finished
-    p.close()
-    p.join()
+        # Ensure all processes are finished
+        p.close()
+        p.join()
