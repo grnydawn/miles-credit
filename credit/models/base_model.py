@@ -78,9 +78,7 @@ class BaseModel(nn.Module):
             del conf["model"]["type"]
 
         model_class = cls(**conf["model"])
-        print(list(checkpoint.keys()))
         if "model_state_dict" in checkpoint.keys():
-            print("model_state_dict in keys")
             load_msg = model_class.load_state_dict(checkpoint, strict=False)
         else:
             load_msg = model_class.load_state_dict(checkpoint, strict=False)
