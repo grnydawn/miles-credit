@@ -332,9 +332,23 @@ def interp_geopotential_to_pressure_levels(
                 temp_surface_k = temperature_k[h, i, j] + ALPHA * temperature_k[h, i, j] * (
                     surface_pressure[i, j] / model_pressure[h, i, j] - 1
                 )
+                surface_height = surface_geopotential[i, j] / GRAVITY
+                temp_sea_level_k = temp_surface_k + LAPSE_RATE * surface_height
+                temp_pl = np.minimum(temp_sea_level_k, 298.0)
+                if surface_height > 2500.0:
+                    gamma = GRAVITY / surface_geopotential[i, j] * np.maximum(temp_pl - temp_surface_k, 0)
+
+                elif 2000.0 <= surface_height <= 2500.0:
+                    t_adjusted = 0.002 * (
+                        (2500 - surface_height) * temp_sea_level_k + (surface_height - 2000.0) * temp_pl
+                    )
+                    gamma = GRAVITY / surface_geopotential[i, j] * (t_adjusted - temp_surface_k)
+                else:
+                    gamma = LAPSE_RATE
+                a_ln_p = gamma * RDGAS / GRAVITY * np.log(interp_pressure / surface_pressure[i, j])
                 ln_p_ps = np.log(interp_pressure / surface_pressure[i, j])
                 pressure_var[pl, i, j] = surface_geopotential[i, j] - RDGAS * temp_surface_k * ln_p_ps * (
-                    1 + ALPHA * ln_p_ps / 2.0 + (ALPHA * ln_p_ps) ** 2 / 6.0
+                    1 + a_ln_p / 2.0 + a_ln_p**2 / 6.0
                 )
     return pressure_var
 
