@@ -133,7 +133,6 @@ def full_state_pressure_interpolation(
             pressure_levels,
             state_dataset[surface_pressure_var][t].values / 100.0,
             surface_geopotential,
-            geopotential_grid,
             state_dataset[temperature_var][t].values,
         )
         pressure_ds["mean_sea_level_" + pres_var][t] = mean_sea_level_pressure(
@@ -293,12 +292,11 @@ def interp_pressure_to_hybrid_levels(pressure_var, pressure_levels, model_pressu
 
 @njit
 def interp_geopotential_to_pressure_levels(
-    model_var,
+    geopotential,
     model_pressure,
     interp_pressures,
     surface_pressure,
     surface_geopotential,
-    geopotential,
     temperature_k,
     temp_height=150,
 ):
@@ -308,12 +306,11 @@ def interp_geopotential_to_pressure_levels(
     below the surface based on Eq. 15 in Trenberth et al. (1993).
 
     Args:
-        model_var (np.ndarray): 3D field on hybrid sigma-pressure levels with shape (levels, y, x).
+        geopotential (np.ndarray): geopotential in units m^2/s^2.
         model_pressure (np.ndarray): 3D pressure field with shape (levels, y, x) in units Pa or hPa
         interp_pressures (np.ndarray): pressure levels for interpolation in units Pa or hPa.
         surface_pressure (np.ndarray): pressure at the surface in units Pa or hPa.
         surface_geopotential (np.ndarray): geopotential at the surface in units m^2/s^2.
-        geopotential (np.ndarray): geopotential in units m^2/s^2.
         temperaure_k (np.ndarray): temperature  in units K.
         temp_height (float): height above ground of nearest vertical grid cell.
     Returns:
@@ -322,12 +319,12 @@ def interp_geopotential_to_pressure_levels(
     LAPSE_RATE = 0.0065  # K / m
     ALPHA = LAPSE_RATE * RDGAS / GRAVITY
     pressure_var = np.zeros(
-        (interp_pressures.shape[0], model_var.shape[1], model_var.shape[2]),
-        dtype=model_var.dtype,
+        (interp_pressures.shape[0], geopotential.shape[1], geopotential.shape[2]),
+        dtype=geopotential.dtype,
     )
     log_interp_pressures = np.log(interp_pressures)
-    for (i, j), v in np.ndenumerate(model_var[0]):
-        pressure_var[:, i, j] = np.interp(log_interp_pressures, np.log(model_pressure[:, i, j]), model_var[:, i, j])
+    for (i, j), v in np.ndenumerate(geopotential[0]):
+        pressure_var[:, i, j] = np.interp(log_interp_pressures, np.log(model_pressure[:, i, j]), geopotential[:, i, j])
         for pl, interp_pressure in enumerate(interp_pressures):
             if interp_pressure > surface_pressure[i, j]:
                 height_agl = (geopotential[:, i, j] - surface_geopotential[i, j]) / GRAVITY
