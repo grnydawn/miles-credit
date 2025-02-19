@@ -104,6 +104,7 @@ def load_fsdp_or_checkpoint_policy(conf):
 
 def load_model(conf, load_weights=False):
     conf = copy.deepcopy(conf)
+
     model_conf = conf["model"]
 
     if "type" not in model_conf:
@@ -120,18 +121,22 @@ def load_model(conf, load_weights=False):
         logger.info(message)
         if load_weights:
             model = model(**model_conf)
-            save_loc = conf["save_loc"]
-            ckpt = os.path.join(save_loc, "checkpoint.pt")
+            save_loc = os.path.expandvars(conf["save_loc"])
 
+            if os.path.isfile(os.path.join(save_loc, "model_checkpoint.pt")):
+                ckpt = os.path.join(save_loc, "model_checkpoint.pt")
+            else:
+                ckpt = os.path.join(save_loc, "checkpoint.pt")
             if not os.path.isfile(ckpt):
-                raise ValueError(
-                    "No saved checkpoint exists. You must train a model first. Exiting."
-                )
+                raise ValueError("No saved checkpoint exists. You must train a model first. Exiting.")
 
             logging.info(f"Loading a model with pre-trained weights from path {ckpt}")
 
             checkpoint = torch.load(ckpt)
-            model.load_state_dict(checkpoint["model_state_dict"])
+            if "model_state_dict" in checkpoint.keys():
+                model.load_state_dict(checkpoint["model_state_dict"], strict=False)
+            else:
+                model.load_state_dict(checkpoint, strict=False)
             return model
 
         return model(**model_conf)
