@@ -10,9 +10,13 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: mamba-org/setup-micromamba@v1
+      - uses: mamba-org/setup-micromamba@v2
         with:
           environment-file: environment_cpu.yml
+          init-shell: >-
+            bash
+          cache-environment: true
+          post-cleanup: 'all'
       - name: Check conda
         run: |
           conda info
