@@ -891,7 +891,6 @@ class ToTensor_ERA5_and_Forcing:
                 dataset_vars = list(value.data_vars)
 
                 self.flag_upper_air = all([varname in dataset_vars for varname in self.varname_upper_air])
-                logger.info(self.flag_upper_air)
                 if self.flag_upper_air:
                     for var_name in self.varname_upper_air:
                         var_value = value[var_name].values

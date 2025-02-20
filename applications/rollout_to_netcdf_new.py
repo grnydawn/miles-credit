@@ -299,8 +299,6 @@ def predict(rank, world_size, conf, p):
                 x_forcing_batch = batch["x_forcing_static"].to(device).permute(0, 2, 1, 3, 4).float()
                 if ensemble_size > 1:
                     x_forcing_batch = torch.repeat_interleave(x_forcing_batch, ensemble_size, 0)
-                logger.info(x_forcing_batch.shape)
-                logger.info(x.shape)
                 x = torch.cat((x, x_forcing_batch), dim=1)
 
             # Clamp if needed

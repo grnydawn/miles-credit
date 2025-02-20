@@ -1024,6 +1024,80 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
 
         return dataset
 
+    # def load_zarr_as_input(self, i_file, i_init_start, i_init_end, mode="input"):
+    #     # get the needed file from a list of zarr files
+    #     # open the zarr file as xr.dataset and subset based on the needed time
+
+    #     # sliced_x: the final output, starts with an upper air xr.dataset
+    #     sliced_x = self.ds_read_and_subset(self.filenames[i_file], i_init_start, i_init_end + 1, self.varname_upper_air)
+    #     # surface variables
+    #     if self.filename_surface is not None:
+    #         sliced_surface = self.ds_read_and_subset(
+    #             self.filename_surface[i_file],
+    #             i_init_start,
+    #             i_init_end + 1,
+    #             self.varname_surface,
+    #         )
+    #         # merge surface to sliced_x
+    #         sliced_surface["time"] = sliced_x["time"]
+    #         sliced_x = sliced_x.merge(sliced_surface)
+
+    #     if mode in ["input", "forcing"]:
+    #         # dynamic forcing variables
+    #         if self.filename_dyn_forcing is not None:
+    #             sliced_dyn_forcing = self.ds_read_and_subset(
+    #                 self.filename_dyn_forcing[i_file],
+    #                 i_init_start,
+    #                 i_init_end + 1,
+    #                 self.varname_dyn_forcing,
+    #             )
+    #             # merge surface to sliced_x
+    #             sliced_dyn_forcing["time"] = sliced_x["time"]
+    #             sliced_x = sliced_x.merge(sliced_dyn_forcing)
+
+    #         # forcing / static
+    #         if self.filename_forcing is not None:
+    #             sliced_forcing = get_forward_data(self.filename_forcing)
+    #             sliced_forcing = drop_var_from_dataset(sliced_forcing, self.varname_forcing)
+
+    #             # See also `ERA5_and_Forcing_Dataset`
+    #             # matching month, day, hour between forcing and upper air [time]
+    #             # this approach handles leap year forcing file and non-leap-year upper air file
+    #             month_day_forcing = extract_month_day_hour(np.array(sliced_forcing["time"]))
+    #             month_day_inputs = extract_month_day_hour(np.array(sliced_x["time"]))
+    #             # indices to subset
+    #             ind_forcing, _ = find_common_indices(month_day_forcing, month_day_inputs)
+    #             sliced_forcing = sliced_forcing.isel(time=ind_forcing)
+    #             # forcing and upper air have different years but the same mon/day/hour
+    #             # safely replace forcing time with upper air time
+    #             sliced_forcing["time"] = sliced_x["time"]
+
+    #             # merge forcing to sliced_x
+    #             sliced_x = sliced_x.merge(sliced_forcing)
+
+    #         if self.filename_static is not None:
+    #             sliced_static = get_forward_data(self.filename_static)
+    #             sliced_static = drop_var_from_dataset(sliced_static, self.varname_static)
+    #             sliced_static = sliced_static.expand_dims(dim={"time": len(sliced_x["time"])})
+    #             sliced_static["time"] = sliced_x["time"]
+    #             # merge static to sliced_x
+    #             sliced_x = sliced_x.merge(sliced_static)
+
+    #     elif mode == "target":
+    #         # diagnostic
+    #         if self.filename_diagnostic is not None:
+    #             sliced_diagnostic = self.ds_read_and_subset(
+    #                 self.filename_diagnostic[i_file],
+    #                 i_init_start,
+    #                 i_init_end + 1,
+    #                 self.varname_diagnostic,
+    #             )
+    #             # merge diagnostics to sliced_x
+    #             sliced_diagnostic["time"] = sliced_x["time"]
+    #             sliced_x = sliced_x.merge(sliced_diagnostic)
+
+    #     return sliced_x
+
     def load_zarr_as_input(self, i_file, i_init_start, i_init_end, mode="input"):
         # get the needed file from a list of zarr files
         # open the zarr file as xr.dataset and subset based on the needed time
@@ -1201,12 +1275,15 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
     def __getitem__(self, _):
         batch = {}
 
-        # logger.info(f'rank={self.rank} current_idx={self.current_batch_indices} all_indices={self.batch_indices}')
+        # logger.info(f"rank={self.rank} current_idx={self.current_batch_indices} all_indices={self.batch_indices}")
         if self.forecast_step_counts[0] == self.forecast_period:
             self.initialize_batch()
 
         if self.forecast_step_counts[0] == 0:
             self.data_lookup = [self.find_start_stop_indices(idx) for idx in self.current_batch_indices]
+            mode = "input"
+        else:
+            mode = "forcing"
 
         for k, idx in enumerate(self.current_batch_indices):
             # Get data for current timestep
@@ -1214,16 +1291,14 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
             i_file, i_init_start, i_init_end, N_times = self.data_lookup[k][current_t]
 
             # Load input data
-            sliced_x = self.load_zarr_as_input(i_file, i_init_start, i_init_end, mode="input" if not k else "forcing")
+            sliced_x = self.load_zarr_as_input(i_file, i_init_start, i_init_end, mode=mode)
             # Handle cross-file data if needed
             if (len(sliced_x["time"]) < self.history_len) or (i_init_end + 1 >= N_times):
                 next_file_idx = self.filenames.index(self.filenames[i_file]) + 1
                 if next_file_idx >= len(self.filenames):
                     raise OSError("End of available data reached.")
                 # Input data
-                sliced_x_next = self.load_zarr_as_input(
-                    next_file_idx, 0, self.history_len, mode="input" if not k else "forcing"
-                )
+                sliced_x_next = self.load_zarr_as_input(next_file_idx, 0, self.history_len, mode=mode)
                 sliced_x = xr.concat([sliced_x, sliced_x_next], dim="time").isel(time=slice(0, self.history_len))
                 # Truth data
                 if not self.skip_target:
