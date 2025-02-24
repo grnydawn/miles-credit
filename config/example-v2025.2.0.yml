@@ -9,7 +9,8 @@
 #     - loss
 #     - predict
 #     - pbs
-    
+
+# Note: this is NOT a runable YAML. The purposes is to explain how to use each keyword with examples.
 # --------------------------------------------------------------------------------------------------------------------- #
 
 
@@ -64,6 +65,10 @@ data:
     static_variables: ['Z_GDS4_SFC', 'LSM'] 
     save_loc_static: '/glade/derecho/scratch/ksha/CREDIT_data/static_norm_old.nc'
 
+    # physics file
+    # this file provides parameters for the conservation schemes in the post_block section
+    save_loc_physics: '/glade/derecho/scratch/ksha/CREDIT_data/ERA5_mlevel_1deg/static/ERA5_mlevel_1deg_static_subset.zarr'
+    
     # z-score files, they must be zarr or nc with (level,) coords
     # they MUST include all the 
     #     'variables', 'surface_variables', 'dynamic_forcing_variables', 'diagnostic_variables' above
