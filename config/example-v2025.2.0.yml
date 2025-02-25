@@ -375,9 +375,9 @@ model:
             # NOTE: `fix_level_num` is counted from surface to atmos top
             fix_level_num: 7
             lon_lat_level_name: ['lon2d', 'lat2d', 'coef_a', 'coef_b']
-            # the variable name of surface pressure (only available for sigma)
+            # the variable name of surface pressure (only available for sigma coords)
             surface_pressure_name: ['SP']
-            # the variable name of q
+            # the variable name of q [kg/kg]
             specific_total_water_name: ['specific_total_water']
 
         global_water_fixer:
@@ -388,9 +388,13 @@ model:
             grid_type: 'sigma'
             midpoint: True
             lon_lat_level_name: ['lon2d', 'lat2d', 'coef_a', 'coef_b']
+            # the variable name of surface pressure (only available for sigma coords)
             surface_pressure_name: ['SP']
+            # the variable name of q [kg/kg]
             specific_total_water_name: ['specific_total_water']
+            # the variable name of total precipitation as [m]
             precipitation_name: ['total_precipitation']
+            # the variable name of evaporation [m]
             evaporation_name: ['evaporation']
 
         global_energy_fixer:
@@ -401,14 +405,31 @@ model:
             grid_type: 'sigma'
             midpoint: True
             lon_lat_level_name: ['lon2d', 'lat2d', 'coef_a', 'coef_b']
+            # the variable name of surface pressure (only available for sigma coords)
             surface_pressure_name: ['SP']
+            # the variable name of air temperature on all levels [K]
             air_temperature_name: ['temperature']
+            # the variable name of q [kg/kg]
             specific_total_water_name: ['specific_total_water']
+            # the variable name of zonal wind on all levels [m/s]
             u_wind_name: ['u_component_of_wind']
+            # the variable name of meridional wind on all levels [m/s]
             v_wind_name: ['v_component_of_wind']
+            # the variable name of geopotential at surface [m^2/s^2]
+            # NOTE: this variable is stored in conf['data']['save_loc_physics']
+            #       and it is NOT nornalized
             surface_geopotential_name: ['geopotential_at_surface']
+            # the variable names of 
+            #     net shortwave radiation flux on the top-of-atmosphere [J/m^2]
+            #     net longwave radiation flux on the top-of-atmosphere [J/m^2]
             TOA_net_radiation_flux_name: ['top_net_solar_radiation', 'top_net_thermal_radiation']
+            # the variable names of 
+            #     net shortwave radiation flux on the surface [J/m^2]
+            #     net longwave radiation flux on the surface [J/m^2]
             surface_net_radiation_flux_name: ['surface_net_solar_radiation', 'surface_net_thermal_radiation']
+            # the variable names of 
+            #     net sensible heat flux on the surface [J/m^2]
+            #     net latent heat flux on the surface [J/m^2]
             surface_energy_flux_name: ['surface_sensible_heat_flux', 'surface_latent_heat_flux',]
 
 
