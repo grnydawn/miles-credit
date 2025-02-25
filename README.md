@@ -19,7 +19,8 @@ Going forward, care must be taken when installing new packages so that PyTorch a
 
 ```bash
 conda activate credit-derecho
-git clone git@github.com:NCAR/miles-credit.git
+# needed an sshkey to use this command: git clone git@github.com:NCAR/miles-credit.git
+git clone https://github.com/NCAR/miles-credit.git
 cd miles-credit
 ```
 
@@ -34,7 +35,8 @@ Henceforth, when adding new packages aim to use the no dependenices option.
 ## Standard Installation 
 Clone from miles-credit github page:
 ```bash
-git clone git@github.com:NCAR/miles-credit.git
+# needed an sshkey to use this command: git clone git@github.com:NCAR/miles-credit.git
+git clone https://github.com/NCAR/miles-credit.git
 cd miles-credit
 ```
 
