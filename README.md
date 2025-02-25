@@ -32,6 +32,8 @@ pip install --no-deps .
 
 Henceforth, when adding new packages aim to use the no dependenices option. 
 
+To test your Derecho installation, skip to [Launch with PBS on Casper or Derecho](#launch-with-pbs-on-casper-or-derecho).
+
 ## Standard Installation 
 Clone from miles-credit github page:
 ```bash
