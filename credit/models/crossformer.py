@@ -70,6 +70,7 @@ class UpBlock(nn.Module):
     def __init__(self, in_chans, out_chans, num_groups, num_residuals=2):
         super().__init__()
         self.conv = nn.ConvTranspose2d(in_chans, out_chans, kernel_size=2, stride=2)
+        self.output_channels = out_chans
 
         blk = []
         for i in range(num_residuals):
@@ -420,10 +421,13 @@ class CrossFormer(BaseModel):
         self.use_post_block = post_conf["activate"]
 
         # input channels
+        self.input_only_channels = input_only_channels
         input_channels = channels * levels + surface_channels + input_only_channels
+        self.input_channels = input_channels
 
         # output channels
         output_channels = channels * levels + surface_channels + output_only_channels
+        self.output_channels = output_channels
 
         dim = cast_tuple(dim, 4)
         depth = cast_tuple(depth, 4)
