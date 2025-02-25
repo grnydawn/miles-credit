@@ -336,10 +336,32 @@ model:
         # The section of conservation schemes
         # Technical details: https://arxiv.org/abs/2501.05648
         # =================================================== #
+        # Shared keywords:
+        # activate: turn-on this operation
+        #
+        # denorm: de-normalize tensors to the real space for the operation
+        #
+        # activate_outside_model: True = run this operation inside the post_block
+        #                         False = run this operation inside the trainer (useful for multistep training)
+        #
+        # grid_type: pressure = constant pressure coordinate
+        #            sigma = hybrid sigma-pressure coordinate
+        #
+        # lon_lat_level_name: required variable names in conf['data']['save_loc_physics']
+        #                     For grid_type = pressure, 2-D lat/lon grids are required (e.g., 'lon2d', 'lat2d')
+        #                     For grid_type = sigma, 2-D lat/lon grids and sigma level coefs are required
+        #                                                          (e.g., 'lon2d', 'lat2d', 'coef_a', 'coef_b')
+        # midpoint: True = use "half-level". The `level` coordinate in conf['data']['save_loc_physics'] 
+        #                                                                represent the edges of the each level.
+        #           False = use "full-level". The `level` coordinate represents the center.
+        #
+        # =================================================== #
         tracer_fixer:
             activate: True
             denorm: True
+            # Name of variables that needs to be corrected 
             tracer_name: ['specific_total_water', 'total_precipitation']
+            # thresholds, values below the threshold will be corrected to the threshold
             tracer_thres: [0, 0]
 
         global_mass_fixer:
@@ -349,9 +371,13 @@ model:
             denorm: True
             grid_type: 'sigma'
             midpoint: True
+            # fix_level_num: do not modify q values above the given level
+            # NOTE: `fix_level_num` is counted from surface to atmos top
             fix_level_num: 7
             lon_lat_level_name: ['lon2d', 'lat2d', 'coef_a', 'coef_b']
+            # the variable name of surface pressure (only available for sigma)
             surface_pressure_name: ['SP']
+            # the variable name of q
             specific_total_water_name: ['specific_total_water']
 
         global_water_fixer:
