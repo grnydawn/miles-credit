@@ -971,7 +971,7 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
             xarray_dataset = get_forward_data(filename_static)
             xarray_dataset = keep_dataset_vars(xarray_dataset, varname_static)
 
-            self.xarray_static = xarray_dataset
+            self.xarray_static = xarray_dataset.load()
         else:
             self.xarray_static = None
 
@@ -1040,7 +1040,7 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
             # sliced_x = self.ds_read_and_subset(
             #     self.filenames[i_file], i_init_start, i_init_end + 1, self.varname_upper_air
             # )
-            sliced_x = self.all_files[i_file].isel(time=slice(i_init_start, i_init_end + 1))
+            sliced_x = self.all_files[i_file].isel(time=slice(i_init_start, i_init_end + 1)).load()
             # surface variables
             if self.filename_surface is not None:
                 # sliced_surface = self.ds_read_and_subset(
@@ -1050,14 +1050,16 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
                 #    self.varname_surface,
                 # )
                 # merge surface to sliced_x
-                sliced_surface = self.surface_files[i_file].isel(time=slice(i_init_start, i_init_end + 1))
+                sliced_surface = self.surface_files[i_file].isel(time=slice(i_init_start, i_init_end + 1)).load()
                 # sliced_surface["time"] = sliced_x["time"]
                 sliced_x = sliced_x.merge(sliced_surface)
 
         if mode in ["input", "forcing"]:
             # dynamic forcing variables
             if self.filename_dyn_forcing is not None:
-                sliced_dyn_forcing = self.dyn_forcing_files[i_file].isel(time=slice(i_init_start, i_init_end + 1))
+                sliced_dyn_forcing = (
+                    self.dyn_forcing_files[i_file].isel(time=slice(i_init_start, i_init_end + 1)).load()
+                )
                 # sliced_dyn_forcing = self.ds_read_and_subset(
                 #    self.filename_dyn_forcing[i_file],
                 #    i_init_start,
@@ -1083,7 +1085,7 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
                 month_day_inputs = extract_month_day_hour(np.array(sliced_x["time"]))
                 # indices to subset
                 ind_forcing, _ = find_common_indices(month_day_forcing, month_day_inputs)
-                sliced_forcing = sliced_forcing.isel(time=ind_forcing)
+                sliced_forcing = sliced_forcing.isel(time=ind_forcing).load()
                 # forcing and upper air have different years but the same mon/day/hour
                 # safely replace forcing time with upper air time
                 sliced_forcing["time"] = sliced_x["time"]
