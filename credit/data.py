@@ -16,7 +16,7 @@ Content:
 """
 
 # system tools
-from typing import TypedDict, Union
+from typing import TypedDict, Union, List
 
 # data utils
 import datetime
@@ -107,7 +107,7 @@ def reshape_only(x1):
     return x1.permute(0, 2, 1, 3, 4)
 
 
-def get_forward_data(filename) -> xr.DataArray:
+def get_forward_data(filename) -> xr.Dataset:
     """
     Check nc vs. zarr files
     open file as xr.Dataset
@@ -207,6 +207,20 @@ def drop_var_from_dataset(xarray_dataset, varname_keep):
     assert len(varname_diff) == 0, "Variable name: {} missing".format(varname_diff)
 
     return xarray_dataset
+
+
+def keep_dataset_vars(xarray_dataset: xr.Dataset, varnames_keep: List[str]):
+    """
+    Return a version of an xarray dataset with only a selected subset of variables.
+
+    Args:
+        xarray_dataset (xr.Dataset): The xarray dataset.
+        varnames_keep (List[str]): a list of variable names to be kept.
+
+    Returns:
+
+    """
+    return xarray_dataset[[varnames_keep]]
 
 
 class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
