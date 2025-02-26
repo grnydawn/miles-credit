@@ -142,8 +142,8 @@ data:
 trainer:
     # Choose the training routine
     # This is deprecated as of credit-2.0
-    # Use universal with all of the above dataset_types
-    type: universal
+    # Options: era5, cam, or conus404
+    type: era5
 
     # the keyword that controls GPU usage
     # fsdp: fully sharded data parallel
