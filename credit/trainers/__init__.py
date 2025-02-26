@@ -10,9 +10,13 @@ logger = logging.getLogger(__name__)
 
 # Define trainer types and their corresponding classes
 trainer_types = {
-    "universal": (
+    "era5": (
         TrainerERA5,
         "Loading a single or multi-step trainer for the ERA5 dataset that uses gradient accumulation on forecast lengths > 1.",
+    ),
+    "cam": (
+        TrainerERA5,
+        "Loading a single or multi-step trainer for the CAM dataset that uses gradient accumulation on forecast lengths > 1.",
     ),
     "conus404": (Trainer404, "Loading a standard trainer for the CONUS404 dataset."),
 }
