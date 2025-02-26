@@ -40,9 +40,7 @@ dependencies:
     - bridgescaler
     - torch 
     - torchvision 
-    - rotary-embedding-torch
     - segmentation-models-pytorch>=0.3.4
-    - vector_quantize_pytorch
     - torch-harmonics
     - torch_geometric
     - haversine
