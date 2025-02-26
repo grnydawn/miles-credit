@@ -366,8 +366,8 @@ def predict(rank, world_size, conf, p):
 
             if batch["stop_forecast"][0]:
                 # Wait for processes to finish
-                for result in results:
-                    result.get()
+                # for result in results:
+                #    result.get()
 
                 y_pred = None
                 gc.collect()

@@ -220,7 +220,7 @@ def keep_dataset_vars(xarray_dataset: xr.Dataset, varnames_keep: List[str]):
     Returns:
 
     """
-    return xarray_dataset[[varnames_keep]]
+    return xarray_dataset[varnames_keep]
 
 
 class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
