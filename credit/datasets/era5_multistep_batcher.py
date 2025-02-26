@@ -1021,7 +1021,7 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
             dataset = xr.open_zarr(filename, consolidated=True)
 
         dataset = dataset.isel(time=slice(time_start, time_end))
-
+        dataset = dataset.drop_vars(list(dataset.data_vars))
         return dataset
 
     # def load_zarr_as_input(self, i_file, i_init_start, i_init_end, mode="input"):
