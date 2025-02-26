@@ -1101,8 +1101,10 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
     def load_zarr_as_input(self, i_file, i_init_start, i_init_end, mode="input"):
         # get the needed file from a list of zarr files
         # open the zarr file as xr.dataset and subset based on the needed time
-        if mode == "forcing":
-            sliced_x = self.get_time_variable(self.filenames[i_file], i_init_start, i_init_end + 1)
+        #
+        # <-------------- comment out unnecessary loading
+        # if mode == "forcing":
+        #     sliced_x = self.get_time_variable(self.filenames[i_file], i_init_start, i_init_end + 1)
 
         if mode in ["input", "target"]:
             # sliced_x: the final output, starts with an upper air xr.dataset
