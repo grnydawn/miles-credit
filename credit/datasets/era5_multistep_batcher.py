@@ -1019,9 +1019,10 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
             dataset = xr.open_dataset(filename, decode_times=False, engine="h5netcdf")
         else:
             dataset = xr.open_zarr(filename, consolidated=True)
-
-        dataset = dataset.isel(time=slice(time_start, time_end))
+        
         dataset = dataset.drop_vars(list(dataset.data_vars))
+        dataset = dataset.isel(time=slice(time_start, time_end))
+        
         return dataset
 
     # def load_zarr_as_input(self, i_file, i_init_start, i_init_end, mode="input"):
@@ -1141,7 +1142,7 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
             if self.filename_forcing is not None:
                 sliced_forcing = get_forward_data(self.filename_forcing)
                 sliced_forcing = drop_var_from_dataset(sliced_forcing, self.varname_forcing)
-
+                
                 # See also `ERA5_and_Forcing_Dataset`
                 # matching month, day, hour between forcing and upper air [time]
                 # this approach handles leap year forcing file and non-leap-year upper air file
@@ -1153,10 +1154,10 @@ class Predict_Dataset_Batcher(torch.utils.data.Dataset):
                 # forcing and upper air have different years but the same mon/day/hour
                 # safely replace forcing time with upper air time
                 sliced_forcing["time"] = sliced_x["time"]
-
+                
                 # merge forcing to sliced_x
                 sliced_x = sliced_x.merge(sliced_forcing)
-
+                
             if self.filename_static is not None:
                 sliced_static = get_forward_data(self.filename_static)
                 sliced_static = drop_var_from_dataset(sliced_static, self.varname_static)
