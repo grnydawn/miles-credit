@@ -18,9 +18,7 @@ jupyter
 einops
 echo-opt
 bridgescaler
-rotary-embedding-torch
 segmentation-models-pytorch
-vector-quantize-pytorch
 haversine
 pvlib
 pre-commit
