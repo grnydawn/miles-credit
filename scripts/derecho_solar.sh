@@ -13,7 +13,7 @@ conda activate hcredit
 cd ..
 mpiexec -n 512 -ppn 128 python -u applications/calc_global_solar.py \
   -s "${PBS_ARRAY_INDEX}-01-01" \
-  -e "${PBS_ARRAY_INDEX}-12-31 18:00" \
+  -e "${PBS_ARRAY_INDEX}-12-31 23:00" \
   -i /glade/u/home/wchapman/MLWPS/DataLoader/LSM_static_variables_ERA5_zhght.nc  \
   -t 1h \
   -u 10Min \

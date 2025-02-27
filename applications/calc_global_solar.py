@@ -31,7 +31,7 @@ def main():
         help="Geopotential height variable.",
     )
     parser.add_argument("-o", "--output", type=str, required=True, help="Output directory")
-    parser.add_argument("-z", "--zarr", type=str, action="store_true", help="Output as zarr files.")
+    parser.add_argument("-z", "--zarr", action="store_true", help="Output as zarr files.")
     args = parser.parse_args()
     grid_points_sub = None
     start_date_ts = pd.Timestamp(args.start)
@@ -58,8 +58,8 @@ def main():
     rank_points = comm.scatter(grid_points_sub, root=0)
     print(rank_points.shape)
     for r, rank_point in enumerate(rank_points):
-        if r % 10 == 0:
-            print(rank, rank_point, r, rank_points.shape[0])
+        if r % 100 == 0:
+            print(f"{rank}: {r:d}/{rank_points.shape[0]:d}")
         solar_point = get_solar_radiation_loc(
             rank_point[0],
             rank_point[1],
@@ -89,8 +89,6 @@ def main():
                 solar_grid.loc[:, other_point[0], other_point[1]] = other_point[2:]
 
     if rank == 0:
-        print(solar_grid)
-        print(solar_grid.max())
         if not os.path.exists(args.output):
             os.makedirs(args.output)
         date_format = "%Y-%m-%d_%H%M"
@@ -104,7 +102,7 @@ def main():
                 mode="w",
                 encoding={
                     "tsi": {
-                        "chunksizes": (
+                        "chunks": (
                             1,
                             solar_grid.shape[1],
                             solar_grid.shape[2],
@@ -118,9 +116,6 @@ def main():
                 os.path.join(args.output, filename),
                 encoding={
                     "tsi": {
-                        "zlib": True,
-                        "complevel": 1,
-                        "shuffle": True,
                         "chunksizes": (
                             1,
                             solar_grid.shape[1],
