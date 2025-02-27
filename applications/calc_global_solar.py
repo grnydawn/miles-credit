@@ -15,7 +15,7 @@ def main():
     parser.add_argument("-s", "--start", type=str, default="2000-01-01", help="Start date (inclusive)")
     parser.add_argument("-e", "--end", type=str, default="2000-12-31 23:00", help="End date (inclusive")
     parser.add_argument("-t", "--step", type=str, default="1h", help="Step frequency")
-    parser.add_argument("-u", "--sub", type=str, default="1Min", help="Sub Frequency")
+    parser.add_argument("-u", "--sub", type=str, default="10Min", help="Sub Frequency")
     parser.add_argument(
         "-i",
         "--input",
@@ -122,7 +122,7 @@ def main():
                     "tsi": {
                         "zlib": True,
                         "complevel": 1,
-                        "shuffle": False,
+                        "shuffle": True,
                         "chunksizes": (
                             1,
                             solar_grid.shape[1],
