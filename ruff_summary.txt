@@ -18,3 +18,10 @@ Docstring errors:
     manually edited test/test_postblock.py
     manually edited credit/transforms.py
       Found 1437 errors.
+
+  Exclude notebooks:
+    ignore = ["D417"]
+    manually edited test/test_postblock.py
+    manually edited credit/transforms.py
+    manually editing credit/data.py
+      Found 1431 errors.
