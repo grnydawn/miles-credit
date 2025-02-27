@@ -10,11 +10,11 @@ seed: 1000
 data:
     # upper-air variables
     variables: ['U','V','T','Q']
-    save_loc: '/glade/derecho/scratch/wchapman/y_TOTAL*'
+    save_loc: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/y_TOTAL*'
     
     # surface variables
     surface_variables: ['SP','t2m', 'V500','U500','T500','Z500','Q500']
-    save_loc_surface: '/glade/derecho/scratch/wchapman/y_TOTAL*'
+    save_loc_surface: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/y_TOTAL*'
     
     # dynamic forcing variables
     dynamic_forcing_variables: ['tsi']
