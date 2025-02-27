@@ -4,45 +4,26 @@ import logging
 
 # Import model classes
 from credit.models.crossformer import CrossFormer
-from credit.models.crossformer_may1 import CrossFormer as CrossFormerDep
-from credit.models.simple_vit import SimpleViT
-from credit.models.cube_vit import CubeViT
-from credit.models.vit2d import ViT2D
-from credit.models.vit3d import ViT3D
-from credit.models.rvt import RViT
 from credit.models.unet import SegmentationModel
 from credit.models.unet404 import SegmentationModel404
 from credit.models.fuxi import Fuxi
 from credit.models.swin import SwinTransformerV2Cr
 from credit.models.graph import GraphResTransfGRU
 from credit.models.debugger_model import DebuggerModel
+from credit.models.crossformer_ensemble import CrossFormerWithNoise
 
 
 logger = logging.getLogger(__name__)
 
 # Define model types and their corresponding classes
 model_types = {
-    "vit": (ViT2D, "Loading a Vision transformer architecture ..."),
-    "vit3d": (ViT3D, "Loading a Vision transformer architecture ..."),
-    "rvt": (
-        RViT,
-        "Loading a custom rotary transformer architecture with conv attention ...",
-    ),
-    "simple-vit": (
-        SimpleViT,
-        "Loading a simplified vit rotary transformer architecture ...",
-    ),
-    "cube-vit": (
-        CubeViT,
-        "Loading a simplified vit rotary transformer architecture with a 3D conv tokenizer ...",
-    ),
     "crossformer": (
         CrossFormer,
         "Loading the CrossFormer model with a conv decoder head and skip connections ...",
     ),
-    "crossformer-deprecated": (
-        CrossFormerDep,
-        "Loading the CrossFormer model with a conv decoder head and skip connections ...",
+    "crossformer-style": (
+        CrossFormerWithNoise,
+        "Loading the ensemble CrossFormer model with a Style-GAN-like noise injection scheme ...",
     ),
     "unet": (SegmentationModel, "Loading a unet model"),
     "unet404": (SegmentationModel404, "Loading unet404 model"),
