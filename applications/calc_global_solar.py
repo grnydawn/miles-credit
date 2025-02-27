@@ -1,4 +1,4 @@
-from credit.solar import get_solar_radiation_loc
+from credit.solar import get_solar_radiation_loc, get_toa_radiation
 from mpi4py import MPI
 import argparse
 import xarray as xr
@@ -36,6 +36,7 @@ def main():
     grid_points_sub = None
     start_date_ts = pd.Timestamp(args.start)
     end_date_ts = pd.Timestamp(args.end)
+    toa_radiation = None
     if rank == 0:
         dates = pd.date_range(start=start_date_ts, end=end_date_ts, freq=args.step)
         with xr.open_dataset(args.input) as static_ds:
@@ -55,12 +56,15 @@ def main():
             grid_points_sub = [
                 grid_points[split_indices[s] : split_indices[s + 1]] for s in range(split_indices.size - 1)
             ]
+        toa_radiation = get_toa_radiation(args.start, args.end, step_freq=args.step, sub_freq=args.sub)
+    toa_radiation = comm.bcast(toa_radiation, root=0)
     rank_points = comm.scatter(grid_points_sub, root=0)
     print(rank_points.shape)
     for r, rank_point in enumerate(rank_points):
         if r % 100 == 0:
             print(f"{rank}: {r:d}/{rank_points.shape[0]:d}")
         solar_point = get_solar_radiation_loc(
+            toa_radiation,
             rank_point[0],
             rank_point[1],
             rank_point[2],
@@ -116,6 +120,9 @@ def main():
                 os.path.join(args.output, filename),
                 encoding={
                     "tsi": {
+                        "zlib": True,
+                        "complevel": 1,
+                        "shuffle": False,
                         "chunksizes": (
                             1,
                             solar_grid.shape[1],
