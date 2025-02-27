@@ -2,6 +2,8 @@
 This scripts contains functions that performs nearest, bilinear, and conservative interpolation
 on xarray.Datasets. The original version of this script is available at WeatherBench2.
 
+Note: only rectalinear grids (one dimensional lat/lon coordinates) are supported.
+
 Reference
  - WeatherBench2 regridding: 
      https://github.com/google-research/weatherbench2/blob/main/weatherbench2/regridding.py
