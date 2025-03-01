@@ -141,5 +141,5 @@ def test_fuxi():
 
 
 if __name__ == "__main__":
-    # test_unet()
-    test_crossformer()
+    test_unet()
+    # test_crossformer()
