@@ -183,7 +183,7 @@ def create_pressure_grid(surface_pressure, model_a_half, model_b_half):
         model_a_3d = model_a_half.reshape(-1, 1, 1)
         model_b_3d = model_b_half.reshape(-1, 1, 1)
         for i in range(surface_pressure.shape[0]):
-            pressure_3d_half = model_a_3d + model_b_3d * surface_pressure[i]
+            pressure_3d_half[i] = model_a_3d + model_b_3d * surface_pressure[i]
             pressure_3d[i] = 0.5 * (pressure_3d_half[:-1] + pressure_3d_half[1:])
     else:
         # Generate the 3D pressure field for a single surface pressure grid.
@@ -191,6 +191,69 @@ def create_pressure_grid(surface_pressure, model_a_half, model_b_half):
         model_b_3d = model_b_half.reshape(-1, 1, 1)
         pressure_3d_half = model_a_3d + model_b_3d * surface_pressure
         pressure_3d = 0.5 * (pressure_3d_half[:-1] + pressure_3d_half[1:])
+    return pressure_3d, pressure_3d_half
+
+
+@njit
+def create_reduced_pressure_grid(surface_pressure, model_a_full, model_b_full):
+    """
+    Create a 3D pressure field at model levels from the surface pressure field and the reduced set of hybrid sigma-
+    pressure levels used in the CREDIT models. This function assumes that the coefficients for the full levels are
+    being passed and then derives the half levels by taking the geometric means of the a and b coefficients on full
+    levels. Conversion is `pressure_3d = a + b * SP`.
+
+    Args:
+        surface_pressure (np.ndarray): (time, latitude, longitude) or (latitude, longitude) grid in units of Pa.
+        model_a_half (np.ndarray): a coefficients at each model level being used in units of Pa.
+        model_b_half (np.ndarray): b coefficients at each model level being used (unitness).
+
+    Returns:
+        pressure_3d: 3D pressure field with dimensions of surface_pressure and number of levels from model_a and model_b.
+    """
+    assert model_a_full.size == model_b_full.size, "Model pressure coefficient arrays do not match."
+    if surface_pressure.ndim == 3:
+        # Generate the 3D pressure field for a time series of surface pressure grids
+        pressure_3d = np.zeros(
+            (
+                surface_pressure.shape[0],
+                model_a_full.shape[0],
+                surface_pressure.shape[1],
+                surface_pressure.shape[2],
+            ),
+            dtype=surface_pressure.dtype,
+        )
+        pressure_3d_half = np.zeros(
+            (
+                surface_pressure.shape[0],
+                model_a_full.shape[0] + 1,
+                surface_pressure.shape[1],
+                surface_pressure.shape[2],
+            ),
+            dtype=surface_pressure.dtype,
+        )
+        model_a_half_mid = np.sqrt(model_a_full[1:] * model_a_full[:-1])
+        model_a_half = np.concatenate([0.0, model_a_half_mid, 0.0])
+        model_b_half_mid = np.sqrt(model_b_full[1:] * model_b_full[:-1])
+        model_b_half = np.concatenate([0.0, model_b_half_mid, 1.0])
+        model_a_half_3d = model_a_half.reshape(-1, 1, 1)
+        model_b_half_3d = model_b_half.reshape(-1, 1, 1)
+        model_a_full_3d = model_a_full.reshape(-1, 1, 1)
+        model_b_full_3d = model_b_full.reshape(-1, 1, 1)
+        for i in range(surface_pressure.shape[0]):
+            pressure_3d_half[i] = model_a_half_3d + model_b_half_3d * surface_pressure[i]
+            pressure_3d[i] = model_a_full_3d + model_b_full_3d * surface_pressure[i]
+    else:
+        # Generate the 3D pressure field for a single surface pressure grid.
+        model_a_half_mid = np.sqrt(model_a_full[1:] * model_a_full[:-1])
+        model_a_half = np.concatenate([0.0, model_a_half_mid, 0.0])
+        model_b_half_mid = np.sqrt(model_b_full[1:] * model_b_full[:-1])
+        model_b_half = np.concatenate([0.0, model_b_half_mid, 1.0])
+        model_a_half_3d = model_a_half.reshape(-1, 1, 1)
+        model_b_half_3d = model_b_half.reshape(-1, 1, 1)
+        model_a_full_3d = model_a_full.reshape(-1, 1, 1)
+        model_b_full_3d = model_b_full.reshape(-1, 1, 1)
+        pressure_3d_half = model_a_half_3d + model_b_half_3d * surface_pressure
+        pressure_3d = model_a_full_3d + model_b_full_3d * surface_pressure
     return pressure_3d, pressure_3d_half
 
 
@@ -211,8 +274,6 @@ def geopotential_from_model_vars(surface_geopotential, surface_pressure, tempera
         surface_pressure (np.ndarray): Surface pressure in shape (y, x) and units Pa
         temperature (np.ndarray): temperature in shape (levels, y, x) and units K
         mixing_ratio (np.ndarray): mixing ratio in shape (levels, y, x) and units kg/kg.
-        a_half (np.ndarray): a coefficients at each model half level being used in units of Pa.
-        b_half (np.ndarray): b coefficients at each model half level being used (unitness).
 
     Returns:
         model_geoptential (np.ndarray): geopotential on model levels in shape (levels, y, x)
@@ -240,7 +301,7 @@ def geopotential_from_model_vars(surface_geopotential, surface_pressure, tempera
 
 
 @njit
-def interp_hybrid_to_pressure_levels(model_var, model_pressure, interp_pressures):
+def interp_hybrid_to_pressure_levels(model_var, model_pressure, interp_pressures, use_log=True):
     """
     Interpolate data field from hybrid sigma-pressure vertical coordinates to pressure levels.
     `model_pressure` and `interp_pressure` should have consistent units with each other.
@@ -249,6 +310,8 @@ def interp_hybrid_to_pressure_levels(model_var, model_pressure, interp_pressures
         model_var (np.ndarray): 3D field on hybrid sigma-pressure levels with shape (levels, y, x).
         model_pressure (np.ndarray): 3D pressure field with shape (levels, y, x) in units Pa or hPa
         interp_pressures: (np.ndarray): pressure levels for interpolation in units Pa or hPa.
+        use_log (bool): If True, use the natural logarithm of the pressure as the interpolation coordinate.
+            Otherwise, use the pressure.
 
     Returns:
         pressure_var (np.ndarray): 3D field on pressure levels with shape (len(interp_pressures), y, x).
@@ -257,9 +320,16 @@ def interp_hybrid_to_pressure_levels(model_var, model_pressure, interp_pressures
         (interp_pressures.shape[0], model_var.shape[1], model_var.shape[2]),
         dtype=model_var.dtype,
     )
-    log_interp_pressures = np.log(interp_pressures)
+    if use_log:
+        interp_pres_coord = np.log(interp_pressures)
+    else:
+        interp_pres_coord = interp_pressures
     for (i, j), v in np.ndenumerate(model_var[0]):
-        pressure_var[:, i, j] = np.interp(log_interp_pressures, np.log(model_pressure[:, i, j]), model_var[:, i, j])
+        if use_log:
+            pres_coord = np.log(model_pressure[:, i, j])
+        else:
+            pres_coord = model_pressure[:, i, j]
+        pressure_var[:, i, j] = np.interp(interp_pres_coord, pres_coord, model_var[:, i, j])
     return pressure_var
 
 
@@ -407,6 +477,18 @@ def interp_temperature_to_pressure_levels(
                 a_ln_p = gamma * RDGAS / GRAVITY * np.log(interp_pressure / surface_pressure[i, j])
                 pressure_var[pl, i, j] = temp_surface_k * (1 + a_ln_p + 0.5 * a_ln_p**2 + 1 / 6.0 * a_ln_p**3)
     return pressure_var
+
+
+@njit
+def interp_hybrid_to_height_agl(model_var, interp_heights_m, geopotential, surface_geopotential):
+    model_height_agl = (geopotential - surface_geopotential) / GRAVITY
+    height_var = np.zeros(
+        (interp_heights_m.shape[0], model_var.shape[1], model_var.shape[2]),
+        dtype=model_var.dtype,
+    )
+    for (i, j), v in np.ndenumerate(model_var[0]):
+        height_var[:, i, j] = np.interp(interp_heights_m, model_height_agl[:, i, j], model_var[:, i, j])
+    return height_var
 
 
 @njit
