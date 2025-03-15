@@ -14,7 +14,6 @@ class RealtimePredictDataset(torch.utils.data.Dataset):
         varname_upper_air,
         varname_surface,
         varname_dyn_forcing,
-        varname_forcing,
         varname_static,
         varname_diagnostic,
         filenames=None,
@@ -33,7 +32,6 @@ class RealtimePredictDataset(torch.utils.data.Dataset):
         self.varname_upper_air = varname_upper_air
         self.varname_surface = varname_surface
         self.varname_dyn_forcing = varname_dyn_forcing
-        self.varname_forcing = varname_forcing
         self.varname_static = varname_static
         self.varname_diagnostic = varname_diagnostic
 
@@ -49,6 +47,7 @@ class RealtimePredictDataset(torch.utils.data.Dataset):
         self.forecast_times = pd.date_range(
             start=self.forecast_start_time, end=self.forecast_end_time, freq=self.forecast_timestep
         )
+        self.forecast_len = len(self.forecast_times)
         self.history_len = history_len
         self.transform = transform
         self.seed = seed
@@ -68,7 +67,7 @@ class RealtimePredictDataset(torch.utils.data.Dataset):
 
         # blocks that can handle no-sharing (each group has it own file)
         # surface
-        surface_files = None
+        self.surface_files = None
         if filename_surface is not None:
             surface_files = {}
             filename_surface = sorted(filename_surface)
@@ -162,7 +161,8 @@ class RealtimePredictDataset(torch.utils.data.Dataset):
                 if self.filename_static is not None:
                     static_x = self.xarray_static
                     static_x["time"] = upper_x["time"]
-                    static_x = static_x.expand_dims("time", 0)
+                    for var in static_x.data_vars:
+                        static_x[var] = static_x[var].expand_dims(time=static_x.time)
                     x_list.append(static_x)
                 sliced_x = xr.merge(x_list)
             else:
@@ -177,8 +177,10 @@ class RealtimePredictDataset(torch.utils.data.Dataset):
                     x_list.append(dyn_forcing_x)
                 if self.filename_static is not None:
                     static_x = self.xarray_static
-                    static_x["time"] = self.forecast_timestep[idx]
-                    static_x = static_x.expand_dims("time", 0)
+                    # static_x["time"].values = self.forecast_timestep[idx]
+                    # static_x = static_x.expand_dims("time", 0)
+                    # for var in static_x.data_vars:
+                    #     static_x[var] = static_x[var].expand_dims(time=static_x.time)
                     x_list.append(static_x)
                 sliced_x = xr.merge(x_list)
             else:
@@ -195,6 +197,8 @@ class RealtimePredictDataset(torch.utils.data.Dataset):
                 value = torch.tensor(value, dtype=torch.int64)
             elif isinstance(value, (int, float)):
                 value = torch.tensor(value, dtype=torch.float32)
+            elif isinstance(value, pd.Timestamp):
+                value = torch.tensor(value.timestamp())
             elif not isinstance(value, torch.Tensor):
                 value = torch.tensor(value)
 
@@ -208,5 +212,6 @@ class RealtimePredictDataset(torch.utils.data.Dataset):
                 batch[key] = value
             else:
                 batch[key] = torch.cat((batch[key], value), dim=0)
+        batch["forecast_step"] = torch.tensor(idx)
         batch["stop_forecast"] = idx == (self.forecast_times.size - 1)
         return batch

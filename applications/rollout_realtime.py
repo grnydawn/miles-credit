@@ -273,7 +273,7 @@ def predict(rank, world_size, conf, p):
             forecast_step = batch["forecast_step"].item()
 
             # Initial input processing
-            if forecast_step == 1:
+            if forecast_step == 0:
                 # Process the entire batch at once
                 init_datetimes = [
                     datetime.utcfromtimestamp(batch["datetime"][i].item()).strftime("%Y-%m-%dT%HZ")
@@ -295,6 +295,8 @@ def predict(rank, world_size, conf, p):
                 x_forcing_batch = batch["x_forcing_static"].to(device).permute(0, 2, 1, 3, 4).float()
                 if ensemble_size > 1:
                     x_forcing_batch = torch.repeat_interleave(x_forcing_batch, ensemble_size, 0)
+                print('x shape', x.shape)
+                print("x_forcing_batch", x_forcing_batch.shape)
                 x = torch.cat((x, x_forcing_batch), dim=1)
 
             # Clamp if needed
@@ -356,7 +358,7 @@ def predict(rank, world_size, conf, p):
                 else:
                     x = torch.cat([x_detach, y_pred.detach()], dim=2)
 
-            if batch["stop_forecast"][0]:
+            if batch["stop_forecast"]:
                 # Wait for processes to finish
                 for result in results:
                     result.get()
@@ -468,7 +470,8 @@ if __name__ == "__main__":
 
     # handling config args
     conf = credit_main_parser(conf, parse_training=False, parse_predict=True, print_summary=False)
-    predict_data_check(conf, print_summary=False)
+    print(conf)
+    # predict_data_check(conf, print_summary=False)
 
     # create a save location for rollout
     assert "save_forecast" in conf["predict"], "Please specify the output dir through conf['predict']['save_forecast']"
