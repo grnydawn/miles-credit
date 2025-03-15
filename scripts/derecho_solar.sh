@@ -17,7 +17,6 @@ mpiexec -n 512 -ppn 128 python -u applications/calc_global_solar.py \
   -i /glade/u/home/wchapman/MLWPS/DataLoader/LSM_static_variables_ERA5_zhght.nc  \
   -t 1h \
   -u 10Min \
-  -z \
-  -o /glade/derecho/scratch/dgagne/credit_solar_zarr_1h_0.25deg/
+  -o /glade/derecho/scratch/dgagne/credit_solar_nc_1h_0.25deg/
 
 #  -o /glade/derecho/scratch/dgagne/credit_solar_6h_1deg/
