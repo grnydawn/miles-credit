@@ -1,3 +1,5 @@
+"""Tests for models.py."""
+
 import os
 import yaml
 
@@ -10,12 +12,15 @@ from credit.models.fuxi import Fuxi
 from credit.parser import credit_main_parser
 
 TEST_FILE_DIR = "/".join(os.path.abspath(__file__).split("/")[:-1])
-CONFIG_FILE_DIR = os.path.join("/".join(os.path.abspath(__file__).split("/")[:-2]), "config")
+CONFIG_FILE_DIR = os.path.join(
+    "/".join(os.path.abspath(__file__).split("/")[:-2]), "config"
+)
 
 
 def test_unet():
+    """Test the unet model."""
     # load config
-    config = os.path.join(CONFIG_FILE_DIR, "unet_1dg_6hr.yml")
+    config = os.path.join(CONFIG_FILE_DIR, "unet_1dg_test.yml")
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
@@ -30,7 +35,9 @@ def test_unet():
     levels = conf["model"]["levels"]
     frames = conf["model"]["frames"]
     surface_variables = len(conf["data"]["surface_variables"])
-    input_only_variables = len(conf["data"]["static_variables"]) + len(conf["data"]["dynamic_forcing_variables"])
+    input_only_variables = len(conf["data"]["static_variables"]) + len(
+        conf["data"]["dynamic_forcing_variables"]
+    )
     output_only_variables = conf["model"]["output_only_channels"]
 
     in_channels = int(variables * levels + surface_variables + input_only_variables)
@@ -47,6 +54,7 @@ def test_unet():
 
 
 def test_crossformer():
+    """Test the crossformer model."""
     # load config
     config = os.path.join(CONFIG_FILE_DIR, "wxformer_1dg_test.yml")
     with open(config) as cf:
@@ -69,13 +77,14 @@ def test_crossformer():
     assert isinstance(model, CrossFormer)
 
     y_pred = model(input_tensor)
-    assert y_pred.shape == torch.Size([1, in_channels - input_only_channels, 1, image_height, image_width])
+    assert y_pred.shape == torch.Size(
+        [1, in_channels - input_only_channels, 1, image_height, image_width]
+    )
     assert not torch.isnan(y_pred).any()
 
 
 def test_fuxi():
-    """
-    Test the I/O size of the Fuxi torch model to ensure that the input/output dimensions match the expected configuration.
+    """Test the I/O size of the Fuxi torch model to ensure that the input/output dimensions match the expected configuration.
 
     This test verifies the following:
     1. Correct loading and parsing of the model configuration file.
@@ -99,9 +108,10 @@ def test_fuxi():
     - The output tensor has the correct shape: [batch_size, out_channels, 1, image_height, image_width].
     - The output tensor contains no NaN values.
 
-    Raises:
-    -------
+    Raises
+    ------
     AssertionError if any of the checks fail.
+
     """
     config = os.path.join(CONFIG_FILE_DIR, "fuxi_1deg_test.yml")
     with open(config) as cf:
@@ -122,7 +132,9 @@ def test_fuxi():
     out_channels = channels * levels + surface_channels + output_only_channels
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    input_tensor = torch.randn(1, in_channels, frames, image_height, image_width).to(device)
+    input_tensor = torch.randn(1, in_channels, frames, image_height, image_width).to(
+        device
+    )
 
     model = load_model(conf).to(device)
     assert isinstance(model, Fuxi)
