@@ -228,6 +228,17 @@ def create_reduced_pressure_grid(surface_pressure, model_a_full, model_b_full):
         pressure_3d: 3D pressure field with dimensions of surface_pressure and number of levels from model_a and model_b.
     """
     assert model_a_full.size == model_b_full.size, "Model pressure coefficient arrays do not match."
+    model_a_half_mid = np.sqrt(model_a_full[1:] * model_a_full[:-1])
+    model_a_half = np.zeros(model_a_half_mid.size + 2)
+    model_a_half[1:-1] = model_a_half_mid
+    model_b_half_mid = np.sqrt(model_b_full[1:] * model_b_full[:-1])
+    model_b_half = np.zeros(model_b_half_mid.size + 2)
+    model_b_half[1:-1] = model_b_half_mid
+    model_b_half[-1] = 1.0
+    model_a_half_3d = model_a_half.reshape(-1, 1, 1)
+    model_b_half_3d = model_b_half.reshape(-1, 1, 1)
+    model_a_full_3d = model_a_full.reshape(-1, 1, 1)
+    model_b_full_3d = model_b_full.reshape(-1, 1, 1)
     if surface_pressure.ndim == 3:
         # Generate the 3D pressure field for a time series of surface pressure grids
         pressure_3d = np.zeros(
@@ -248,27 +259,11 @@ def create_reduced_pressure_grid(surface_pressure, model_a_full, model_b_full):
             ),
             dtype=surface_pressure.dtype,
         )
-        model_a_half_mid = np.sqrt(model_a_full[1:] * model_a_full[:-1])
-        model_a_half = np.concatenate([0.0, model_a_half_mid, 0.0])
-        model_b_half_mid = np.sqrt(model_b_full[1:] * model_b_full[:-1])
-        model_b_half = np.concatenate([0.0, model_b_half_mid, 1.0])
-        model_a_half_3d = model_a_half.reshape(-1, 1, 1)
-        model_b_half_3d = model_b_half.reshape(-1, 1, 1)
-        model_a_full_3d = model_a_full.reshape(-1, 1, 1)
-        model_b_full_3d = model_b_full.reshape(-1, 1, 1)
+
         for i in range(surface_pressure.shape[0]):
             pressure_3d_half[i] = model_a_half_3d + model_b_half_3d * surface_pressure[i]
             pressure_3d[i] = model_a_full_3d + model_b_full_3d * surface_pressure[i]
     else:
-        # Generate the 3D pressure field for a single surface pressure grid.
-        model_a_half_mid = np.sqrt(model_a_full[1:] * model_a_full[:-1])
-        model_a_half = np.concatenate([0.0, model_a_half_mid, 0.0])
-        model_b_half_mid = np.sqrt(model_b_full[1:] * model_b_full[:-1])
-        model_b_half = np.concatenate([0.0, model_b_half_mid, 1.0])
-        model_a_half_3d = model_a_half.reshape(-1, 1, 1)
-        model_b_half_3d = model_b_half.reshape(-1, 1, 1)
-        model_a_full_3d = model_a_full.reshape(-1, 1, 1)
-        model_b_full_3d = model_b_full.reshape(-1, 1, 1)
         pressure_3d_half = model_a_half_3d + model_b_half_3d * surface_pressure
         pressure_3d = model_a_full_3d + model_b_full_3d * surface_pressure
     return pressure_3d, pressure_3d_half
