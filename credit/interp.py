@@ -12,6 +12,8 @@ def full_state_pressure_interpolation(
     pressure_levels: np.ndarray = np.array([500.0, 850.0]),
     interp_fields: tuple[str] = ("U", "V", "T", "Q"),
     pres_ending: str = "_PRES",
+    height_levels: np.ndarray = None,
+    height_ending: str = "_HEIGHT",
     temperature_var: str = "T",
     q_var: str = "Q",
     surface_pressure_var: str = "SP",
@@ -23,14 +25,27 @@ def full_state_pressure_interpolation(
     level_var: str = "level",
     model_level_file: str = "../credit/metadata/ERA5_Lev_Info.nc",
     verbose: int = 1,
-    a_coord: str = "a_model",
-    b_coord: str = "b_model",
-    a_half: str = "a_half",
-    b_half: str = "b_half",
-    temp_level_index: int = -2,
+    a_model_name: str = "a_model",
+    b_model_name: str = "b_model",
 ) -> xr.Dataset:
     """
-    Interpolate full model state variables from model levels to pressure levels.
+    Interpolate full model state variables from model levels to pressure levels and height levels. The raw CREDIT
+    model output are on hybrid sigma-pressure vertical levels, which start as terrain following near the surface
+    and relax to constant pressure levels aloft. The state variables for CREDIT models (and hydrostatic models
+    more generally) are u, v, temperature, specific humidity, and surface pressure, with surface geopotential as
+    a static variable. To perform pressure and height interpolation, the following steps happen:
+
+    1. Pressure is calculated on every full model level (middle of the vertical grid box) and half level (top and
+        bottom of the vertical grid box starting at the surface and ending at the model top of the atmospshere). This
+        requires knowing the a and b coefficients for the model levels.
+    2.  Geopotential on each hybrid sigma-pressure level is calculated from surface geopotential, pressure, temperature,
+        and specific humidity as a vertical integral calculation. The calculation is sensitive to numerical precision,
+        so data are cast to float64 before calling the geopotential calculation.
+    3. Interpolation is done from hybrid sigma-pressure levels to fixed pressure levels. Everything is interpolated
+        linearly with log(pressure) as the x coordinate. For pressure levels below ground (where pressure of level > surface
+        pressure), special extrapolation routines are done for temperature and geopotential while constant extrapolation
+        is assumed for u, v, and q.
+    4. Interpolation to height above ground level is also performed at the end. Heights are defined in meters.
 
     Args:
         state_dataset (xr.Dataset): state variables being interpolated
@@ -38,6 +53,8 @@ def full_state_pressure_interpolation(
         pressure_levels (np.ndarray): pressure levels for interpolation in hPa.
         interp_fields (tuple[str]): fields to be interpolated.
         pres_ending (str): ending string to attach to pressure interpolated variables.
+        height_levels (np.ndarray): height levels for interpolation to height above ground level in meters.
+        height_ending (str): ending string to attach to height interpolated variables.
         temperature_var (str): temperature variable to be interpolated (units K).
         q_var (str): mixing ratio/specific humidity variable to be interpolated (units kg/kg).
         surface_pressure_var (str): surface pressure variable (units Pa).
@@ -49,19 +66,16 @@ def full_state_pressure_interpolation(
         level_var (str): name of level coordinate
         model_level_file (str): relative path to file containing model levels.
         verbose (int): verbosity level. If verbose > 0, print progress.
-        a_coord (str): Name of A weight in sigma coordinate formula. 'a_model' by default.
-        b_coord (str): Name of B weight in sigma coordinate formula. 'b_model' by default.
-        a_half (str): Name of A weight in sigma coordinate formula at half levels. 'a_half' by default.
-        b_half (str): Name of B weight in sigma coordinate formula at half levels. 'b_half' by default.
-        temp_level_index (int): vertical index of the temperature level used for interpolation below ground.
+        a_model_name (str): Name of A weight in sigma coordinate formula. 'a_model' by default.
+        b_model_name (str): Name of B weight in sigma coordinate formula. 'b_model' by default.
     Returns:
         pressure_ds (xr.Dataset): Dataset containing pressure interpolated variables.
     """
     path_to_file = os.path.abspath(os.path.dirname(__file__))
     model_level_file = os.path.join(path_to_file, model_level_file)
     with xr.open_dataset(model_level_file) as mod_lev_ds:
-        a_half = mod_lev_ds[a_half].values
-        b_half = mod_lev_ds[b_half].values
+        a_model = mod_lev_ds[a_model_name].values
+        b_model = mod_lev_ds[b_model_name].values
     pres_dims = (time_var, pres_var, lat_var, lon_var)
     surface_dims = (time_var, lat_var, lon_var)
     coords = {
@@ -99,8 +113,8 @@ def full_state_pressure_interpolation(
     sub_half_levels = np.concatenate([state_dataset[level_var].values, [138]])
     sub_levels = state_dataset[level_var].values
     for t, time in tqdm(enumerate(state_dataset[time_var]), disable=disable):
-        pressure_grid, half_pressure_grid = create_pressure_grid(
-            state_dataset[surface_pressure_var][t].values.astype(np.float64), a_half, b_half
+        pressure_grid, half_pressure_grid = create_reduced_pressure_grid(
+            state_dataset[surface_pressure_var][t].values.astype(np.float64), a_model, b_model
         )
         pressure_sub_grid = pressure_grid[sub_levels - 1]
         half_pressure_sub_grid = half_pressure_grid[sub_half_levels - 1]
@@ -142,6 +156,9 @@ def full_state_pressure_interpolation(
             surface_geopotential,
             geopotential_grid,
         )
+        if height_levels is not None:
+            for interp_field in interp_fields:
+                pressure_ds[interp_field + height_ending][t] = interp_hybrid_to_height_agl(state_dataset)
     return pressure_ds
 
 
@@ -204,8 +221,8 @@ def create_reduced_pressure_grid(surface_pressure, model_a_full, model_b_full):
 
     Args:
         surface_pressure (np.ndarray): (time, latitude, longitude) or (latitude, longitude) grid in units of Pa.
-        model_a_half (np.ndarray): a coefficients at each model level being used in units of Pa.
-        model_b_half (np.ndarray): b coefficients at each model level being used (unitness).
+        model_a_full (np.ndarray): a coefficients at each model level being used in units of Pa.
+        model_b_full (np.ndarray): b coefficients at each model level being used (unitless).
 
     Returns:
         pressure_3d: 3D pressure field with dimensions of surface_pressure and number of levels from model_a and model_b.
@@ -258,7 +275,7 @@ def create_reduced_pressure_grid(surface_pressure, model_a_full, model_b_full):
 
 
 @njit
-def geopotential_from_model_vars(surface_geopotential, surface_pressure, temperature, mixing_ratio, half_pressure):
+def geopotential_from_model_vars(surface_geopotential, surface_pressure, temperature, specific_humidity, half_pressure):
     """
     Calculate geopotential from the base state variables. Geopotential height is calculated by adding thicknesses
     calculated within each half-model-level to account for variations in temperature and moisture between grid cells.
@@ -273,7 +290,7 @@ def geopotential_from_model_vars(surface_geopotential, surface_pressure, tempera
         surface_geopotential (np.ndarray): Surface geopotential in shape (y,x) and units m^2 s^-2.
         surface_pressure (np.ndarray): Surface pressure in shape (y, x) and units Pa
         temperature (np.ndarray): temperature in shape (levels, y, x) and units K
-        mixing_ratio (np.ndarray): mixing ratio in shape (levels, y, x) and units kg/kg.
+        specific_humidity (np.ndarray): mixing ratio in shape (levels, y, x) and units kg/kg.
 
     Returns:
         model_geoptential (np.ndarray): geopotential on model levels in shape (levels, y, x)
@@ -285,7 +302,7 @@ def geopotential_from_model_vars(surface_geopotential, surface_pressure, tempera
     )
     half_geopotential = np.zeros(half_pressure.shape, dtype=surface_pressure.dtype)
     half_geopotential[-1] = surface_geopotential
-    virtual_temperature = temperature * (1.0 + gamma * mixing_ratio)
+    virtual_temperature = temperature * (1.0 + gamma * specific_humidity)
     m = model_geopotential.shape[-3] - 1
     for i in range(0, model_geopotential.shape[-3]):
         if m == 0:
@@ -480,7 +497,21 @@ def interp_temperature_to_pressure_levels(
 
 
 @njit
-def interp_hybrid_to_height_agl(model_var, interp_heights_m, geopotential, surface_geopotential):
+def interp_hybrid_to_height_agl(
+    model_var: np.ndarray, interp_heights_m: np.ndarray, geopotential: np.ndarray, surface_geopotential: np.ndarray
+):
+    """
+    Interpolate data on hybrid sigma-pressure levels to heights above ground level in meters.
+
+    Args:
+        model_var (np.ndarray): State variable of shape [levels, lat, lon]
+        interp_heights_m (np.ndarray): 1D array of height levels in meters above ground level.
+        geopotential (np.ndarray): geopotential on model levels in units of m^2/s^2.
+        surface_geopotential: geopotential at the surface in units of m^2/s^2.
+
+    Returns:
+        height_var (np.ndarray): State variable on height above ground levels in shape [interp_heights, lat, lon].
+    """
     model_height_agl = (geopotential - surface_geopotential) / GRAVITY
     height_var = np.zeros(
         (interp_heights_m.shape[0], model_var.shape[1], model_var.shape[2]),
