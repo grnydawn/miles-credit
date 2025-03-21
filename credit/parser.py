@@ -521,6 +521,7 @@ def credit_main_parser(
         conf["model"]["post_conf"]["activate"]
         and conf["model"]["post_conf"]["global_mass_fixer"]["activate"]
     )
+    print('parser flag: ', conf["model"]["post_conf"]["global_mass_fixer"]["activate"])
 
     if flag_mass:
         # when global mass fixer is on, get tensor indices of q, precip, evapor
