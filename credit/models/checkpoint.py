@@ -55,8 +55,6 @@ def copy_checkpoint(checkpoint_file_path: str, number) -> None:
 def load_model_state(conf, model, device):
     save_loc = os.path.expandvars(conf["save_loc"])
     #  Load an optimizer, gradient scaler, and learning rate scheduler, the optimizer must come after wrapping model using FSDP
-    ckpt = os.path.join(save_loc, "checkpoint.pt")
-    checkpoint = torch.load(ckpt, map_location=device)
     if conf["trainer"]["mode"] == "fsdp":
         logging.info(
             f"Loading FSDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}"
@@ -66,6 +64,8 @@ def load_model_state(conf, model, device):
             model, os.path.join(save_loc, "model_checkpoint.pt")
         )
     else:
+        ckpt = os.path.join(save_loc, "checkpoint.pt")
+        checkpoint = torch.load(ckpt, map_location=device)
         if conf["trainer"]["mode"] == "ddp":
             logging.info(
                 f"Loading DDP model, optimizer, grad scaler, and learning rate scheduler states from {save_loc}"
