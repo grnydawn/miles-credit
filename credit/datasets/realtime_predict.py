@@ -213,7 +213,7 @@ class RealtimePredictDataset(torch.utils.data.Dataset):
             elif isinstance(value, (int, float)):
                 value = torch.tensor(value, dtype=torch.float32)
             elif isinstance(value, pd.Timestamp):
-                value = torch.tensor(value.timestamp())
+                value = torch.tensor(value.timestamp(), dtype=torch.float64)
             elif not isinstance(value, torch.Tensor):
                 value = torch.tensor(value)
 
