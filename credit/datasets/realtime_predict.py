@@ -45,9 +45,11 @@ class RealtimePredictDataset(torch.utils.data.Dataset):
         self.forecast_end_time = pd.Timestamp(forecast_end_time)
         self.forecast_timestep = forecast_timestep
         self.forecast_times = pd.date_range(
-            start=self.forecast_start_time, end=self.forecast_end_time, freq=self.forecast_timestep
+            start=self.forecast_start_time,
+            end=self.forecast_end_time,
+            freq=self.forecast_timestep,
         )
-        self.forecast_len = len(self.forecast_times)
+        self.forecast_len = 0
         self.history_len = history_len
         self.transform = transform
         self.seed = seed
@@ -150,17 +152,30 @@ class RealtimePredictDataset(torch.utils.data.Dataset):
         if idx == 0:
             if self.history_len == 1:
                 x_list = []
-                upper_x = self.all_files[valid_date].sel(time=valid_date).expand_dims("time", 0).load()
-                surface_x = self.surface_files[valid_date].sel(time=valid_date).expand_dims("time", 0).load()
+                upper_x = (
+                    self.all_files[valid_date]
+                    .sel(time=valid_date)
+                    .expand_dims("time", 0)
+                    .load()
+                )
+                surface_x = (
+                    self.surface_files[valid_date]
+                    .sel(time=valid_date)
+                    .expand_dims("time", 0)
+                    .load()
+                )
                 x_list.extend([upper_x, surface_x])
                 if self.filename_dyn_forcing is not None:
                     dyn_forcing_x = (
-                        self.dyn_forcing_files[valid_year].sel(time=valid_date).expand_dims("time", 0).load()
+                        self.dyn_forcing_files[valid_year]
+                        .sel(time=valid_date)
+                        .expand_dims("time", 0)
+                        .load()
                     )
                     x_list.append(dyn_forcing_x)
                 if self.filename_static is not None:
                     static_x = self.xarray_static
-                    static_x["time"] = upper_x["time"]
+                    static_x["time"] = dyn_forcing_x["time"]
                     for var in static_x.data_vars:
                         static_x[var] = static_x[var].expand_dims(time=static_x.time)
                     x_list.append(static_x)
@@ -172,15 +187,15 @@ class RealtimePredictDataset(torch.utils.data.Dataset):
                 x_list = []
                 if self.filename_dyn_forcing is not None:
                     dyn_forcing_x = (
-                        self.dyn_forcing_files[valid_year].sel(time=valid_date).expand_dims("time", 0).load()
+                        self.dyn_forcing_files[valid_year]
+                        .sel(time=valid_date)
+                        .expand_dims("time", 0)
+                        .load()
                     )
                     x_list.append(dyn_forcing_x)
                 if self.filename_static is not None:
                     static_x = self.xarray_static
-                    # static_x["time"].values = self.forecast_timestep[idx]
-                    # static_x = static_x.expand_dims("time", 0)
-                    # for var in static_x.data_vars:
-                    #     static_x[var] = static_x[var].expand_dims(time=static_x.time)
+                    static_x["time"] = dyn_forcing_x["time"]
                     x_list.append(static_x)
                 sliced_x = xr.merge(x_list)
             else:
