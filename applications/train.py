@@ -257,7 +257,7 @@ def load_model_states_and_optimizer(conf, model, device):
     return conf, model, optimizer, scheduler, scaler
 
 
-def main(rank, world_size, conf, backend, trial=False):
+def main(rank, world_size, conf, backend=None, trial=False):
     """
     Main function to set up training and validation processes.
 
@@ -385,9 +385,6 @@ class Objective(BaseObjective):
         Returns:
             Any: The result of the training process.
         """
-
-        conf["model"]["dim_head"] = conf["model"]["dim"]
-        conf["model"]["vq_codebook_dim"] = conf["model"]["dim"]
 
         try:
             return main(0, 1, conf, trial=trial)
