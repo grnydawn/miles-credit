@@ -213,7 +213,7 @@ def load_model_states_and_optimizer(conf, model, device):
     return conf, model, optimizer, scheduler, scaler
 
 
-def main(rank, world_size, conf, backend, trial=False):
+def main(rank, world_size, conf, backend=None, trial=False):
     """
     Main function to set up training and validation processes.
 
@@ -334,9 +334,6 @@ class Objective(BaseObjective):
             Any: The result of the training process.
         """
 
-        conf["model"]["dim_head"] = conf["model"]["dim"]
-        conf["model"]["vq_codebook_dim"] = conf["model"]["dim"]
-
         try:
             return main(0, 1, conf, trial=trial)
 
@@ -353,7 +350,7 @@ class Objective(BaseObjective):
 
 
 if __name__ == "__main__":
-    description = "Train a segmengation model on a hologram data set"
+    description = "Train an AI model for Numerical Weather Prediction (NWP) using a specified dataset and configuration."
     parser = ArgumentParser(description=description)
     parser.add_argument(
         "-c",
