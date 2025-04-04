@@ -576,8 +576,9 @@ class Trainer(BaseTrainer):
                     if flag_clamp:
                         x = torch.clamp(x, min=clamp_min, max=clamp_max)
 
-                    y_pred = self.model(x.float())
 
+                    y_pred = list(map(lambda n: self.ema.ema_model.sample(batch_size=x.shape[0], x_cond = x), batches))
+    
                     # ============================================= #
                     # postblock opts outside of model
 
@@ -665,7 +666,7 @@ class Trainer(BaseTrainer):
                         else:
                             x = y_pred.detach()
 
-                    # multi-step in
+                    # multi-step in --> likely broken. 
                     else:
                         if static_dim_size == 0:
                             x_detach = x[:, :, 1:, ...].detach()
