@@ -42,18 +42,36 @@ class CrossFormerDiffusion(CrossFormer):
     def __init__(self, self_condition, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+
+        print("Num Channels Out:", kwargs.get("diffusion_output_channels"))
+
+        self.out_dim = kwargs.get("diffusion_output_channels")
+
+        self.pre_out_dim = kwargs.get("surface_channels")+(kwargs.get("channels") * kwargs.get("levels"))
+
         self.dim = kwargs.get(
             "dim", (64, 128, 256, 512)
         )  # Default value as in CrossFormer
         self.self_condition = self_condition
+        self.condition = self_condition
 
         # Adding timestep embedding layer for diffusion
         self.time_mlp = nn.Sequential(
             nn.Linear(1, self.dim[0]), nn.SiLU(), nn.Linear(self.dim[0], self.dim[-1])
         )
 
-    def forward(self, x, timestep, x_self_cond=False):
+        self.final_conv = nn.Conv3d(self.pre_out_dim, self.out_dim, 1)
+
+    def forward(self, x, timestep, x_self_cond=False, x_cond=None):
         x_copy = None
+
+        if self.self_condition:
+            x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
+            x = torch.cat((x_self_cond, x), dim = 1)
+
+        # if self.condition:
+        #     x = torch.cat((x, x_cond),dim = 1)
+        
         if self.use_post_block:
             x_copy = x.clone().detach()
 
@@ -98,6 +116,8 @@ class CrossFormerDiffusion(CrossFormer):
             )
 
         x = x.unsqueeze(2)
+
+        x = self.final_conv(x)
 
         if self.use_post_block:
             x = {"y_pred": x, "x": x_copy}
