@@ -76,6 +76,7 @@ def test_SKEBS_integration():
 
     assert pred.shape == y_pred.shape
 
+@pytest.mark.skip(reason="need to have scaler file and static file to test")
 def test_SKEBS_rand():
     ''' unit test for CPU. testing that values make sense
     '''
