@@ -302,15 +302,15 @@ class Trainer(BaseTrainer):
                 if not retain_graph:
                     y_pred = y_pred.detach()
                 
-                # step-in-step-out
+                # single timestep input
                 if x.shape[2] == 1:
                     # cut diagnostic vars from y_pred, they are not inputs
                     if "y_diag" in batch:
-                        x = y_pred[:, :-varnum_diag, ...].detach()
+                        x = y_pred[:, :-varnum_diag, ...]
                     else:
-                        x = y_pred.detach()
+                        x = y_pred
 
-                # multi-step in
+                # multi-timestep input
                 else:
                     # static channels will get updated on next pass
 
@@ -322,11 +322,11 @@ class Trainer(BaseTrainer):
                     # cut diagnostic vars from y_pred, they are not inputs
                     if "y_diag" in batch:
                         x = torch.cat(
-                            [x_detach, y_pred[:, :-varnum_diag, ...].detach()],
+                            [x_detach, y_pred[:, :-varnum_diag, ...]],
                             dim=2,
                         )
                     else:
-                        x = torch.cat([x_detach, y_pred.detach()], dim=2)
+                        x = torch.cat([x_detach, y_pred], dim=2)
 
             if distributed:
                 torch.distributed.barrier()
