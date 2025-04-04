@@ -17,18 +17,16 @@ from credit.parser import credit_main_parser
 from credit.postblock import Backscatter_CNN
 
 
-from torchviz import make_dot
-
 TEST_FILE_DIR = "/".join(os.path.abspath(__file__).split("/")[:-1])
 CONFIG_FILE_DIR = os.path.join("/".join(os.path.abspath(__file__).split("/")[:-2]),
                       "config")
 
-@pytest.mark.skip(reason="need to have model weights, level_info, and surface area to test on gh")
+@pytest.mark.skip(reason="need to have model weights, to test")
 def test_SKEBS_integration():
-    '''
+    """
     integration testing to make sure everything goes on GPU, is loaded properly etc
     requires loading weights
-    '''
+    """
     logging.info("integration testing SKEBS")
     # config = os.path.join(CONFIG_FILE_DIR, "example_skebs.yml")
     config = "/glade/work/dkimpara/CREDIT_runs/latest_skebs/latest_skebs.yml"
@@ -78,17 +76,23 @@ def test_SKEBS_integration():
 
     assert pred.shape == y_pred.shape
 
-@pytest.mark.skip(reason="need to have model weights, level_info, and surface area to test on gh")
 def test_SKEBS_rand():
     ''' unit test for CPU. testing that values make sense
     '''
-    # config = os.path.join(CONFIG_FILE_DIR, "example_skebs.yml")
-    config = "/glade/work/dkimpara/CREDIT_runs/latest_skebs/latest_skebs.yml"
+    config = os.path.join(CONFIG_FILE_DIR, "example-v2025.2.0.yml")
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
+
+    conf['model']['post_conf']["activate"] = True
+
+    conf['model']["post_conf"]["global_mass_fixer"] = {"activate": False}
+    conf['model']["post_conf"]["global_water_fixer"] = {"activate": False}
+    conf['model']["post_conf"]["global_energy_fixer"] = {"activate": False}
+    conf['model']["post_conf"]["tracer_fixer"] = {"activate": False}
+
+    conf['model']["post_conf"]["skebs"]["activate"] = True
     conf = credit_main_parser(conf) # parser will copy model configs to post_conf
     post_conf = conf['model']['post_conf']
-    
     
     image_height = post_conf["model"]["image_height"]
     image_width = post_conf["model"]["image_width"]
@@ -98,13 +102,11 @@ def test_SKEBS_rand():
     output_only_channels = post_conf["model"]["output_only_channels"]
     input_only_channels = post_conf["model"]["input_only_channels"]
     frames = post_conf["model"]["frames"]
-    sp_index = post_conf["skebs"]["SP_ind"]
 
     in_channels = channels * levels + surface_channels + input_only_channels
     x = torch.randn(2, in_channels, frames, image_height, image_width)
     out_channels = channels * levels + surface_channels + output_only_channels
     y_pred = torch.randn(2, out_channels, frames, image_height, image_width)
-    y_pred[:, sp_index] = torch.ones_like(y_pred[:, sp_index]) * 1013
 
     post_conf["data"]["forecast_len"] = 2 # to turn on multistep
    
@@ -114,20 +116,17 @@ def test_SKEBS_rand():
     input_dict = {"x": x,
                 "y_pred": y_pred}
 
-    # testing random pattern generation
-    for i in range(10):
-        skebs_pred = postblock(input_dict)
+    skebs_pred = postblock(input_dict)
 
-    # skebs_pred = postblock(input_dict)
     # FIXME: fix test
     assert skebs_pred.shape == y_pred.shape
     assert not torch.isnan(skebs_pred).any()
 
 def test_SKEBS_backscatter():
-    config = os.path.join(CONFIG_FILE_DIR, "example_skebs.yml")
+    config = os.path.join(CONFIG_FILE_DIR, "example-v2025.2.0.yml")
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
-
+    conf['model']['post_conf']["activate"] = True
     conf = credit_main_parser(conf) # parser will copy model configs to post_conf
     post_conf = conf['model']['post_conf']
     
@@ -137,22 +136,19 @@ def test_SKEBS_backscatter():
     levels = post_conf["model"]["levels"]
     surface_channels = post_conf["model"]["surface_channels"]
     output_only_channels = post_conf["model"]["output_only_channels"]
-    input_only_channels = post_conf["model"]["input_only_channels"]
     frames = post_conf["model"]["frames"]
-    sp_index = post_conf["skebs"]["SP_ind"]
 
-    in_channels = channels * levels + surface_channels + input_only_channels
-    x = torch.randn(2, in_channels, frames, image_height, image_width)
     out_channels = channels * levels + surface_channels + output_only_channels
     y_pred = torch.randn(2, out_channels, frames, image_height, image_width)
-    y_pred[:, sp_index] = torch.ones_like(y_pred[:, sp_index]) * 1013
 
     model = Backscatter_FCNN(out_channels, levels)
 
     pred = model(y_pred)
 
-    # assert pred.shape == y_pred.shape
-    # assert not torch.isnan(skebs_pred).any()
+    target_shape = list(y_pred.shape)
+    target_shape[1] = levels
+    assert list(pred.shape) == target_shape
+    assert not torch.isnan(pred).any()
 
 def test_backscatter_pad():
     lat = 2
@@ -353,5 +349,5 @@ if __name__ == "__main__":
     root.addHandler(ch)
 
     # test_SKEBS_integration()
-    # test_SKEBS_rand()
-    test_backscatter_pad()
+    test_SKEBS_rand()
+    # test_SKEBS_backscatter()

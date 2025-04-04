@@ -934,7 +934,7 @@ def concat_for_inplace_ops(y_orig, y_inplace_slice, ind_start, ind_end):
         y_inplace_slice,
         y_orig[:, ind_end + 1:]
     ]
-    new_tensor = torch.concat(tensors, dim=1)
+    new_tensor = torch.concat(tensors, dim=1) # concat on channel dim
     return new_tensor
 
 
@@ -951,10 +951,6 @@ class Backscatter_FCNN(nn.Module):
         self.fc2 = nn.Linear(in_channels // 2, self.levels)
         self.relu2 = nn.ReLU()
 
-
-        self.scale = torch.tensor(40.)
-
-
     def forward(self, x):
         x = x.permute(0, 2, 3, 4, 1) # put channels last
 
@@ -962,7 +958,6 @@ class Backscatter_FCNN(nn.Module):
         x = self.relu1(x)
         x = self.fc2(x)
         x = self.relu2(x)
-        x = self.scale * x
 
         x = x.permute(0, -1, 1, 2, 3) # put channels back to 1st dim
 
@@ -990,9 +985,6 @@ class Backscatter_FCNN_wide(nn.Module):
         self.relu4 = nn.ReLU()
 
 
-        self.scale = torch.tensor(40.)
-
-
     def forward(self, x):
         x = x.permute(0, 2, 3, 4, 1) # put channels last
 
@@ -1007,8 +999,6 @@ class Backscatter_FCNN_wide(nn.Module):
 
         x = self.fc4(x)
         x = self.relu4(x)
-
-        x = self.scale * x
 
         x = torch.clamp(x, max=1000.)
 
@@ -1035,8 +1025,6 @@ class Backscatter_CNN(nn.Module):
         # setup conv layer
         self.conv = torch.nn.Conv2d(self.in_channels, self.levels, kernel_size=3)
         self.sigmoid = nn.Sigmoid()
-
-        self.scale = torch.tensor(70.)
         
 
     def pad(self, x):
@@ -1054,7 +1042,6 @@ class Backscatter_CNN(nn.Module):
         # (b,c,lat+2,lon+2)
         x = self.conv(x) # should take out the pad
         x = self.sigmoid(x)
-        x = self.scale * x
 
         x = x.unsqueeze(2)
         return x
@@ -1217,26 +1204,23 @@ class SKEBS(nn.Module):
         assert np.all(np.diff(self.U_inds) == 1) and np.all(self.U_inds[:-1] <= self.U_inds[1:])
         assert np.all(np.diff(self.V_inds) == 1) and np.all(self.V_inds[:-1] <= self.V_inds[1:])
 
-        # need this info
-        self.timestep = post_conf["data"]["lead_time_periods"] * 3600
+        # need this info        
         self.alpha_init = post_conf["skebs"].get("alpha_init", 0.125)
         self.zero_out_levels_top_of_model = post_conf["skebs"].get("zero_out_levels_top_of_model", 3)
         logger.info(f"filtering out top {self.zero_out_levels_top_of_model} levels of skebs perturbation")
-        # self.level_info = xr.open_dataset(post_conf["data"]["level_info_file"])
-        # self.level_list = post_conf["data"]["level_list"]
-        # self.surface_area = xr.open_dataset(post_conf["data"]["save_loc_static"])["surface_area"].to_numpy()
 
         self.tropics_only_dissipation = post_conf["skebs"].get("tropics_only_dissipation", False)
         self.filter_backscatter = post_conf["skebs"].get("filter_backscatter", True) # backscatter filter by default, trainable is set below using train_spectral_filter
         self.filter_pattern = post_conf["skebs"].get("filter_pattern", False)
+
         if self.filter_backscatter:
             logger.info("Filtering backscatter")
-        else:
+        if self.filter_pattern:
             logger.info("Filtering the pattern")
 
         self.initialize_sht()
         self.initialize_skebs_parameters()        
-        # coeffs havent been spun up yet (indicates need to cycle the coeffs)
+        # coeffs havent been spun up yet (indicates need to init the coeffs)
         self.spec_coef_is_initialized = False
         # freeze pattern weights before init backscatter
         self.freeze_pattern_weights = post_conf["skebs"].get("freeze_pattern_weights", False)
@@ -1247,19 +1231,19 @@ class SKEBS(nn.Module):
 
         # initialize backscatter prediction
         self.use_statics = post_conf["skebs"].get("use_statics", True)
-
         num_channels = (self.channels * self.levels 
                             + post_conf["model"]["surface_channels"]
                             + post_conf["model"]["output_only_channels"])
         if self.use_statics:
-            num_channels += len(self.static_inds) + 1 # this one for coslat
+            num_channels += len(self.static_inds) + 1 # this one for static vars and coslat
         
         # num_channels = (self.channels * self.levels 
         #                 + len(post_conf["data"]["surface_variables"])
         #                 + len(post_conf["data"]["diagnostic_variables"])
         # )
         self.relu1 = nn.ReLU() # use this to gaurantee positive backscatter
-        self.relu2 = nn.ReLU()
+
+        self.dissipation_scaling_coefficient = post_conf["skebs"].get("dissipation_scaling_coefficient", 1.0)
         self.dissipation_type = post_conf["skebs"]["dissipation_type"]
         if self.dissipation_type == "prescribed":
             self.backscatter_network = Backscatter_prescribed(self.nlat, self.nlon, self.levels,
@@ -1303,14 +1287,17 @@ class SKEBS(nn.Module):
         self.train_alpha = post_conf["skebs"].get("train_alpha", False)
         if self.train_alpha:
             self.alpha.requires_grad = True
+            logger.info("training alpha")
         
-        self.train_spectral_filter = post_conf["skebs"].get("train_spectral_filter", False)
-        if self.train_spectral_filter:
-            if self.filter_backscatter:
-                self.spectral_backscatter_filter.requires_grad = True
-            else: 
-                self.spectral_filter.requires_grad = True
+        train_backscatter_filter = post_conf["skebs"].get("train_backscatter_filter", False)
+        if train_backscatter_filter:
+            self.spectral_backscatter_filter.requires_grad = True
+            logger.info("training backscatter filter")
 
+        train_pattern_filter = post_conf["skebs"].get("train_pattern_filter", False)
+        if train_pattern_filter: 
+            self.spectral_filter.requires_grad = True
+            logger.info("training pattern filter")
 
         logger.info(f"trainable params{[name for name, param in self.named_parameters() if param.requires_grad]}")
 
@@ -1534,21 +1521,24 @@ class SKEBS(nn.Module):
             x = torch.cat([x, x_input_statics, self.cos_lat], dim=1) # add in static vars and coslat
 
         # takes in raw (transformed) model output
-        backscatter_pred = self.backscatter_filter * self.tropics_backscatter_filter * self.backscatter_network(x) # filter out model top and tropics if needed
+        # filter out model top and tropics if specified
+        backscatter_pred = (self.dissipation_scaling_coefficient 
+                            * self.backscatter_filter 
+                            * self.tropics_backscatter_filter 
+                            * self.backscatter_network(x)) 
 
         if ((self.save_backscatter_prediction and not self.is_training) # save out raw backscatter prediction
             or (self.write_debug_files and self.iteration % self.write_every == 0)):
             logger.info(f"writing backscatter file for iter {self.iteration}")
             torch.save(backscatter_pred, join(self.backscatter_save_loc, f"backscatter_raw_{self.iteration}"))
         
-        if self.dissipation_type not in ["prescribed", "uniform"]: #optionally filter the backscatter
-            backscatter_pred = self.relu1(backscatter_pred) # make sure filter doesnt turn it negative
-            with torch.autocast(device_type="cuda", enabled=False): #isht cannot use amp
-                backscatter_spec = self.sht(backscatter_pred) # b, levels, t, lmax, mmax
-                backscatter_spec = self.spectral_backscatter_filter * backscatter_spec
-                backscatter_pred = self.isht(backscatter_spec)
+        if self.dissipation_type not in ["prescribed", "uniform"]:
+            # spatially filter the backscatter 
+            backscatter_spec = self.sht(backscatter_pred) # b, levels, t, lmax, mmax
+            backscatter_spec = self.spectral_backscatter_filter * backscatter_spec
+            backscatter_pred = self.isht(backscatter_spec)
 
-        backscatter_pred = self.relu2(backscatter_pred) 
+        backscatter_pred = self.relu1(backscatter_pred) 
 
         logger.debug(f"max backscatter: {torch.max(torch.abs(backscatter_pred))}")
 
@@ -1576,7 +1566,7 @@ class SKEBS(nn.Module):
 
         # transform pattern to grid space
         spec_coef = self.spec_coef.squeeze()
-        u_chi, v_chi = self.getgrad(spec_coef)
+        u_chi, v_chi = self.getgrad(spec_coef) # spec_coef represent vrt (non-divergent) coeffs so the perturbation will be non-divergent
         u_chi, v_chi = u_chi.unsqueeze(1).unsqueeze(1), v_chi.unsqueeze(1).unsqueeze(1)
         logger.debug(f"max u_chi: {torch.max(torch.abs(u_chi))}")
         logger.debug(f"max v_chi: {torch.max(torch.abs(v_chi))}")

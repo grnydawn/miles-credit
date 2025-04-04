@@ -332,55 +332,55 @@ model:
 
     # configuration for postblock processing
     post_conf: 
-        activate: False
+        activate: True
         grid: 'equiangular'
 
         skebs:
-                activate: False
-                freeze_base_model_weights: True  # turn off training of the basemodel
+            activate: True
+            freeze_base_model_weights: True  # turn off training of the basemodel
 
-                # skebs module training options
-                trainable: True # is skebs trainable at all
-                freeze_dissipation_weights: False  # turn off training for dissipation
-                freeze_pattern_weights: True  # turn off training for the spectral pattern
-                lmax: None # lmax, mmax for spectral transforms
-                mmax: None
+            # skebs module training options
+            trainable: True # is skebs trainable at all
+            freeze_dissipation_weights: False  # turn off training for dissipation
+            freeze_pattern_weights: True  # turn off training for the spectral pattern
+            lmax: None # lmax, mmax for spectral transforms
+            mmax: None
 
-                # custom initialization of alpha
-                alpha_init: 0.95 
-                
-                # dissipation config:
-                zero_out_levels_top_of_model: 3 # zero out backscatter at top k levels of the model
+            # custom initialization of alpha
+            alpha_init: 0.95 
+            train_alpha: False #trains alpha no matter what
+            
+            # dissipation config:
+            zero_out_levels_top_of_model: 3 # zero out backscatter at top k levels of the model
 
-                dissipation_type: FCNN 
-                # available types:
-                #    - prescribed: fixed dissipation rate spatially, varies by level starts at sigma_max level (see below)
-                #    - uniform: fixed dissipation rate spatially, varies by level starts at 2.5
-                #    - FCNN: two layer small MLP
-                #    - FCNN_wide: four layer wide MLP
-                #    - unet: user specified arch, default: unet++
-                #    - CNN: single 3x3 convolution with padding for each column
-                
-                # unet - see models/unet.py for examples
-                # architecture:
+            dissipation_scaling_coefficient: 10.
+            dissipation_type: FCNN 
+            # available types:
+            #    - prescribed: fixed dissipation rate spatially, varies by level starts at sigma_max level (see below)
+            #    - uniform: fixed dissipation rate spatially, varies by level starts at 2.5
+            #    - FCNN: two layer small MLP
+            #    - FCNN_wide: four layer wide MLP
+            #    - unet: user specified arch, default: unet++
+            #    - CNN: single 3x3 convolution with padding for each column
+            
+            # unet - see models/unet.py for examples
+            # architecture:
 
-                # prescribed dissipation:
-                sigma_max: 2.0 # what sigma level to set as the max wind. perturbation will be roughly sigma_max * std for wind at each level
+            # prescribed dissipation:
+            sigma_max: 2.0 # what sigma level to set as the max wind. perturbation will be roughly sigma_max * std for wind at each level
 
-                # spectral filters
-                filter_backscatter: False
-                filter_pattern: True
+            # spectral filters
+            filter_pattern: True
+            filter_backscatter: False
+            train_backscatter_filter: False
+            train_pattern_filter: False
 
-                # data config - does the backscatter model get statics variables?
-                use_statics: False 
+            # data config - does the backscatter model get statics variables?
+            use_statics: False 
 
-                # training config:
-                train_alpha: False #trains alpha no matter wjat
-                train_spectral_filter: False  #trains spectral filter no matter what
-
-                # debugging tools
-                save_backscatter: True # saves only when no_grad
-                write_debug_files: False #writing out files while training       
+            # debugging tools
+            save_backscatter: True # saves only when no_grad
+            write_debug_files: False #writing out files while training       
 
         # =================================================== #
         # The section of conservation schemes
