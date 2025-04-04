@@ -2,7 +2,7 @@ import pytest
 import yaml
 import os
 
-from credit.parser import CREDIT_main_parser, training_data_check
+from credit.parser import credit_main_parser, training_data_check
 
 TEST_FILE_DIR = "/".join(os.path.abspath(__file__).split("/")[:-1])
 CONFIG_FILE_DIR = os.path.join("/".join(os.path.abspath(__file__).split("/")[:-2]),
@@ -13,7 +13,7 @@ def test_main_parser():
     with open(config) as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
-    conf = CREDIT_main_parser(conf, print_summary=True) # parser will copy model configs to post_conf
+    conf = credit_main_parser(conf, print_summary=True) # parser will copy model configs to post_conf
     return conf
 
 @pytest.mark.skip(reason="need to be on glade filesystem")

@@ -20,6 +20,8 @@ from torch import nn
 import torch_harmonics as harmonics
 import segmentation_models_pytorch as smp
 
+from torch.amp import custom_fwd
+
 
 import numpy as np
 import xarray as xr
@@ -101,9 +103,8 @@ class PostBlock(nn.Module):
                 self.operations.append(opt)
 
     def forward(self, x):
-        with torch.autocast(device_type="cuda", enabled=False): #isht cannot use amp
-            for op in self.operations:
-                x = op(x)
+        for op in self.operations:
+            x = op(x)
 
         if isinstance(x, dict):
             # if output is a dict, return y_pred (if it exists), otherwise return x
@@ -1241,7 +1242,7 @@ class SKEBS(nn.Module):
         
         self.relu1 = nn.ReLU() # use this to gaurantee positive backscatter
 
-        self.dissipation_scaling_coefficient = post_conf["skebs"].get("dissipation_scaling_coefficient", 1.0)
+        self.dissipation_scaling_coefficient = torch.tensor(post_conf["skebs"].get("dissipation_scaling_coefficient", 1.0))
         self.dissipation_type = post_conf["skebs"]["dissipation_type"]
         if self.dissipation_type == "prescribed":
             self.backscatter_network = Backscatter_prescribed(self.nlat, self.nlon, self.levels,
@@ -1402,7 +1403,7 @@ class SKEBS(nn.Module):
         self.variance = Parameter(torch.tensor(0.083, requires_grad=True))
         self.p = Parameter(torch.tensor(-1.27, requires_grad=True))
         self.dE = Parameter(torch.tensor(1e-4, requires_grad=True))
-        self.r = Parameter(torch.tensor(0.01, requires_grad=False)) # see berner 2009, section 4a
+        self.r = Parameter(torch.tensor(0.03, requires_grad=False)) # see berner 2009, section 4a
         self.r.requires_grad = False
         # initialize spectral filters
 
@@ -1469,9 +1470,9 @@ class SKEBS(nn.Module):
         cmplx_noise = torch.view_as_complex(self.multivariateNormal.sample(spec_coef.shape))
         noise = self.variance * cmplx_noise
         new_coef = (1.0 - self.alpha) * spec_coef + self.g_n * torch.sqrt(self.alpha) * noise  # (lmax, mmax)
-        assert not new_coef.isnan().any()
         return new_coef * self.spectral_pattern_filter 
-
+    
+    @custom_fwd(device_type='cuda', cast_inputs=torch.float32)
     def forward(self, x):
         if self.is_training: # this checks if we are in a training script
             # self.training is a torch level thing that checks if we are in train/validation mode of training
@@ -1524,7 +1525,7 @@ class SKEBS(nn.Module):
             or (self.write_debug_files and self.iteration % self.write_every == 0)):
             logger.info(f"writing backscatter file for iter {self.iteration}")
             torch.save(backscatter_pred, join(self.backscatter_save_loc, f"backscatter_raw_{self.iteration}"))
-        
+            
         if self.dissipation_type not in ["prescribed", "uniform"]:
             # spatially filter the backscatter 
             backscatter_spec = self.sht(backscatter_pred) # b, levels, t, lmax, mmax
@@ -1565,9 +1566,9 @@ class SKEBS(nn.Module):
         logger.debug(f"max v_chi: {torch.max(torch.abs(v_chi))}")
         # compute the dissipation term
         dissipation_term = torch.sqrt(self.r * backscatter_pred / self.dE) # shape (b, levels, 1, lat, lon)
-        # 1e-2 * 1e1 * 1e4 * 1e3 = 1e5 
+        # sqrt(2e-2 * 1e1 * 1e4) * 0.5e-3 (pattern)
+        # 1.4e1.5 * 0.5e-3 = 0.7e-1.5 = 0.2
         # pattern: 1e-3
-        # total: 1e2
 
         #############################################################
         ################### DEBUG perturbations #####################
@@ -1602,9 +1603,10 @@ class SKEBS(nn.Module):
         x = concat_for_inplace_ops(x, x_u_wind, min(self.U_inds), max(self.U_inds))
         x = concat_for_inplace_ops(x, x_v_wind, min(self.V_inds), max(self.V_inds))
         
-        # check for nans and transform back to model (transformed) output space
-        assert not torch.isnan(x).any()
+        # transform back to model (transformed) output space
         x = self.state_trans.transform_array(x)
+
+        # check for nans
         assert not torch.isnan(x).any()
 
         #############################################################

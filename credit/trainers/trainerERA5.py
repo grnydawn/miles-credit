@@ -93,6 +93,8 @@ class Trainer(BaseTrainer):
             + len(conf["data"]["static_variables"])
         )
 
+        ensemble_size = conf["trainer"].get("ensemble_size", 1)
+
         # [Optional] retain graph for multiple backward passes
         retain_graph = conf["data"].get("retain_graph", False)
 
@@ -226,8 +228,9 @@ class Trainer(BaseTrainer):
                     x = torch.clamp(x, min=clamp_min, max=clamp_max)
 
                 # predict with the model
-                with autocast(enabled=amp):
-                    y_pred = self.model(x.float())
+                x = x.float()
+                with torch.autocast(device_type="cuda", enabled=amp):
+                    y_pred = self.model(x)
 
                 # ============================================= #
                 # postblock opts outside of model
@@ -280,7 +283,7 @@ class Trainer(BaseTrainer):
                     if flag_clamp:
                         y = torch.clamp(y, min=clamp_min, max=clamp_max)
 
-                    with autocast(enabled=amp):
+                    with torch.autocast(enabled=amp, device_type="cuda"):
                         loss = criterion(y.to(y_pred.dtype), y_pred).mean()
 
                     # track the loss
@@ -398,7 +401,6 @@ class Trainer(BaseTrainer):
                 np.mean(results_dict["train_mae"]),
                 forecast_length + 1,
             )
-            ensemble_size = conf["trainer"].get("ensemble_size", 0)
             if ensemble_size > 1:
                 to_print += f" std: {np.mean(results_dict['train_std']):.6f}"
             to_print += " lr: {:.12f}".format(optimizer.param_groups[0]["lr"])
