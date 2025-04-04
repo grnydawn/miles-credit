@@ -1171,6 +1171,8 @@ class SKEBS(nn.Module):
         """
         super().__init__()
 
+        self.post_conf = post_conf
+
         self.nlon = post_conf["model"]["image_width"]
         self.nlat = post_conf["model"]["image_height"]
         self.channels = post_conf["model"]["channels"]
@@ -1204,24 +1206,23 @@ class SKEBS(nn.Module):
         assert np.all(np.diff(self.U_inds) == 1) and np.all(self.U_inds[:-1] <= self.U_inds[1:])
         assert np.all(np.diff(self.V_inds) == 1) and np.all(self.V_inds[:-1] <= self.V_inds[1:])
 
-        # need this info        
+        # initialize specific params    
         self.alpha_init = post_conf["skebs"].get("alpha_init", 0.125)
         self.zero_out_levels_top_of_model = post_conf["skebs"].get("zero_out_levels_top_of_model", 3)
         logger.info(f"filtering out top {self.zero_out_levels_top_of_model} levels of skebs perturbation")
 
         self.tropics_only_dissipation = post_conf["skebs"].get("tropics_only_dissipation", False)
-        self.filter_backscatter = post_conf["skebs"].get("filter_backscatter", True) # backscatter filter by default, trainable is set below using train_spectral_filter
-        self.filter_pattern = post_conf["skebs"].get("filter_pattern", False)
 
-        if self.filter_backscatter:
-            logger.info("Filtering backscatter")
-        if self.filter_pattern:
-            logger.info("Filtering the pattern")
 
+        ### initialize filters, pattern, and spherical harmonic transforms
         self.initialize_sht()
-        self.initialize_skebs_parameters()        
+        self.initialize_skebs_parameters()   
+        self.initialize_filters()
+   
+
         # coeffs havent been spun up yet (indicates need to init the coeffs)
         self.spec_coef_is_initialized = False
+
         # freeze pattern weights before init backscatter
         self.freeze_pattern_weights = post_conf["skebs"].get("freeze_pattern_weights", False)
         if self.freeze_pattern_weights:
@@ -1229,7 +1230,8 @@ class SKEBS(nn.Module):
             for param in self.parameters():
                 param.requires_grad = False
 
-        # initialize backscatter prediction
+        ############### initialize backscatter prediction ###############
+        #################################################################
         self.use_statics = post_conf["skebs"].get("use_statics", True)
         num_channels = (self.channels * self.levels 
                             + post_conf["model"]["surface_channels"]
@@ -1237,10 +1239,6 @@ class SKEBS(nn.Module):
         if self.use_statics:
             num_channels += len(self.static_inds) + 1 # this one for static vars and coslat
         
-        # num_channels = (self.channels * self.levels 
-        #                 + len(post_conf["data"]["surface_variables"])
-        #                 + len(post_conf["data"]["diagnostic_variables"])
-        # )
         self.relu1 = nn.ReLU() # use this to gaurantee positive backscatter
 
         self.dissipation_scaling_coefficient = post_conf["skebs"].get("dissipation_scaling_coefficient", 1.0)
@@ -1296,7 +1294,7 @@ class SKEBS(nn.Module):
 
         train_pattern_filter = post_conf["skebs"].get("train_pattern_filter", False)
         if train_pattern_filter: 
-            self.spectral_filter.requires_grad = True
+            self.spectral_pattern_filter.requires_grad = True
             logger.info("training pattern filter")
 
         logger.info(f"trainable params{[name for name, param in self.named_parameters() if param.requires_grad]}")
@@ -1407,39 +1405,28 @@ class SKEBS(nn.Module):
         self.r = Parameter(torch.tensor(0.01, requires_grad=False)) # see berner 2009, section 4a
         self.r.requires_grad = False
         # initialize spectral filters
-        if not self.filter_pattern: #default filter up to wv 100
-            self.spectral_filter = Parameter(torch.cat([
-                                            torch.ones(90),
-                                            torch.logspace(0., -3, 10),
-                                            torch.zeros(self.lmax - 100)
-                                            ]) # keep only first 100 wavenums
-                                            .view(1,1,1,self.lmax, 1),
-                                            requires_grad=False)
-        else: #filter up to wv 60
-            self.spectral_filter = Parameter(torch.cat([
-                                            torch.ones(50),
-                                            torch.logspace(0., -3, 10),
-                                            torch.zeros(self.lmax - 60)
-                                            ]) # keep only first 100 wavenums
-                                            .view(1,1,1,self.lmax, 1),
-                                            requires_grad=False)
 
-        if self.filter_backscatter: #berner filtering up to wv 30
-            self.spectral_backscatter_filter = Parameter(torch.cat([
-                                                    torch.ones(10),
-                                                    torch.linspace(1., 0.2, 20),
-                                                    torch.zeros(self.lmax - 30)
-                                                    ])
-                                                    .view(1,1,1,self.lmax, 1),
-                                                    requires_grad=True)
-        else: # filter at wv 100
-            self.spectral_backscatter_filter = Parameter(torch.cat([
-                                                torch.ones(60),
-                                                torch.linspace(1., 0.2, 40),
-                                                torch.zeros(self.lmax - 100)
-                                                ])
-                                                .view(1,1,1,self.lmax, 1),
-                                                requires_grad=True)
+    def initialize_filters(self):
+        def filter_init(max_wavenum, anneal_start):
+            filter = torch.cat([
+                                torch.ones(anneal_start),
+                                torch.linspace(1., 0.2, max_wavenum - anneal_start),
+                                torch.zeros(self.lmax - max_wavenum)
+                                ])
+            return filter.view(1,1,1,self.lmax, 1)
+        
+        p_max =  self.post_conf["skebs"].get("max_pattern_wavenum", 60)
+        p_anneal = self.post_conf["skebs"].get("pattern_filter_anneal_start", 40)
+
+        self.spectral_pattern_filter = Parameter(filter_init(p_max, p_anneal),
+                                         requires_grad=False)
+        
+        b_max =  self.post_conf["skebs"].get("max_backscatter_wavenum", 100)
+        b_anneal = self.post_conf["skebs"].get("backscatter_filter_anneal_start", 90)
+
+        self.spectral_backscatter_filter = Parameter(filter_init(b_max, b_anneal),
+                                         requires_grad=False)
+
 
     def clip_parameters(self):
         self.alpha.data = self.alpha.data.clamp(self.eps, 1.)
@@ -1447,7 +1434,7 @@ class SKEBS(nn.Module):
         self.p.data = self.p.data.clamp(-10, -self.eps)
         self.dE.data = self.dE.data.clamp(self.eps, 1.)
         self.r.data = self.r.data.clamp(self.eps, 1.)
-        self.spectral_filter.data = self.spectral_filter.data.clamp(0., 1.)
+        self.spectral_pattern_filter.data = self.spectral_pattern_filter.data.clamp(0., 1.)
         self.spectral_backscatter_filter.data = self.spectral_backscatter_filter.data.clamp(0., 1.)
 
 
@@ -1483,7 +1470,7 @@ class SKEBS(nn.Module):
         noise = self.variance * cmplx_noise
         new_coef = (1.0 - self.alpha) * spec_coef + self.g_n * torch.sqrt(self.alpha) * noise  # (lmax, mmax)
         assert not new_coef.isnan().any()
-        return new_coef * self.spectral_filter 
+        return new_coef * self.spectral_pattern_filter 
 
     def forward(self, x):
         if self.is_training: # this checks if we are in a training script
@@ -1508,8 +1495,14 @@ class SKEBS(nn.Module):
                 
             return x
         
+
+        ################### SKEBS ################### 
+        #############################################
+        #############################################
+        #############################################
+
         ################### BACKSCATTER ################### 
-        ########## setup input data for backscatter ################### 
+        ######## setup input data for backscatter #########
 
         x_input_statics = x["x"][:, self.static_inds]
         x = x["y_pred"]
@@ -1582,7 +1575,7 @@ class SKEBS(nn.Module):
 
         ## debug skebs, write out physical values 
         if self.write_debug_files and self.iteration % self.write_every == 0:
-            torch.save(self.spectral_filter, join(self.debug_save_loc, f"spectral_filter_{self.iteration}"))
+            torch.save(self.spectral_pattern_filter, join(self.debug_save_loc, f"spectral_filter_{self.iteration}"))
             torch.save(self.spectral_backscatter_filter, join(self.debug_save_loc, f"spectral_backscatter_filter_{self.iteration}"))
             # add_wind_magnitude = torch.sqrt(dissipation_term ** 2 * (u_chi ** 2 + v_chi ** 2))
             # logger.debug(f"perturb max/min: {add_wind_magnitude.max():.2f}, {add_wind_magnitude.min():.2f}")
