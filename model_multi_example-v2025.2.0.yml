@@ -288,6 +288,18 @@ model:
     ff_dropout: 0.                    # Dropout probability for feed-forward layers (default: 0.0)
     diffusion_output_channels: 158    # (variables*levels)+surface_variables+diagnostic_variables
 
+    ##### diffusion settings: 
+    timesteps: 1000
+    sampling_timesteps: None
+    objective: "pred_v"
+    beat_schedule: "linear"
+    ddim_sampling_eta: 0.0
+    auto_normalize: True
+    offset_noise_strength: 0.0
+    min_snr_loss_weight: False
+    min_snr_gamma: 5
+    immiscible: False
+
     # fuxi example
     # frames: 2               # number of input states
     # image_height: &height 640       # number of latitude grids

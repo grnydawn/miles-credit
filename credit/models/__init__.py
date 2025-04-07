@@ -24,7 +24,7 @@ model_types = {
     ),
     "crossformer-diffusion": (
         CrossFormerDiffusion,
-        "Loading the CrossFormer model with a conv decoder head and skip connections ...",
+        "Loading A DDPM model with CrossFormer Backbone ....",
     ),
     "crossformer-style": (
         CrossFormerWithNoise,
