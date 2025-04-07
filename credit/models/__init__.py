@@ -131,6 +131,22 @@ def load_model(conf, load_weights=False, model_name=False):
 
         return model(**model_conf)
 
+    if model_type in ("crossformer-diffusion"):
+        model, message = model_types[model_type]
+        logger.info(message)
+        if load_weights:
+            if model_name:
+                return model.load_model_name(conf, model_name=model_name)
+            else:
+                return model.load_model(conf)
+        return model(**model_conf, self_condition=True)
+
+    else:
+        msg = f"Model type {model_type} not supported. Exiting."
+        logger.warning(msg)
+        raise ValueError(msg)
+        
+    
     if model_type in model_types:
         model, message = model_types[model_type]
         logger.info(message)

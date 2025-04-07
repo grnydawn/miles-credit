@@ -28,6 +28,9 @@ data:
     # upper-air variables will be normalized by the dataloader, users do not need to normalize them
     variables: ['U','V','T','Qtot']
     save_loc: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/f.e21.CREDIT_climate_????_ERA5scaled_F32_Qtot.zarr'
+
+    #input_channels = channels * levels + surface_channels + input_only_channels
+    #128 + 2 + 2 + 2 + outputchannels 
     
     # surface variables, must be YEARLY zarr or nc with (time, latitude, longitude) dims
     # the time dimension MUST be the same as upper-air variables
@@ -142,13 +145,13 @@ trainer:
     # Choose the training routine
     # This is deprecated as of credit-2.0
     # Use universal with all of the above dataset_types
-    type: era5-diffusion
+    type: era5
 
     # the keyword that controls GPU usage
     # fsdp: fully sharded data parallel
     # ddp: distributed data parallel
     # none: single-GPU training
-    mode: ddp
+    mode: none
 
     # fsdp-specific GPU optimization
     #
@@ -163,10 +166,10 @@ trainer:
 
     # load existing weights / optimizer / mixed-precision grad scaler / learning rate scheduler state(s)
     # when starting multi-step training, only use reload weights initially, then set all to true
-    load_weights: True
-    load_optimizer: True
-    load_scaler: True 
-    load_scheduler: True
+    load_weights: False
+    load_optimizer: False
+    load_scaler: False 
+    load_scheduler: False
 
     # CREDIT save checkpoints at the end of every epoch
     # save_backup_weights will also save checkpoints in the beginning of every epoch
@@ -286,9 +289,11 @@ model:
     cross_embed_strides: [2, 2, 2, 2] # Strides for cross-embedding (default: [4, 2, 2, 2])
     attn_dropout: 0.                  # Dropout probability for attention layers (default: 0.0)
     ff_dropout: 0.                    # Dropout probability for feed-forward layers (default: 0.0)
-    diffusion_output_channels: 158    # (variables*levels)+surface_variables+diagnostic_variables
+    
 
     ##### diffusion settings: 
+    diffusion: True
+    diffusion_output_channels: 146    # (variables*levels)+surface_variables+diagnostic_variables
     timesteps: 1000
     sampling_timesteps: None
     objective: "pred_v"
@@ -299,6 +304,7 @@ model:
     min_snr_loss_weight: False
     min_snr_gamma: 5
     immiscible: False
+    condition: True
 
     # fuxi example
     # frames: 2               # number of input states
@@ -340,7 +346,7 @@ model:
 
     # configuration for postblock processing
     post_conf: 
-        activate: True
+        activate: False
 
 
         # this scaling maps your variables to the ERA5 units 
@@ -473,7 +479,7 @@ predict:
     # fsdp: fully sharded data parallel
     # ddp: distributed data parallel
     # none: single-GPU training
-    mode: ddp
+    mode: none
 
     # Set the batch_size for the prediction inference mode (default is 1)
     batch_size: 1

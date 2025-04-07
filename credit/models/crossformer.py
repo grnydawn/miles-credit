@@ -419,6 +419,7 @@ class CrossFormer(BaseModel):
         if post_conf is None:
             post_conf = {"activate": False}
         self.use_post_block = post_conf["activate"]
+            
 
         # input channels
         self.input_only_channels = input_only_channels
@@ -428,6 +429,13 @@ class CrossFormer(BaseModel):
         # output channels
         output_channels = channels * levels + surface_channels + output_only_channels
         self.output_channels = output_channels
+        print('pre input: ', self.input_channels)
+        print('pre output_channels: ', self.output_channels)
+        if kwargs.get('diffusion'):
+            #do stuff
+            self.input_channels = input_channels + output_channels
+            
+        print('post input channels:',self.input_channels)
 
         dim = cast_tuple(dim, 4)
         depth = cast_tuple(depth, 4)
@@ -445,9 +453,10 @@ class CrossFormer(BaseModel):
 
         # dimensions
         last_dim = dim[-1]
-        first_dim = input_channels if (patch_height == 1 and patch_width == 1) else dim[0]
+        first_dim = self.input_channels if (patch_height == 1 and patch_width == 1) else dim[0]
         dims = [first_dim, *dim]
         dim_in_and_out = tuple(zip(dims[:-1], dims[1:]))
+        print('dim_in_and_out: ', dim_in_and_out)
 
         # allocate cross embed layers
         self.layers = nn.ModuleList([])

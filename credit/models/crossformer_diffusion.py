@@ -61,17 +61,14 @@ class CrossFormerDiffusion(CrossFormer):
             nn.Linear(1, self.dim[0]), nn.SiLU(), nn.Linear(self.dim[0], self.dim[-1])
         )
 
-        self.final_conv = nn.Conv3d(self.pre_out_dim, self.out_dim, 1) #used to ensure that only noise channels are left at the end; channels=total number of output vars. 
+        self.final_conv = nn.Conv3d(self.pre_out_dim, self.output_channels, 1) #used to ensure that only noise channels are left at the end; channels=total number of output vars. 
 
     def forward(self, x, timestep, x_self_cond=False, x_cond=None):
         x_copy = None
 
         if self.self_condition:
-            x_self_cond = default(x_self_cond, lambda: torch.zeros_like(x))
+            x_self_cond = torch.zeros_like(x)
             x = torch.cat((x_self_cond, x), dim = 1)
-
-        # if self.condition:
-        #     x = torch.cat((x, x_cond),dim = 1)
         
         if self.use_post_block:
             x_copy = x.clone().detach()
