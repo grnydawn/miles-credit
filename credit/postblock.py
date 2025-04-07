@@ -1258,7 +1258,7 @@ class SKEBS(nn.Module):
             self.backscatter_network = Backscatter_CNN(num_channels, self.levels, self.nlat, self.nlon)
         elif self.dissipation_type == "unet":
             architecture = post_conf["skebs"].get("architecture", None)
-            padding = post_conf["skebs"].get("padding", 0)
+            padding = post_conf["skebs"].get("padding", 48)
             self.backscatter_network = Backscatter_unet(num_channels,
                                                         self.levels,
                                                         self.nlat,

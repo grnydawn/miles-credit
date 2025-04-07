@@ -365,6 +365,7 @@ model:
             
             # unet - see models/unet.py for examples
             # architecture:
+            padding: 48
 
             # prescribed dissipation:
             sigma_max: 2.0 # what sigma level to set as the max wind. perturbation will be roughly sigma_max * std for wind at each level
