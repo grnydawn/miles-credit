@@ -1,15 +1,14 @@
 import torch
 import torch.nn as nn
 from credit.models.crossformer import CrossFormer
-from denoising_diffusion_pytorch import GaussianDiffusion
-from denoising_diffusion_pytorch import *
+from credit.diffusion import GaussianDiffusion
+from credit.diffusion import *
 import torch.nn.functional as F
 import random
 from einops import rearrange, reduce
 from tqdm.auto import tqdm
 from functools import partial
 from collections import namedtuple
-
 
 def exists(x):
     return x is not None
@@ -45,9 +44,9 @@ class CrossFormerDiffusion(CrossFormer):
 
         print("Num Channels Out:", kwargs.get("diffusion_output_channels"))
 
-        self.out_dim = kwargs.get("diffusion_output_channels")
+        self.out_dim = kwargs.get("diffusion_output_channels")  ## will need to add this to the yaml; channels=total number of output vars. 
 
-        self.pre_out_dim = kwargs.get("surface_channels")+(kwargs.get("channels") * kwargs.get("levels"))
+        self.pre_out_dim = kwargs.get("surface_channels")+(kwargs.get("channels") * kwargs.get("levels")) ## channels=total number of output vars out of the wxformer when input+condition is in line. 
 
         self.dim = kwargs.get(
             "dim", (64, 128, 256, 512)
@@ -60,7 +59,7 @@ class CrossFormerDiffusion(CrossFormer):
             nn.Linear(1, self.dim[0]), nn.SiLU(), nn.Linear(self.dim[0], self.dim[-1])
         )
 
-        self.final_conv = nn.Conv3d(self.pre_out_dim, self.out_dim, 1)
+        self.final_conv = nn.Conv3d(self.pre_out_dim, self.out_dim, 1) #used to ensure that only noise channels are left at the end; channels=total number of output vars. 
 
     def forward(self, x, timestep, x_self_cond=False, x_cond=None):
         x_copy = None

@@ -11,6 +11,7 @@ from credit.models.swin import SwinTransformerV2Cr
 from credit.models.graph import GraphResTransfGRU
 from credit.models.debugger_model import DebuggerModel
 from credit.models.crossformer_ensemble import CrossFormerWithNoise
+from credit.models.crossformer_diffusion import CrossFormerDiffusion
 
 
 logger = logging.getLogger(__name__)
@@ -19,6 +20,10 @@ logger = logging.getLogger(__name__)
 model_types = {
     "crossformer": (
         CrossFormer,
+        "Loading the CrossFormer model with a conv decoder head and skip connections ...",
+    ),
+    "crossformer-diffusion": (
+        CrossFormerDiffusion,
         "Loading the CrossFormer model with a conv decoder head and skip connections ...",
     ),
     "crossformer-style": (

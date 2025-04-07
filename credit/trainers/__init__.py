@@ -3,6 +3,7 @@ import logging
 
 # Import trainer classes
 from credit.trainers.trainerERA5 import Trainer as TrainerERA5
+from credit.trainers.trainerERA5_Diffusion import Trainer as TrainerERA5_Diffusion
 from credit.trainers.trainer404 import Trainer as Trainer404
 
 logger = logging.getLogger(__name__)
@@ -14,13 +15,16 @@ trainer_types = {
         TrainerERA5,
         "Loading a single or multi-step trainer for the ERA5 dataset that uses gradient accumulation on forecast lengths > 1.",
     ),
+    "era5-diffusion": (
+        TrainerERA5_Diffusion,
+        "Loading a single or multi-step trainer for the ERA5 dataset that uses gradient accumulation on forecast lengths > 1.",
+    ),
     "cam": (
         TrainerERA5,
         "Loading a single or multi-step trainer for the CAM dataset that uses gradient accumulation on forecast lengths > 1.",
     ),
     "conus404": (Trainer404, "Loading a standard trainer for the CONUS404 dataset."),
 }
-
 
 def load_trainer(conf, load_weights=False):
     conf = copy.deepcopy(conf)
