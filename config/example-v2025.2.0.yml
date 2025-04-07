@@ -383,9 +383,16 @@ model:
             # data config - does the backscatter model get statics variables?
             use_statics: False 
 
-            # debugging tools
-            save_backscatter: True # saves only when no_grad
-            write_debug_files: False #writing out files while training       
+            # [Optional] early skebs shutoff on iteration number:
+            iteration_stop: 0 # if 0, skebs is always run
+
+            #### debugging ####
+            # write files during training:
+            write_train_debug_files: True #writing out files while training, if this is False          
+            write_train_every: 999
+
+            # write files during inference
+            write_rollout_debug_files: True # saves only when no_grad 
 
         # =================================================== #
         # The section of conservation schemes

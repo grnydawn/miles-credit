@@ -1302,30 +1302,23 @@ class SKEBS(nn.Module):
 
 
         ########### debugging and analysis features #############
-        self.write_debug_files = post_conf['skebs'].get('write_debug_files', False)
-        self.write_every = 999
-        save_loc = post_conf['skebs']["save_loc"]
-        self.debug_save_loc = join(save_loc, "debug_skebs")
+        self.is_training = False
+        self.iteration = 0
+
         self.write_rollout_debug_files = post_conf["skebs"].get("write_rollout_debug_files", True)
 
-        if self.write_debug_files or self.write_rollout_debug_files:
+        self.write_train_debug_files = post_conf['skebs'].get('write_train_debug_files', False)
+        self.write_every = post_conf['skebs'].get('write_train_every', 999)
+
+        save_loc = post_conf['skebs']["save_loc"]
+        self.debug_save_loc = join(save_loc, "debug_skebs")
+
+        if self.write_train_debug_files or self.write_rollout_debug_files:
             os.makedirs(self.debug_save_loc, exist_ok=True)
             logger.info("writing SKEBS debugging files")
 
-        
 
-        self.iteration = 0
-
-
-        ##### write out backscatter files #####
-        self.is_training = False # will set this in first time into forward
-        self.save_backscatter_prediction = post_conf["skebs"].get("save_backscatter", False)
-        if self.save_backscatter_prediction:
-            logger.info("writing backscatter files if not in training mode")
-            self.backscatter_save_loc = join(save_loc, "backscatter")
-            os.makedirs(self.backscatter_save_loc, exist_ok=True)
-
-        ############# stop iteration ###################
+        ############# early shutoff ###################
         self.iteration_stop = post_conf['skebs'].get("iteration_stop", 0)
         if self.iteration_stop:
             logger.info(f"SKEBS is STOPPING at iteration {self.iteration_stop}")
@@ -1521,10 +1514,10 @@ class SKEBS(nn.Module):
                             * self.tropics_backscatter_filter 
                             * self.backscatter_network(x)) 
 
-        if ((self.save_backscatter_prediction and not self.is_training) # save out raw backscatter prediction
-            or (self.write_debug_files and self.iteration % self.write_every == 0)):
+        if ((self.write_rollout_debug_files and not self.is_training) # save out raw all backscatter prediction when not training
+            or (self.write_train_debug_files and self.iteration % self.write_every == 0)):
             logger.info(f"writing backscatter file for iter {self.iteration}")
-            torch.save(backscatter_pred, join(self.backscatter_save_loc, f"backscatter_raw_{self.iteration}"))
+            torch.save(backscatter_pred, join(self.debug_save_loc, f"backscatter_raw_{self.iteration}"))
             
         if self.dissipation_type not in ["prescribed", "uniform"]:
             # spatially filter the backscatter 
@@ -1536,10 +1529,10 @@ class SKEBS(nn.Module):
 
         logger.debug(f"max backscatter: {torch.max(torch.abs(backscatter_pred))}")
 
-        if ((self.save_backscatter_prediction and not self.is_training)
-            or (self.write_debug_files and self.iteration % self.write_every == 0)):
+        if ((self.write_rollout_debug_files and not self.is_training) # save out filtered backscatter
+            or (self.write_train_debug_files and self.iteration % self.write_every == 0)):
             logger.info(f"writing backscatter file for iter {self.iteration}")
-            torch.save(backscatter_pred, join(self.backscatter_save_loc, f"backscatter_{self.iteration}"))
+            torch.save(backscatter_pred, join(self.debug_save_loc, f"backscatter_{self.iteration}"))
         
         ################### SKEBS pattern ####################
 
@@ -1575,7 +1568,7 @@ class SKEBS(nn.Module):
 
 
         ## debug skebs, write out physical values 
-        if self.write_debug_files and self.iteration % self.write_every == 0:
+        if self.write_train_debug_files and self.iteration % self.write_every == 0:
             torch.save(self.spectral_pattern_filter, join(self.debug_save_loc, f"spectral_filter_{self.iteration}"))
             torch.save(self.spectral_backscatter_filter, join(self.debug_save_loc, f"spectral_backscatter_filter_{self.iteration}"))
             # add_wind_magnitude = torch.sqrt(dissipation_term ** 2 * (u_chi ** 2 + v_chi ** 2))
@@ -1590,7 +1583,8 @@ class SKEBS(nn.Module):
         u_perturb = dissipation_term * u_chi
         v_perturb = dissipation_term * v_chi
 
-        if self.write_rollout_debug_files and not self.is_training: # always write these files in rollout
+        if ((self.write_rollout_debug_files and not self.is_training) # save out raw all backscatter prediction when not training
+            or (self.write_train_debug_files and self.iteration % self.write_every == 0)):
             torch.save(u_perturb, join(self.debug_save_loc, f"u_perturb_{self.iteration}"))
             torch.save(v_perturb, join(self.debug_save_loc, f"v_perturb_{self.iteration}"))
 
