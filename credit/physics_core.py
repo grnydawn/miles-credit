@@ -32,7 +32,7 @@ def compute_virtual_temperature(temperature, specific_humidity):
     return temperature_virtual
 
 
-class compute_pressure_on_mlevs(nn.Module):
+class ModelLevelPressures(nn.Module):
     '''
     compute pressure levels given SP with (only compatible with torch)
     SP, a_vals with same units.
@@ -62,8 +62,8 @@ class compute_pressure_on_mlevs(nn.Module):
     def compute_hlevs(self, plevs):
         # half levels as averages of model level pressures
         
-        hlevs = plevs.unfold(dimension=self.plev_dim, size=2, step=1).mean(dim=-1)
-        return hlevs # same shape a plev except plev_dim is 1 less
+        hlevs = torch.log(plevs.unfold(dimension=self.plev_dim, size=2, step=1)).mean(dim=-1)
+        return torch.exp(hlevs) # same shape a plev except plev_dim is 1 less
     
     def compute_mlev_thickness(self, sp):
         plevs = self.compute_p(sp)
