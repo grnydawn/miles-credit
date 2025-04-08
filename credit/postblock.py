@@ -1173,6 +1173,7 @@ class SKEBS(nn.Module):
         super().__init__()
 
         self.post_conf = post_conf
+        self.retain_graph = post_conf["data"].get("retain_graph", False)
 
         self.nlon = post_conf["model"]["image_width"]
         self.nlat = post_conf["model"]["image_height"]
@@ -1396,7 +1397,7 @@ class SKEBS(nn.Module):
         self.variance = Parameter(torch.tensor(0.083, requires_grad=True))
         self.p = Parameter(torch.tensor(-1.27, requires_grad=True))
         self.dE = Parameter(torch.tensor(1e-4, requires_grad=True))
-        self.r = Parameter(torch.tensor(0.03, requires_grad=False)) # see berner 2009, section 4a
+        self.r = Parameter(torch.tensor(0.02, requires_grad=False)) # see berner 2009, section 4a
         self.r.requires_grad = False
         # initialize spectral filters
 
@@ -1500,6 +1501,9 @@ class SKEBS(nn.Module):
 
         x_input_statics = x["x"][:, self.static_inds]
         x = x["y_pred"]
+
+        if not self.retain_graph:
+            x = x.detach()
 
         if self.iteration == 0:
             self.cos_lat = self.cos_lat.to(x.device).expand(x.shape[0], *self.cos_lat.shape[1:])
