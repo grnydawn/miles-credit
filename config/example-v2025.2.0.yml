@@ -389,11 +389,11 @@ model:
 
             #### debugging ####
             # write files during training:
-            write_train_debug_files: True #writing out files while training, if this is False          
+            write_train_debug_files: False #writing out files while training, if this is False          
             write_train_every: 999
 
             # write files during inference
-            write_rollout_debug_files: True # saves only when no_grad 
+            write_rollout_debug_files: False # saves only when no_grad 
 
         # =================================================== #
         # The section of conservation schemes

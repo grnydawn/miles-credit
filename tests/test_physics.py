@@ -1,5 +1,3 @@
-from matplotlib.dates import num2timedelta
-import yaml
 import os
 
 import xarray as xr

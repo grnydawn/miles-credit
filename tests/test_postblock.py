@@ -27,6 +27,7 @@ def test_SKEBS_rand():
 
     conf["data"]["save_loc_static"] = os.path.join(TEST_FILE_DIR, "data/level_info_test.nc")
     conf["data"]["mean_path"] = os.path.join(TEST_FILE_DIR, "data/mean_6h_1979_2018_16lev_0.25deg.nc")
+    conf["data"]["std_path"] = os.path.join(TEST_FILE_DIR, "data/std_residual_6h_1979_2018_16lev_0.25deg.nc")
     conf['model']['post_conf']["activate"] = True
 
     conf['model']["post_conf"]["global_mass_fixer"] = {"activate": False}
@@ -36,6 +37,9 @@ def test_SKEBS_rand():
 
     conf['model']["post_conf"]["skebs"]["activate"] = True
     conf['model']["post_conf"]["skebs"]["dissipation_type"] = "uniform"
+
+    conf['model']["post_conf"]["skebs"]["write_train_debug_files"] = False
+    conf['model']["post_conf"]["skebs"]["write_rollout_debug_files"] = False
 
     image_height = 640 # needs to match level_info_test.nc
     image_width = 1280
