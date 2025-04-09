@@ -7,6 +7,81 @@ The postblocks are named such because they are applied after the forward pass of
 
 - Sha, Yingkai, et al. "[Improving AI weather prediction models using global mass and energy conservation schemes.](https://arxiv.org/abs/2501.05648)" arXiv preprint arXiv:2501.05648 (2025).
 
+
+### Currently supported postblocks
+
+#### Non-Negative Filter 
+
+This example shows how to prevent 7 variables from going below zero
+
+```yaml
+tracer_fixer:
+    activate: True
+    denorm: True
+    tracer_name: ['Qtot','PRECT','U10','CLDTOT','CLDHGH','CLDLOW','CLDMED']
+    tracer_thres: [0, 0, 0, 0, 0, 0, 0]
+```
+
+#### Global Mass Fixer 
+
+This example shows how to fix the model global mass  
+
+```yaml
+global_mass_fixer:
+    activate: True
+    activate_outside_model: True
+    fix_level_num: 14  #specify presure or sigma level 
+    simple_demo: False
+    denorm: True
+    grid_type: 'sigma'  #specify presure or sigma level 
+    midpoint: True
+    lon_lat_level_name: ['lon2d', 'lat2d', 'hyai', 'hybi']
+    surface_pressure_name: ['PS']
+    specific_total_water_name: ['Qtot']
+```
+
+#### Global Water Fixer 
+
+This example shows how to fix the model water balance  
+
+
+```yaml
+global_water_fixer:
+    activate: True
+    activate_outside_model: True
+    simple_demo: False
+    denorm: True
+    grid_type: 'sigma'  #specify presure or sigma level 
+    midpoint: True
+    lon_lat_level_name: ['lon2d', 'lat2d', 'hyai', 'hybi']
+    surface_pressure_name: ['PS']
+    specific_total_water_name: ['Qtot']
+    precipitation_name: ['PRECT']
+    evaporation_name: ['QFLX']
+```
+
+#### Global Energy Fixer
+
+```yaml
+global_energy_fixer:
+    activate: True
+    activate_outside_model: True
+    simple_demo: False
+    denorm: True
+    grid_type: 'sigma'
+    midpoint: True
+    lon_lat_level_name: ['lon2d', 'lat2d', 'hyai', 'hybi']
+    surface_pressure_name: ['PS']
+    air_temperature_name: ['T']
+    specific_total_water_name: ['Qtot']
+    u_wind_name: ['U']
+    v_wind_name: ['V']
+    surface_geopotential_name: ['PHIS']
+    TOA_net_radiation_flux_name: ['FSNT', 'FLNT']
+    surface_net_radiation_flux_name: ['FSNS', 'FLNS']
+    surface_energy_flux_name: ['SHFLX', 'LHFLX',]
+```
+
 ## Create code for new postblock
 
 One can add a new class to `credit/postblock.py` or define a new module and import it into `credit/postblock.py`. See `credit/skebs.py` for an example of the latter.
