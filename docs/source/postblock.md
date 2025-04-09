@@ -5,7 +5,7 @@ In this example we will be going over adding a new postblock, `Foo` to CREDIT.
 
 ## Create code for new postblock
 
-One can add a new class to `credit/postblock.py` or define a new module and import it. See `credit/skebs.py` for an example of the latter.
+One can add a new class to `credit/postblock.py` or define a new module and import it into `credit/postblock.py`. See `credit/skebs.py` for an example of the latter.
 
 The parser will add the `data` and `model` fields from the main config to `post_conf`. Inside the class `Foo` you will be able to access these.
 
@@ -13,6 +13,7 @@ The parser will add the `data` and `model` fields from the main config to `post_
 
 ```python
 from torch import nn
+
 class Foo(nn.Module):
     def __init__(self, post_conf):
         super().__init__()
@@ -53,9 +54,11 @@ model:
 
 ## Add to postblock module
 
-Inside `credit/postblock.py`, append your postblock to the list of postblock operations `self.operations`, the order that you want it
+Inside `credit/postblock.py`, append your postblock to the list of postblock operations `self.operations`, the order that you want it.
 
 ```python
+from credit.skebs import SKEBS
+
 class PostBlock(nn.Module):
     def __init__(self, post_conf):
         ...
@@ -69,7 +72,7 @@ class PostBlock(nn.Module):
             logger.info("foo registered")
             opt = Foo(post_conf)
             self.operations.append(opt)
-
+        ...
 ```
 
 
