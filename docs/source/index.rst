@@ -55,6 +55,7 @@ If you encounter issues or have suggestions, please open an issue on our GitHub 
    :caption: Adding New Models and Datasets (Coming Soon)
 
    Supported Model Architectures <Model_Architectures.md>
+   Post Blocks <postblock.md>
    Dataset Structure <DataSets.md>
 
 ----
