@@ -1,4 +1,4 @@
-# Training a Model with CREDIT v2.0
+# Training a Model
 
 CREDIT v2.0 supports three modes for training a model. In your configuration file (`model.yml`), under the `trainer` field, you can set `mode` to one of the following:
 
@@ -180,7 +180,7 @@ conda activate credit
 torchrun applications/train.py -c model.yml
 ```
 
-and note that the ```torchrun``` command is used rather than MPIs. For now MPIs are not supported on Casper but that may change in a future release. But to get torch to run in distributed mode (either DDP or FSDP) we use torchrun to faciliate that (rather than setting that up manuanlly in train.py). 
+and note that the ```torchrun``` command is used rather than MPIs. For now MPIs are not supported on Casper but that will change in a future release. But to get torch to run in distributed mode (either DDP or FSDP) we use torchrun to faciliate that (rather than setting that up manuanlly in train.py). 
 
 ### Key Differences
 
@@ -190,7 +190,7 @@ and note that the ```torchrun``` command is used rather than MPIs. For now MPIs 
 | Total GPUs      | 32 (8 nodes × 4) | 1             |
 | Memory          | 480GB            | 128GB         |
 | Walltime        | 12:00:00         | 4:00:00       |
-| GPU Type        | A100             | V100          |
+| GPU Type        | A100             | V100/A100/H100         |
 | Queue          | `main`            | `casper`      |
 
-Casper is best for **small-scale experiments**, while Derecho is designed for **large-scale, multi-node training**.
+Casper is best for **small-scale experiments**, while Derecho is designed for **large-scale, multi-node training**. Derecho only has A100 GPUs with 40 Gb of memory. Casper has both 40 Gb and 80 Gb A100s along with a small number of H100s with 80 Gb of memory.
