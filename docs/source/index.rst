@@ -57,7 +57,6 @@ If you encounter issues or have suggestions, please open an issue on our GitHub 
    Supported Model Architecture <Model_Architectures.md>
    Dataset Structure <DataSets.md>
 
-
 ----
 
 Indices and Tables
