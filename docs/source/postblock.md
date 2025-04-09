@@ -1,15 +1,17 @@
 # How to add a new postblock
 
 In this example we will be going over adding a new postblock, `Foo` to CREDIT.
+The postblocks are named such because they are applied after the forward pass of the model itself, but before the loss calculations. For a more detailed explaination of the currently support post-blocks see **Sha et al. 2025**. 
 
+## Reference 
+
+- Sha, Yingkai, et al. "[Improving AI weather prediction models using global mass and energy conservation schemes.](https://arxiv.org/abs/2501.05648)" arXiv preprint arXiv:2501.05648 (2025).
 
 ## Create code for new postblock
 
 One can add a new class to `credit/postblock.py` or define a new module and import it into `credit/postblock.py`. See `credit/skebs.py` for an example of the latter.
 
 The parser will add the `data` and `model` fields from the main config to `post_conf`. Inside the class `Foo` you will be able to access these.
-
-
 
 ```python
 from torch import nn
