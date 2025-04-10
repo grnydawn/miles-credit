@@ -158,6 +158,8 @@ def predict(rank, world_size, conf, p):
     if torch.cuda.is_available():
         device = torch.device(f"cuda:{rank % torch.cuda.device_count()}")
         torch.cuda.set_device(rank % torch.cuda.device_count())
+    elif torch.mps.is_available():
+        device = torch.device("mps")
     else:
         device = torch.device("cpu")
 
@@ -174,9 +176,9 @@ def predict(rank, world_size, conf, p):
         logger.info(f"Rolling out with ensemble size {ensemble_size}")
     print(conf["predict"])
     # Set forecast window and time step
-    forecast_start_time = conf["predict"]["forecasts"]["forecast_start_time"]
-    forecast_end_time = conf["predict"]["forecasts"]["forecast_end_time"]
-    forecast_timestep = conf["predict"]["forecasts"]["forecast_timestep"]
+    forecast_start_time = conf["predict"]["realtime"]["forecast_start_time"]
+    forecast_end_time = conf["predict"]["realtime"]["forecast_end_time"]
+    forecast_timestep = conf["predict"]["realtime"]["forecast_timestep"]
 
     # number of diagnostic variables
     varnum_diag = len(conf["data"]["diagnostic_variables"])
@@ -552,7 +554,7 @@ if __name__ == "__main__":
     seed = conf["seed"]
     seed_everything(seed)
 
-    local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])
+    local_rank, world_rank, world_size = get_rank_info(conf["predict"]["mode"])
 
     with mp.Pool(num_cpus) as p:
         if conf["predict"]["mode"] in ["fsdp", "ddp"]:  # multi-gpu inference
