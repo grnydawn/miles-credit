@@ -54,9 +54,9 @@ If you encounter issues or have suggestions, please open an issue on our GitHub 
    :maxdepth: 1
    :caption: Adding New Models and Datasets (Coming Soon)
 
-   Supported Model Architecture <Model_Architectures.md>
+   Supported Model Architectures <Model_Architectures.md>
+   Post Blocks <postblock.md>
    Dataset Structure <DataSets.md>
-
 
 ----
 
