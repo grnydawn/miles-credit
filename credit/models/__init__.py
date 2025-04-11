@@ -12,6 +12,7 @@ from credit.models.graph import GraphResTransfGRU
 from credit.models.debugger_model import DebuggerModel
 from credit.models.crossformer_ensemble import CrossFormerWithNoise
 from credit.models.crossformer_diffusion import CrossFormerDiffusion
+from credit.diffusion import ModifiedGaussianDiffusion
 
 
 logger = logging.getLogger(__name__)
@@ -134,12 +135,28 @@ def load_model(conf, load_weights=False, model_name=False):
     if model_type in ("crossformer-diffusion"):
         model, message = model_types[model_type]
         logger.info(message)
+
+        diffusion_config = {
+            "image_size": (192, 288),
+            "timesteps": 1000,
+            "sampling_timesteps": None,
+            "objective": "pred_v",
+            "beta_schedule": "linear",
+            "schedule_fn_kwargs": dict(),
+            "ddim_sampling_eta": 0.0,
+            "auto_normalize": True,
+            "offset_noise_strength": 0.0,
+            "min_snr_loss_weight": False,
+            "min_snr_gamma": 5,
+            "immiscible": False,
+            }
         if load_weights:
             if model_name:
                 return model.load_model_name(conf, model_name=model_name)
             else:
                 return model.load_model(conf)
-        return model(**model_conf, self_condition=True)
+            
+        return ModifiedGaussianDiffusion(model(**model_conf, self_condition=True), **diffusion_config)
 
     else:
         msg = f"Model type {model_type} not supported. Exiting."

@@ -66,8 +66,11 @@ class CrossFormerDiffusion(CrossFormer):
     def forward(self, x, timestep, x_self_cond=False, x_cond=None):
         x_copy = None
 
+        print(x.shape, '!!!!!!!!!!!!!!!!!!!!!copy this shit!!!!!!!!!!!!!!!!!')
+
         if self.self_condition:
-            x_self_cond = torch.zeros_like(x)
+            x_self_cond = torch.zeros(x.shape[0], 145, x.shape[2], x.shape[3], x.shape[4], device=x.device)
+            print(x.shape, 'copy this shit')
             x = torch.cat((x_self_cond, x), dim = 1)
         
         if self.use_post_block:
@@ -174,10 +177,10 @@ if __name__ == "__main__":
 
     diffusion_config = {
         "image_size": (192, 288),
-        "timesteps": 100,
+        "timesteps": 1000,
         "sampling_timesteps": None,
         "objective": "pred_v",
-        "beta_schedule": "sigmoid",
+        "beta_schedule": "linear",
         "schedule_fn_kwargs": dict(),
         "ddim_sampling_eta": 0.0,
         "auto_normalize": True,

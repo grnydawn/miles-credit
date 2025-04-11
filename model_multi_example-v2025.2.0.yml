@@ -67,7 +67,6 @@ data:
     # static variables must be normalized BY USER 
     static_variables: ['z_norm','LANDM_COSLAT'] 
     save_loc_static: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/f.e21.CREDIT_climate.statics_1.0deg_32levs_latlon_F32_hyai_fixed.nc'
-
     save_loc_physics: '/glade/campaign/cisl/aiml/wchapman/MLWPS/STAGING/f.e21.CREDIT_climate.statics_1.0deg_32levs_latlon_F32_hyai_fixed.nc'
 
     # z-score files, they must be zarr or nc with (level,) coords
@@ -145,7 +144,7 @@ trainer:
     # Choose the training routine
     # This is deprecated as of credit-2.0
     # Use universal with all of the above dataset_types
-    type: era5
+    type: era5-diffusion
 
     # the keyword that controls GPU usage
     # fsdp: fully sharded data parallel
@@ -293,7 +292,7 @@ model:
 
     ##### diffusion settings: 
     diffusion: True
-    diffusion_output_channels: 146    # (variables*levels)+surface_variables+diagnostic_variables
+    diffusion_output_channels: 145    # (variables*levels)+surface_variables+diagnostic_variables
     timesteps: 1000
     sampling_timesteps: None
     objective: "pred_v"
@@ -305,6 +304,7 @@ model:
     min_snr_gamma: 5
     immiscible: False
     condition: True
+    image_size: [192,288]
 
     # fuxi example
     # frames: 2               # number of input states

@@ -111,6 +111,7 @@ class GaussianDiffusion(Module):
         self.self_condition = self.model.self_condition
         self.condition = self.model.condition
         
+        
 
         if isinstance(image_size, int):
             image_size = (image_size, image_size)
@@ -400,12 +401,17 @@ class GaussianDiffusion(Module):
 
     @autocast('cuda', enabled = False)
     def q_sample(self, x_start, t, noise = None):
+        print('x start shape 1', x_start.shape)
+        print('noise shape start 0', noise.shape)
         noise = default(noise, lambda: torch.randn_like(x_start))
+        print('noise shape start 1', noise.shape)
 
         if self.immiscible:
             assign = self.noise_assignment(x_start, noise)
             noise = noise[assign]
-
+        print(t.shape)
+        print('x start shape 2', x_start.shape)
+        print('noise shape', noise.shape)
         return (
             extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start +
             extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
@@ -425,7 +431,7 @@ class GaussianDiffusion(Module):
             noise += offset_noise_strength * rearrange(offset_noise, 'b c -> b c 1 1')
 
         # noise sample
-
+        print('crashing here 0')
         x = self.q_sample(x_start = x_start, t = t, noise = noise)
 
         # if doing self-conditioning, 50% of the time, predict x_start from current set of times
@@ -497,6 +503,9 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
         img = self.normalize(img)
 
         # Call the model's loss function (or whatever other method you want to use)
+        print('crash here mf-er', img.shape)
+        print("args:", args[0].shape)
+        print("kwargs:",kwargs)
         return self.p_losses(img, t, *args, **kwargs)
 
     def p_losses(self, x_start, t, noise=None, offset_noise_strength=None):
@@ -510,6 +519,7 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
         else:
             raise ValueError(f"Unsupported tensor shape {x_start.shape}")
 
+        print('noise p_losses', noise.shape)
         # Default to random noise if not provided
         noise = default(noise, lambda: torch.randn_like(x_start))
 
@@ -523,6 +533,7 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
             noise += offset_noise_strength * rearrange(offset_noise, "b c -> b c 1 1")
 
         # Noise sample
+        print('crashing here 1')
         x = self.q_sample(x_start=x_start, t=t, noise=noise)
 
         # Self-conditioning logic
@@ -533,6 +544,7 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
                 x_self_cond.detach_()
 
         # Predict and take gradient step
+        print('hey dickhead')
         model_out = self.model(x, t, x_self_cond)
 
         # Determine target based on the objective

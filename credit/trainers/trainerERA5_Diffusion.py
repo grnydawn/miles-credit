@@ -282,7 +282,8 @@ class Trainer(BaseTrainer):
                 if forecast_step in backprop_on_timestep: #steps go from 1 to n
                 
                     with autocast(enabled=amp):
-                        loss = self.model(y, x.float())
+                        print('entering model duuuuude')
+                        loss = self.model(x.float(),y)
 
                 accum_log(logs, {"loss": loss.item()})
 
