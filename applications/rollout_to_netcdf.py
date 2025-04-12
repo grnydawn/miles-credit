@@ -6,6 +6,7 @@ import warnings
 from pathlib import Path
 from argparse import ArgumentParser
 import multiprocessing as mp
+import traceback
 
 # ---------- #
 # Numerics
@@ -76,74 +77,79 @@ class ForecastProcessor:
             )
 
     def process(self, y_pred, forecast_step, forecast_count, datetimes, save_datetimes):
-        # Transform predictions
-        y_pred = self.state_transformer.inverse_transform(y_pred)
+        try:
+            # Transform predictions
+            conf = self.conf
+            y_pred = self.state_transformer.inverse_transform(y_pred)
 
-        # This will fail if not using torch multiprocessing AND using a GPU
-        if (
-            "use_laplace_filter" in conf["predict"]
-            and conf["predict"]["use_laplace_filter"]
-        ):
-            y_pred = (
-                self.dpf.diff_lap2d_filt(y_pred.to(self.device).squeeze())
-                .unsqueeze(0)
-                .unsqueeze(2)
-                .cpu()
-            )
+            # This will fail if not using torch multiprocessing AND using a GPU
+            if (
+                "use_laplace_filter" in conf["predict"]
+                and conf["predict"]["use_laplace_filter"]
+            ):
+                y_pred = (
+                    self.dpf.diff_lap2d_filt(y_pred.to(self.device).squeeze())
+                    .unsqueeze(0)
+                    .unsqueeze(2)
+                    .cpu()
+                )
 
-        # Calculate correct datetime for current forecast
-        utc_datetimes = [
-            datetime.utcfromtimestamp(datetimes[i].item())
-            + timedelta(hours=self.lead_time_periods)
-            for i in range(self.batch_size)
-        ]
+            # Calculate correct datetime for current forecast
+            utc_datetimes = [
+                datetime.utcfromtimestamp(datetimes[i].item())
+                + timedelta(hours=self.lead_time_periods)
+                for i in range(self.batch_size)
+            ]
 
-        # Convert to xarray and handle results
-        for j in range(self.batch_size):
-            upper_air_list, single_level_list = [], []
-            for i in range(
-                self.ensemble_size
-            ):  # ensemble_size default is 1, will run with i=0 retaining behavior of non-ensemble loop
-                darray_upper_air, darray_single_level = make_xarray(
-                    y_pred[j + i : j + i + 1],  # Process each ensemble member
-                    utc_datetimes[j],
-                    self.latlons.latitude.values,
-                    self.latlons.longitude.values,
+            # Convert to xarray and handle results
+            for j in range(self.batch_size):
+                upper_air_list, single_level_list = [], []
+                for i in range(
+                    self.ensemble_size
+                ):  # ensemble_size default is 1, will run with i=0 retaining behavior of non-ensemble loop
+                    darray_upper_air, darray_single_level = make_xarray(
+                        y_pred[j + i : j + i + 1],  # Process each ensemble member
+                        utc_datetimes[j],
+                        self.latlons.latitude.values,
+                        self.latlons.longitude.values,
+                        conf,
+                    )
+                    upper_air_list.append(darray_upper_air)
+                    single_level_list.append(darray_single_level)
+
+                if self.ensemble_size > 1:
+                    ensemble_index = xr.DataArray(
+                        np.arange(self.ensemble_size), dims="ensemble_member_label"
+                    )
+                    all_upper_air = xr.concat(
+                        upper_air_list, ensemble_index
+                    )  # .transpose("time", ...)
+                    all_single_level = xr.concat(
+                        single_level_list, ensemble_index
+                    )  # .transpose("time", ...)
+                else:
+                    all_upper_air = darray_upper_air
+                    all_single_level = darray_single_level
+
+                # Save the current forecast hour data in parallel
+                save_netcdf_increment(
+                    all_upper_air,
+                    all_single_level,
+                    save_datetimes[
+                        forecast_count + j
+                    ],  # Use correct index for current batch item
+                    self.lead_time_periods * forecast_step,
+                    self.meta_data,
                     conf,
                 )
-                upper_air_list.append(darray_upper_air)
-                single_level_list.append(darray_single_level)
 
-            if self.ensemble_size > 1:
-                ensemble_index = xr.DataArray(
-                    np.arange(self.ensemble_size), dims="ensemble_member_label"
-                )
-                all_upper_air = xr.concat(
-                    upper_air_list, ensemble_index
-                )  # .transpose("time", ...)
-                all_single_level = xr.concat(
-                    single_level_list, ensemble_index
-                )  # .transpose("time", ...)
-            else:
-                all_upper_air = darray_upper_air
-                all_single_level = darray_single_level
-
-            # Save the current forecast hour data in parallel
-            save_netcdf_increment(
-                all_upper_air,
-                all_single_level,
-                save_datetimes[
-                    forecast_count + j
-                ],  # Use correct index for current batch item
-                self.lead_time_periods * forecast_step,
-                self.meta_data,
-                conf,
-            )
-
-            print_str = f"Forecast: {forecast_count + 1 + j} "
-            print_str += f"Date: {utc_datetimes[j].strftime('%Y-%m-%d %H:%M:%S')} "
-            print_str += f"Hour: {forecast_step * self.lead_time_periods} "
-            print(print_str)
+                print_str = f"Forecast: {forecast_count + 1 + j} "
+                print_str += f"Date: {utc_datetimes[j].strftime('%Y-%m-%d %H:%M:%S')} "
+                print_str += f"Hour: {forecast_step * self.lead_time_periods} "
+                print(print_str)
+        except Exception as e:
+            print(traceback.format_exc())
+            raise e
 
 
 def predict(rank, world_size, conf, p):
