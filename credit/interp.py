@@ -142,10 +142,10 @@ def full_state_pressure_interpolation(
         }
         height_dims = (time_var, height_var, lat_var, lon_var)
         height_shape = (
-            coords[time_var].size,
-            coords[height_var].size,
-            coords[lat_var].size,
-            coords[lon_var].size,
+            coords_height[time_var].size,
+            coords_height[height_var].size,
+            coords_height[lat_var].size,
+            coords_height[lon_var].size,
         )
         for var in interp_fields:
             pressure_ds[var + height_ending] = xr.DataArray(
