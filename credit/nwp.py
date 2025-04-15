@@ -40,11 +40,11 @@ def build_GFS_init(
     """
     Create GFS initial conditions on model levels that are interpolated from ECMWF L137 model levels.
     Args:
-        output_grid: (xr.DataArray) grid of ERA5 model levels
-        date: (pd.Timestamp) date of GFS initialization
-        variables: (list) list of variable names
-        model_level_indices: (list) list of model level indices to extract from L137 model levels
-        gdas_base_path: (str) NOMADS path to GFS base directory (archives last 10 days)
+        output_grid (xr.DataArray): grid of ERA5 model levels
+        date (pd.Timestamp): date of GFS initialization
+        variables (list): list of variable names
+        model_level_indices (list): list of model level indices to extract from L137 model levels
+        gdas_base_path (str): Path to GFS base directory on NOMADS (archives last 10 days) or Google Cloud (since 2021)
 
     Returns:
         (xr.Dataset) Interpolated GFS initial conditions
@@ -126,7 +126,7 @@ def build_file_path(date, base_path, file_type="atm"):
 
 def load_gfs_data(full_file_path, variables):
     """
-    Load GFS data directly from Nomads server
+    Load GFS data directly from Nomads or Google Cloud server
     Args:
         full_file_path: (str) NOMADS filepath
         variables: (list) list of variable names
@@ -134,7 +134,10 @@ def load_gfs_data(full_file_path, variables):
     Returns:
         xr.Dataset
     """
-    ds = xr.open_dataset(fsspec.open(full_file_path).open())
+    if full_file_path[:5] == "https":
+        ds = xr.open_dataset(fsspec.open(full_file_path).open())
+    else:
+        ds = xr.open_dataset(full_file_path, engine="h5netcdf")
     available_vars = ds.data_vars
     vars = [v for v in variables if v in available_vars]
     ds = ds[vars].rename({"grid_xt": "longitude", "grid_yt": "latitude"}).load()
