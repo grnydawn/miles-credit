@@ -10,7 +10,12 @@ import datetime
 try:
     import xesmf as xe
 except (ImportError, ModuleNotFoundError) as e:
-    raise e
+    raise e("""xesmf not installed.\n
+            Install esmf with conda first to prevent conda from overwriting numpy.
+            `conda install -c conda-forge esmf`
+            Then install xesmf with pip.
+            `pip install xesmf`
+            """)
 
 gfs_map = {
     "tmp": "T",

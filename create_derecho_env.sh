@@ -2,7 +2,7 @@
 ml conda
 ENV_NAME="credit-derecho"
 CURR_DIR=`pwd`
-WHEEL_DIR="/glade/work/dgagne/credit-pytorch-envs/derecho-pytorch-mpi/wheels/"
+WHEEL_DIR="/glade/work/dgagne/credit-pytorch-envs/derecho-pytorch-mpi/wheels"
 echo $CURR_DIR
 conda create -n $ENV_NAME python=3.11
 conda init
