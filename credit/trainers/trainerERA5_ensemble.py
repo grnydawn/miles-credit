@@ -139,7 +139,6 @@ class Trainer(BaseTrainer):
         Returns:
             dict: Dictionary containing training metrics and loss for the epoch.
         """
-
         batches_per_epoch = conf["trainer"]["batches_per_epoch"]
         grad_max_norm = conf["trainer"].get("grad_max_norm", 0.0)
         amp = conf["trainer"]["amp"]
@@ -349,6 +348,7 @@ class Trainer(BaseTrainer):
 
                     lat_size = y.shape[3]
                     total_loss = 0
+                    total_std = 0
                     for i in range(lat_size):
                         # Slice the tensors
                         y_pred_slice = y_pred[:, :, :, i : i + 1].contiguous()
@@ -367,8 +367,17 @@ class Trainer(BaseTrainer):
                         )
                         total_loss += loss
 
+                        # Compute the std
+                        std = (
+                            (y_pred_slice - y_slice.to(y_pred_slice.dtype))
+                            .detach()
+                            .std()
+                        ) / lat_size
+                        total_std += std
+
                         # Track per-channel loss
                         accum_log(logs, {"loss": loss.item()})
+                        accum_log(logs, {"std": std.item()})
 
                     # Single backward call for the accumulated loss
                     scaler.scale(total_loss).backward()
@@ -457,9 +466,12 @@ class Trainer(BaseTrainer):
                 results_dict[f"train_{name}"].append(value[0].item())
 
             batch_loss = torch.Tensor([logs["loss"]]).cuda(self.device)
+            batch_std = torch.Tensor([logs["std"]]).cuda(self.device)
             if distributed:
                 dist.all_reduce(batch_loss, dist.ReduceOp.AVG, async_op=False)
+                dist.all_reduce(batch_std, dist.ReduceOp.AVG, async_op=False)
             results_dict["train_loss"].append(batch_loss[0].item())
+            results_dict["train_std"].append(batch_std[0].item())
             results_dict["train_forecast_len"].append(forecast_length + 1)
 
             if not np.isfinite(np.mean(results_dict["train_loss"])):
@@ -482,9 +494,7 @@ class Trainer(BaseTrainer):
                 np.mean(results_dict["train_mae"]),
                 forecast_length + 1,
             )
-            ensemble_size = conf["trainer"].get("ensemble_size", 0)
-            if ensemble_size > 1:
-                to_print += f" std: {np.mean(results_dict['train_std']):.6f}"
+            to_print += f" std: {np.mean(results_dict['train_std']):.6f}"
             to_print += " lr: {:.12f}".format(optimizer.param_groups[0]["lr"])
             if self.rank == 0:
                 batch_group_generator.update(1)
@@ -731,8 +741,16 @@ class Trainer(BaseTrainer):
                         )
                         total_loss += loss
 
-                        # Track per-channel loss
+                        # Compute the std
+                        std = (
+                            (y_pred_slice - y_slice.to(y_pred_slice.dtype))
+                            .detach()
+                            .std()
+                        ) / lat_size
+
+                        # Track per-channel loss, std
                         accum_log(logs, {"loss": loss.item()})
+                        accum_log(logs, {"std": std.item()})
 
                     # ----------------------------------------------------------------------- #
 
@@ -785,13 +803,13 @@ class Trainer(BaseTrainer):
                 if distributed:
                     torch.distributed.barrier()
 
-                # results_dict["valid_loss"].append(batch_loss[0].item())
-                # results_dict["valid_forecast_len"].append(forecast_len + 1)
-                # batch_loss = torch.Tensor([loss.item()]).cuda(self.device)
                 batch_loss = torch.Tensor([logs["loss"]]).cuda(self.device)
+                batch_std = torch.Tensor([logs["std"]]).cuda(self.device)
                 if distributed:
                     dist.all_reduce(batch_loss, dist.ReduceOp.AVG, async_op=False)
-                results_dict["valid_lossn_loss"].append(batch_loss[0].item())
+                    dist.all_reduce(batch_std, dist.ReduceOp.AVG, async_op=False)
+                results_dict["valid_loss"].append(batch_loss[0].item())
+                results_dict["valid_std"].append(batch_std[0].item())
                 results_dict["valid_forecast_len"].append(forecast_len + 1)
 
                 stop_forecast = False
@@ -803,9 +821,7 @@ class Trainer(BaseTrainer):
                     np.mean(results_dict["valid_acc"]),
                     np.mean(results_dict["valid_mae"]),
                 )
-                ensemble_size = conf["trainer"].get("ensemble_size", 0)
-                if ensemble_size > 1:
-                    to_print += f" std: {np.mean(results_dict['valid_std']):.6f}"
+                to_print += f" std: {np.mean(results_dict['valid_std']):.6f}"
                 if self.rank == 0:
                     batch_group_generator.update(1)
                     batch_group_generator.set_description(to_print)

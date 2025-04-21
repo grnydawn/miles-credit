@@ -379,7 +379,10 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
     # pair as the CDF is computed across GPUs. Randomness is handled by adding noise
     # to the input x to create different samples. There are many other ways to do this
     # but using the same rank and world_size is the fastest as far as communication.
-    if conf["loss"]["training_loss"] == "KCRPS":
+    if (
+        conf["loss"]["training_loss"] == "KCRPS"
+        and conf["trainer"]["type"] == "era5-ensemble"
+    ):
         rank = 0
         world_size = 1
         logging.info(
