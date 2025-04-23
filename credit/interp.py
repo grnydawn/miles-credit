@@ -157,6 +157,12 @@ def full_state_pressure_interpolation(
                 dims=height_dims,
                 name=var + height_ending,
             )
+        pressure_ds["P" + height_ending] = xr.DataArray(
+            data=np.zeros(height_shape, dtype=np.float32),
+            coords=coords_height,
+            dims=height_dims,
+            name=var + height_ending,
+        )
 
     for t, time in enumerate(state_dataset[time_var]):
         interp_full_data = {}
@@ -171,22 +177,23 @@ def full_state_pressure_interpolation(
         interp_full_data["P"], full_half_pressure_grid = create_pressure_grid(
             surface_pressure_data, a_half_full, b_half_full
         )
+
         interp_full_data[temperature_var] = interp_hybrid_to_hybrid_levels(
-            state_dataset[temperature_var].values.astype(np.float64),
-            interp_full_data["P"],
+            state_dataset[temperature_var][t].values.astype(np.float64),
             pressure_grid,
+            interp_full_data["P"],
         )
         interp_full_data[q_var] = interp_hybrid_to_hybrid_levels(
-            state_dataset[q_var].values.astype(np.float64),
-            interp_full_data["P"],
+            state_dataset[q_var][t].values.astype(np.float64),
             pressure_grid,
+            interp_full_data["P"],
         )
         for interp_field in interp_fields:
             if interp_field not in interp_full_data.keys():
                 interp_full_data[interp_field] = interp_hybrid_to_hybrid_levels(
-                    state_dataset[interp_field].values.astype(np.float64),
-                    interp_full_data["P"],
+                    state_dataset[interp_field][t].values.astype(np.float64),
                     pressure_grid,
+                    interp_full_data["P"],
                 )
 
         geopotential_full_grid = geopotential_from_model_vars(
@@ -196,24 +203,14 @@ def full_state_pressure_interpolation(
             interp_full_data[q_var],
             full_half_pressure_grid,
         )
-        pressure_sub_grid = pressure_grid
         pressure_ds["P"][t] = pressure_grid
-        # pressure_sub_grid = pressure_grid[sub_levels - 1]
-        # half_pressure_sub_grid = half_pressure_grid[sub_half_levels - 1]
-        # geopotential_grid = geopotential_from_model_vars(
-        #     surface_geopotential.astype(np.float64),
-        #     state_dataset[surface_pressure_var][t].values.astype(np.float64),
-        #     state_dataset[temperature_var][t].values.astype(np.float64),
-        #     state_dataset[q_var][t].values.astype(np.float64),
-        #     half_pressure_sub_grid,
-        # )
         pressure_ds[geopotential_var][t] = geopotential_full_grid[valid_levels]
         for interp_field in interp_fields:
             if interp_field == temperature_var:
                 pressure_ds[interp_field + pres_ending][t] = (
                     interp_temperature_to_pressure_levels(
-                        state_dataset[interp_field][t].values,
-                        pressure_sub_grid / 100.0,
+                        interp_full_data[interp_field],
+                        interp_full_data["P"] / 100.0,
                         pressure_levels,
                         state_dataset[surface_pressure_var][t].values / 100.0,
                         surface_geopotential,
@@ -223,15 +220,15 @@ def full_state_pressure_interpolation(
             else:
                 pressure_ds[interp_field + pres_ending][t] = (
                     interp_hybrid_to_pressure_levels(
-                        state_dataset[interp_field][t].values,
-                        pressure_sub_grid / 100.0,
+                        interp_full_data[interp_field],
+                        interp_full_data["P"] / 100.0,
                         pressure_levels,
                     )
                 )
         pressure_ds[geopotential_var + pres_ending][t] = (
             interp_geopotential_to_pressure_levels(
                 geopotential_full_grid,
-                pressure_sub_grid / 100.0,
+                interp_full_data["P"] / 100.0,
                 pressure_levels,
                 state_dataset[surface_pressure_var][t].values / 100.0,
                 surface_geopotential,
@@ -241,7 +238,7 @@ def full_state_pressure_interpolation(
         pressure_ds["mean_sea_level_" + pres_var][t] = mean_sea_level_pressure(
             state_dataset[surface_pressure_var][t].values,
             interp_full_data[temperature_var],
-            pressure_sub_grid,
+            interp_full_data["P"],
             surface_geopotential,
             geopotential_full_grid,
         )
