@@ -431,11 +431,10 @@ class CrossFormer(BaseModel):
         self.output_channels = output_channels
         print('pre input: ', self.input_channels)
         print('pre output_channels: ', self.output_channels)
+       
         if kwargs.get('diffusion'):
             #do stuff
-            self.input_channels = input_channels + output_channels
-            
-        print('post input channels:',self.input_channels)
+            self.input_channels = self.input_channels + self.output_channels
 
         dim = cast_tuple(dim, 4)
         depth = cast_tuple(depth, 4)

@@ -12,6 +12,7 @@ from tqdm.auto import tqdm
 from functools import partial
 from collections import namedtuple
 
+
 def exists(x):
     return x is not None
 
@@ -43,36 +44,37 @@ class CrossFormerDiffusion(CrossFormer):
     def __init__(self, self_condition, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+        # print("Num Channels Out:", kwargs.get("diffusion_output_channels"))
 
-        print("Num Channels Out:", kwargs.get("diffusion_output_channels"))
+        self.out_dim = kwargs.get(
+            "diffusion_output_channels"
+        )  ## will need to add this to the yaml; channels=total number of output vars.
 
-        self.out_dim = kwargs.get("diffusion_output_channels")  ## will need to add this to the yaml; channels=total number of output vars. 
+        self.pre_out_dim = kwargs.get("surface_channels") + (
+            kwargs.get("channels") * kwargs.get("levels")
+        )  ## channels=total number of output vars out of the wxformer when input+condition is in line.
 
-        self.pre_out_dim = kwargs.get("surface_channels")+(kwargs.get("channels") * kwargs.get("levels")) ## channels=total number of output vars out of the wxformer when input+condition is in line. 
-
-        self.dim = kwargs.get(
-            "dim", (64, 128, 256, 512)
-        )  # Default value as in CrossFormer
+        self.dim = kwargs.get("dim", (64, 128, 256, 512))  # Default value as in CrossFormer
         self.self_condition = self_condition
         self.condition = self_condition
 
         # Adding timestep embedding layer for diffusion
-        self.time_mlp = nn.Sequential(
-            nn.Linear(1, self.dim[0]), nn.SiLU(), nn.Linear(self.dim[0], self.dim[-1])
-        )
+        self.time_mlp = nn.Sequential(nn.Linear(1, self.dim[0]), nn.SiLU(), nn.Linear(self.dim[0], self.dim[-1]))
 
-        self.final_conv = nn.Conv3d(self.pre_out_dim, self.output_channels, 1) #used to ensure that only noise channels are left at the end; channels=total number of output vars. 
+        self.final_conv = nn.Conv3d(
+            self.pre_out_dim, self.output_channels, 1
+        )  # used to ensure that only noise channels are left at the end; channels=total number of output vars.
 
     def forward(self, x, timestep, x_self_cond=False, x_cond=None):
         x_copy = None
 
-        print(x.shape, '!!!!!!!!!!!!!!!!!!!!!copy this shit!!!!!!!!!!!!!!!!!')
-
         if self.self_condition:
-            x_self_cond = torch.zeros(x.shape[0], 145, x.shape[2], x.shape[3], x.shape[4], device=x.device)
-            print(x.shape, 'copy this shit')
-            x = torch.cat((x_self_cond, x), dim = 1)
-        
+            x_self_cond = torch.zeros(x.shape[0], self.output_channels, x.shape[2], x.shape[3], x.shape[4], device=x.device)
+            # print(x.shape, "copy this shit")
+            x = torch.cat((x_self_cond, x), dim=1)
+
+        # print("Inside the model here", x.shape, timestep.shape)
+
         if self.use_post_block:
             x_copy = x.clone().detach()
 
@@ -95,9 +97,7 @@ class CrossFormerDiffusion(CrossFormer):
         # Add timestep embedding to the feature maps
         t_embed = self.time_mlp(timestep.view(-1, 1).float())  # (B, dim[0])
         t_embed = t_embed[:, :, None, None]  # Reshape to (B, dim[0], 1, 1)
-        t_embed = t_embed.expand(
-            -1, -1, x.shape[2], x.shape[3]
-        )  # Expand to (B, dim[0], H, W)
+        t_embed = t_embed.expand(-1, -1, x.shape[2], x.shape[3])  # Expand to (B, dim[0], H, W)
         x = x + t_embed
 
         x = self.up_block1(x)
@@ -112,9 +112,7 @@ class CrossFormerDiffusion(CrossFormer):
             x = self.padding_opt.unpad(x)
 
         if self.use_interp:
-            x = F.interpolate(
-                x, size=(self.image_height, self.image_width), mode="bilinear"
-            )
+            x = F.interpolate(x, size=(self.image_height, self.image_width), mode="bilinear")
 
         x = x.unsqueeze(2)
 
@@ -126,7 +124,8 @@ class CrossFormerDiffusion(CrossFormer):
 
         return x
 
-def create_model(config):
+
+def create_model(config, self_condition=True):
     """Initialize and return the CrossFormer model using a config dictionary."""
     return CrossFormerDiffusion(**config).to("cuda")
 
@@ -171,7 +170,7 @@ if __name__ == "__main__":
             "pad_lon": [48, 48],
         },
         "interp": False,
-        "self_condition": False,
+        "self_condition": True,
         "pretrained_weights": "/glade/derecho/scratch/schreck/CREDIT_runs/ensemble/model_levels/single_step/checkpoint.pt",
     }
 

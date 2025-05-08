@@ -282,8 +282,8 @@ class Trainer(BaseTrainer):
                 if forecast_step in backprop_on_timestep: #steps go from 1 to n
                 
                     with autocast(enabled=amp):
-                        print('entering model duuuuude')
-                        loss = self.model(x.float(),y)
+                        y_input = torch.cat((y, x_forcing_batch), dim=1)
+                        y_pred, loss = self.model(x.float(), y_input) # y
 
                 accum_log(logs, {"loss": loss.item()})
 
