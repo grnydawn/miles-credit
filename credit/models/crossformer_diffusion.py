@@ -69,11 +69,13 @@ class CrossFormerDiffusion(CrossFormer):
         x_copy = None
 
         if self.self_condition:
-            x_self_cond = torch.zeros(x.shape[0], self.output_channels, x.shape[2], x.shape[3], x.shape[4], device=x.device)
-            # print(x.shape, "copy this shit")
-            x = torch.cat((x_self_cond, x), dim=1)
-
-        # print("Inside the model here", x.shape, timestep.shape)
+            # input_channels = self.channels * self.levels + self.surface_channels + self.input_only_channels
+            input_channels = self.output_channels
+            x_self_cond = default(
+                x_self_cond, 
+                torch.zeros(x.shape[0], input_channels, x.shape[2], x.shape[3], x.shape[4], device=x.device)
+            )
+            x = torch.cat((x_self_cond[:, :self.output_channels], x), dim=1)
 
         if self.use_post_block:
             x_copy = x.clone().detach()

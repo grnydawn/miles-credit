@@ -567,7 +567,11 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
                 x_self_cond.detach_()
 
         # Predict and take gradient step
-        # print("hey dickhead", x.shape, t.shape, x_self_cond)
+        # try:
+        #     print("hey dickhead", x.shape, t.shape, x_self_cond.shape)
+        # except:
+        #     print("hey dickhead", x.shape, t.shape, x_self_cond)
+
         model_out = self.model(x, t, x_self_cond)
 
         # Determine target based on the objective
