@@ -507,7 +507,7 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
         self.channels = self.model.input_channels
         self.history_len = self.model.frames
 
-    def forward(self, img, *args, **kwargs):
+    def forward(self, img, x_cond=None, *args, **kwargs):
         # Unpack the tensor shape
         if img.dim() == 4:  # b, c, h, w
             b, c, h, w = img.shape
@@ -533,9 +533,9 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
         # print("crash here mf-er", img.shape)
         # print("args:", args[0].shape)
         # print("kwargs:", kwargs)
-        return self.p_losses(img, t, *args, **kwargs)
+        return self.p_losses(img, t, x_cond, *args, **kwargs)
 
-    def p_losses(self, x_start, t, noise=None, offset_noise_strength=None):
+    def p_losses(self, x_start, t, x_cond, noise=None, offset_noise_strength=None):
         # Check the dimensions of the input tensor (x_start)
         if x_start.dim() == 4:  # For single frame (batch_size, channels, height, width)
             b, c, h, w = x_start.shape
@@ -567,12 +567,7 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
                 x_self_cond.detach_()
 
         # Predict and take gradient step
-        # try:
-        #     print("hey dickhead", x.shape, t.shape, x_self_cond.shape)
-        # except:
-        #     print("hey dickhead", x.shape, t.shape, x_self_cond)
-
-        model_out = self.model(x, t, x_self_cond)
+        model_out = self.model(x, t, x_self_cond, x_cond)
 
         # Determine target based on the objective
         if self.objective == "pred_noise":
@@ -600,12 +595,12 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
         x,
         t,
         x_self_cond=None,
+        x_cond=None,
         clip_x_start=False,
         rederive_pred_noise=False,
     ):
-        model_output = self.model(x, t, x_self_cond)
+        model_output = self.model(x, t, x_self_cond, x_cond)
         maybe_clip = partial(torch.clamp, min=-1.0, max=1.0) if clip_x_start else identity
-        model_output = self.model(x, t, x_self_cond)
 
         # Here we have the mismatch between input and output sizes
         # Concat on the statics to the model output
@@ -639,58 +634,58 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
 
         return ModelPrediction(pred_noise, x_start)
 
-    def p_mean_variance(self, x, t, x_self_cond=None, clip_denoised=True):
-        preds = self.model_predictions(x, t, x_self_cond)
-        x_start = preds.pred_x_start
+    # def p_mean_variance(self, x, t, x_self_cond=None, clip_denoised=True):
+    #     preds = self.model_predictions(x, t, x_self_cond)
+    #     x_start = preds.pred_x_start
 
-        if clip_denoised:
-            x_start.clamp_(-1.0, 1.0)
+    #     if clip_denoised:
+    #         x_start.clamp_(-1.0, 1.0)
 
-        model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_start, x_t=x, t=t)
-        return model_mean, posterior_variance, posterior_log_variance, x_start
+    #     model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_start, x_t=x, t=t)
+    #     return model_mean, posterior_variance, posterior_log_variance, x_start
 
-    @torch.inference_mode()
-    def p_sample(self, x, t: int, x_self_cond=None):
-        b, *_, device = *x.shape, self.device
-        batched_times = torch.full((b,), t, device=device, dtype=torch.long)
-        model_mean, _, model_log_variance, x_start = self.p_mean_variance(
-            x=x, t=batched_times, x_self_cond=x_self_cond, clip_denoised=True
-        )
-        noise = torch.randn_like(x) if t > 0 else 0.0  # no noise if t == 0
-        pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
-        return pred_img, x_start
+#     @torch.inference_mode()
+#     def p_sample(self, x, t: int, x_self_cond=None):
+#         b, *_, device = *x.shape, self.device
+#         batched_times = torch.full((b,), t, device=device, dtype=torch.long)
+#         model_mean, _, model_log_variance, x_start = self.p_mean_variance(
+#             x=x, t=batched_times, x_self_cond=x_self_cond, clip_denoised=True
+#         )
+#         noise = torch.randn_like(x) if t > 0 else 0.0  # no noise if t == 0
+#         pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
+#         return pred_img, x_start
 
-    @torch.inference_mode()
-    def p_sample_loop(self, shape, return_all_timesteps=False):
-        batch, device = shape[0], self.device
+#     @torch.inference_mode()
+#     def p_sample_loop(self, shape, return_all_timesteps=False):
+#         batch, device = shape[0], self.device
 
-        img = torch.randn(shape, device=device)
-        imgs = [img]
+#         img = torch.randn(shape, device=device)
+#         imgs = [img]
 
-        x_start = None
+#         x_start = None
 
-        for t in tqdm(
-            reversed(range(0, self.num_timesteps)),
-            desc="sampling loop time step",
-            total=self.num_timesteps,
-        ):
-            self_cond = x_start if self.self_condition else None
-            img, x_start = self.p_sample(img, t, self_cond)
-            imgs.append(img)
+#         for t in tqdm(
+#             reversed(range(0, self.num_timesteps)),
+#             desc="sampling loop time step",
+#             total=self.num_timesteps,
+#         ):
+#             self_cond = x_start if self.self_condition else None
+#             img, x_start = self.p_sample(img, t, self_cond)
+#             imgs.append(img)
 
-        ret = img if not return_all_timesteps else torch.stack(imgs, dim=1)
+#         ret = img if not return_all_timesteps else torch.stack(imgs, dim=1)
 
-        ret = self.unnormalize(ret)
-        return ret
+#         ret = self.unnormalize(ret)
+#         return ret
 
-    @torch.inference_mode()
-    def sample(self, batch_size=16, return_all_timesteps=False):
-        (h, w), channels = self.image_size, self.channels
-        sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
-        return sample_fn(
-            (batch_size, channels, self.history_len, h, w),
-            return_all_timesteps=return_all_timesteps,
-        )
+#     @torch.inference_mode()
+#     def sample(self, batch_size=16, return_all_timesteps=False):
+#         (h, w), channels = self.image_size, self.channels
+#         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
+#         return sample_fn(
+#             (batch_size, channels, self.history_len, h, w),
+#             return_all_timesteps=return_all_timesteps,
+#         )
 
 
-# dataset classes
+# # dataset classes
