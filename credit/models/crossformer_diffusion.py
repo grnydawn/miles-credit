@@ -11,6 +11,11 @@ from einops import rearrange, reduce
 from tqdm.auto import tqdm
 from functools import partial
 from collections import namedtuple
+import logging
+import sys
+
+
+logger = logging.getLogger(__name__)
 
 
 def exists(x):
@@ -41,14 +46,8 @@ ModelPrediction = namedtuple("ModelPrediction", ["pred_noise", "pred_x_start"])
 
 
 class CrossFormerDiffusion(CrossFormer):
-    def __init__(self, self_condition, *args, **kwargs):
+    def __init__(self, self_condition, condition, *args, **kwargs):
         super().__init__(*args, **kwargs)
-
-        # print("Num Channels Out:", kwargs.get("diffusion_output_channels"))
-
-        self.out_dim = kwargs.get(
-            "diffusion_output_channels"
-        )  ## will need to add this to the yaml; channels=total number of output vars.
 
         self.pre_out_dim = kwargs.get("surface_channels") + (
             kwargs.get("channels") * kwargs.get("levels")
@@ -56,7 +55,11 @@ class CrossFormerDiffusion(CrossFormer):
 
         self.dim = kwargs.get("dim", (64, 128, 256, 512))  # Default value as in CrossFormer
         self.self_condition = self_condition
-        self.condition = self_condition
+        self.condition = condition
+
+        if self.self_condition and self.condition:
+            logging.warning("Both self-conditioning and standard conditioning on the manifold via x are not simultanously supported. Exiting")
+            sys.exit(0)
 
         # Adding timestep embedding layer for diffusion
         self.time_mlp = nn.Sequential(nn.Linear(1, self.dim[0]), nn.SiLU(), nn.Linear(self.dim[0], self.dim[-1]))
@@ -70,12 +73,15 @@ class CrossFormerDiffusion(CrossFormer):
 
         if self.self_condition:
             # input_channels = self.channels * self.levels + self.surface_channels + self.input_only_channels
-            input_channels = self.output_channels
+            # input_channels = self.output_channels
             x_self_cond = default(
-                x_self_cond, 
-                torch.zeros(x.shape[0], input_channels, x.shape[2], x.shape[3], x.shape[4], device=x.device)
+                x_self_cond,
+                torch.zeros(x.shape[0], self.output_channels, x.shape[2], x.shape[3], x.shape[4], device=x.device)
             )
             x = torch.cat((x_self_cond[:, :self.output_channels], x), dim=1)
+
+        if self.condition:
+            x = torch.cat([x, x_cond], dim = 1)
 
         if self.use_post_block:
             x_copy = x.clone().detach()

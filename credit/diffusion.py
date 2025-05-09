@@ -497,7 +497,7 @@ class GaussianDiffusion(Module):
         assert h == img_size[0] and w == img_size[1], f"height and width of image must be {img_size}"
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
 
-        img = self.normalize(img)
+        # img = self.normalize(img)
         return self.p_losses(img, t, x_cond, *args, **kwargs)
 
 
@@ -527,12 +527,9 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
 
         # Normalize the image before passing it through the model
-        img = self.normalize(img)
+        # img = self.normalize(img)
 
         # Call the model's loss function (or whatever other method you want to use)
-        # print("crash here mf-er", img.shape)
-        # print("args:", args[0].shape)
-        # print("kwargs:", kwargs)
         return self.p_losses(img, t, x_cond, *args, **kwargs)
 
     def p_losses(self, x_start, t, x_cond, noise=None, offset_noise_strength=None):
@@ -563,7 +560,7 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
         x_self_cond = None
         if self.self_condition and random() < 0.5:
             with torch.no_grad():
-                x_self_cond = self.model_predictions(x, t).pred_x_start
+                x_self_cond = self.model_predictions(x, t, x_cond=x_cond).pred_x_start
                 x_self_cond.detach_()
 
         # Predict and take gradient step
@@ -633,59 +630,3 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
             pred_noise = self.predict_noise_from_start(x, t, x_start)
 
         return ModelPrediction(pred_noise, x_start)
-
-    # def p_mean_variance(self, x, t, x_self_cond=None, clip_denoised=True):
-    #     preds = self.model_predictions(x, t, x_self_cond)
-    #     x_start = preds.pred_x_start
-
-    #     if clip_denoised:
-    #         x_start.clamp_(-1.0, 1.0)
-
-    #     model_mean, posterior_variance, posterior_log_variance = self.q_posterior(x_start=x_start, x_t=x, t=t)
-    #     return model_mean, posterior_variance, posterior_log_variance, x_start
-
-#     @torch.inference_mode()
-#     def p_sample(self, x, t: int, x_self_cond=None):
-#         b, *_, device = *x.shape, self.device
-#         batched_times = torch.full((b,), t, device=device, dtype=torch.long)
-#         model_mean, _, model_log_variance, x_start = self.p_mean_variance(
-#             x=x, t=batched_times, x_self_cond=x_self_cond, clip_denoised=True
-#         )
-#         noise = torch.randn_like(x) if t > 0 else 0.0  # no noise if t == 0
-#         pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
-#         return pred_img, x_start
-
-#     @torch.inference_mode()
-#     def p_sample_loop(self, shape, return_all_timesteps=False):
-#         batch, device = shape[0], self.device
-
-#         img = torch.randn(shape, device=device)
-#         imgs = [img]
-
-#         x_start = None
-
-#         for t in tqdm(
-#             reversed(range(0, self.num_timesteps)),
-#             desc="sampling loop time step",
-#             total=self.num_timesteps,
-#         ):
-#             self_cond = x_start if self.self_condition else None
-#             img, x_start = self.p_sample(img, t, self_cond)
-#             imgs.append(img)
-
-#         ret = img if not return_all_timesteps else torch.stack(imgs, dim=1)
-
-#         ret = self.unnormalize(ret)
-#         return ret
-
-#     @torch.inference_mode()
-#     def sample(self, batch_size=16, return_all_timesteps=False):
-#         (h, w), channels = self.image_size, self.channels
-#         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
-#         return sample_fn(
-#             (batch_size, channels, self.history_len, h, w),
-#             return_all_timesteps=return_all_timesteps,
-#         )
-
-
-# # dataset classes

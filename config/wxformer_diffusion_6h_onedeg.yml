@@ -148,8 +148,8 @@ trainer:
 
     # define training and validation batch size
     # for ddp and fsdp, actual batch size = batch_size * number of GPUs
-    train_batch_size: 1
-    valid_batch_size: 1
+    train_batch_size: 16
+    valid_batch_size: 16
 
     # number of batches per epoch for training and validation
     batches_per_epoch: 500 # Set to 0 to use len(dataloader)
@@ -177,11 +177,11 @@ trainer:
     #scheduler: {'scheduler_type': 'cosine-annealing', 'T_max': *epochs,  'last_epoch': -1}
     scheduler:
       scheduler_type: cosine-annealing-restarts
-      first_cycle_steps: 250
+      first_cycle_steps: 500
       cycle_mult: 6.0  # Multiplier for steps in subsequent cycles
-      max_lr: 1.0e-07
+      max_lr: 1.0e-03
       min_lr: 1.0e-09
-      warmup_steps: 249
+      warmup_steps: 499
       gamma: 0.7  # LR reduction factor at each cycle restart
 
     # Pytorch automatic mixed precision (amp). See also 'mixed_precision' below
@@ -241,20 +241,20 @@ model:
     
 
     ##### diffusion settings: 
-    diffusion: True
-    diffusion_output_channels: 74    # (variables*levels)+surface_variables+diagnostic_variables
-    timesteps: 1000
-    sampling_timesteps: None
-    objective: "pred_v"
-    beat_schedule: "linear"
-    ddim_sampling_eta: 0.0
-    auto_normalize: True
-    offset_noise_strength: 0.0
-    min_snr_loss_weight: False
-    min_snr_gamma: 5
-    immiscible: False
-    condition: True
-    image_size: [192, 288]
+    diffusion:
+        timesteps: 1000
+        sampling_timesteps: False
+        objective: "pred_v"
+        beta_schedule: "linear"
+        ddim_sampling_eta: 0.0
+        auto_normalize: True
+        offset_noise_strength: 0.0
+        min_snr_loss_weight: False
+        min_snr_gamma: 5.0
+        immiscible: False
+        self_condition: False
+        condition: True
+        image_size: [192, 288]
 
     # fuxi example
     # frames: 2               # number of input states

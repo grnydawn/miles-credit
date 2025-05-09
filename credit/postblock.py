@@ -72,7 +72,6 @@ class PostBlock(nn.Module):
             self.operations.append(SKEBS(post_conf))
 
         # global mass fixer
-        print('bingo bongo:', post_conf["global_mass_fixer"]["activate"])
         if post_conf["global_mass_fixer"]["activate"]:
             if post_conf["global_mass_fixer"]["activate_outside_model"] is False:
                 logger.info("GlobalMassFixer registered")

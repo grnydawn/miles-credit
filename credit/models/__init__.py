@@ -1,4 +1,5 @@
 import os
+import sys
 import copy
 import logging
 
@@ -135,49 +136,28 @@ def load_model(conf, load_weights=False, model_name=False):
     if model_type in ("crossformer-diffusion"):
         model, message = model_types[model_type]
         logger.info(message)
+        diffusion_config = conf.get("model", {}).get("diffusion")
+        if diffusion_config is not None:
+            diffusion_config = diffusion_config.copy()
+            self_condition = diffusion_config.pop("self_condition", False)
+            condition = diffusion_config.pop("condition", True)
+        else:
+            logger.warning(f"The diffusion details were not specified as model:diffusion, exiting")
+            sys.exit(0)
 
-        diffusion_config = {
-            "image_size": (192, 288),
-            "timesteps": 1000,
-            "sampling_timesteps": None,
-            "objective": "pred_v",
-            "beta_schedule": "linear",
-            "schedule_fn_kwargs": dict(),
-            "ddim_sampling_eta": 0.0,
-            "auto_normalize": True,
-            "offset_noise_strength": 0.0,
-            "min_snr_loss_weight": False,
-            "min_snr_gamma": 5,
-            "immiscible": False,
-            }
         if load_weights:
             if model_name:
                 return model.load_model_name(conf, model_name=model_name)
             else:
                 return model.load_model(conf)
             
-        return ModifiedGaussianDiffusion(model(**model_conf, self_condition=True), **diffusion_config)
+        return ModifiedGaussianDiffusion(model(**model_conf, self_condition=self_condition, condition=condition), **diffusion_config)
 
     else:
         msg = f"Model type {model_type} not supported. Exiting."
         logger.warning(msg)
         raise ValueError(msg)
-        
-    
-    if model_type in model_types:
-        model, message = model_types[model_type]
-        logger.info(message)
-        if load_weights:
-            if model_name:
-                return model.load_model_name(conf, model_name=model_name)
-            else:
-                return model.load_model(conf)
-        return model(**model_conf)
 
-    else:
-        msg = f"Model type {model_type} not supported. Exiting."
-        logger.warning(msg)
-        raise ValueError(msg)
 
 def load_model_name(conf, model_name, load_weights=False):
     conf = copy.deepcopy(conf)
