@@ -4,9 +4,15 @@ from credit.diffusion import ModifiedGaussianDiffusion
 from credit.models.base_model import BaseModel
 from credit.postblock import PostBlock
 from credit.boundary_padding import TensorPadding
-from credit.models.crossformer import Attention, FeedForward, CrossEmbedLayer, CubeEmbedding, apply_spectral_norm
+from credit.models.crossformer import (
+    Attention,
+    FeedForward,
+    CrossEmbedLayer,
+    CubeEmbedding,
+    apply_spectral_norm,
+    cast_tuple,
+)
 
-from credit.diffusion import cast_tuple
 import torch.nn.functional as F
 from collections import namedtuple
 import logging
