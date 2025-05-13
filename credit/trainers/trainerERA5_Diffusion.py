@@ -14,6 +14,8 @@ from credit.trainers.utils import cycle, accum_log
 from credit.trainers.base_trainer import BaseTrainer
 from credit.data import concat_and_reshape, reshape_only
 from credit.postblock import GlobalMassFixer, GlobalWaterFixer, GlobalEnergyFixer
+import torchmetrics
+
 
 import optuna
 import torch
@@ -240,7 +242,6 @@ class Trainer(BaseTrainer):
                         # concat on var dimension
                         y = torch.cat((y, y_diag_batch), dim=1)
 
-
                 # --------------------------------------------- #
                 # clamp
                 if flag_clamp:
@@ -282,7 +283,8 @@ class Trainer(BaseTrainer):
                 if forecast_step in backprop_on_timestep: #steps go from 1 to n
                 
                     with autocast(enabled=amp):
-                        y_pred, loss = self.model(x.float(), y)
+                        # y is the noise tensor x is the conditional input
+                        y_pred, loss = self.model(y, x.float())
 
                 accum_log(logs, {"loss": loss.item()})
 
@@ -521,6 +523,8 @@ class Trainer(BaseTrainer):
             range(valid_batches_per_epoch), total=valid_batches_per_epoch, leave=True
         )
 
+        psnr = torchmetrics.PeakSignalNoiseRatio().to(self.device)
+
         stop_forecast = False
         dl = cycle(valid_loader)
         with torch.no_grad():
@@ -576,8 +580,10 @@ class Trainer(BaseTrainer):
                     if flag_clamp:
                         x = torch.clamp(x, min=clamp_min, max=clamp_max)
 
-
-                    y_pred = list(map(lambda n: self.ema.ema_model.sample(batch_size=x.shape[0], x_cond = x), batches))
+                    if conf["trainer"]["mode"] == "ddp":
+                        y_pred = self.model.module.sample(x, batch_size=x.shape[0])
+                    else:
+                        y_pred = self.model.sample(x, batch_size=x.shape[0])
     
                     # ============================================= #
                     # postblock opts outside of model
@@ -637,8 +643,11 @@ class Trainer(BaseTrainer):
                         loss = criterion(y.to(y_pred.dtype), y_pred).mean()
 
                         # Metrics
-                        # metrics_dict = metrics(y_pred, y.float)
                         metrics_dict = metrics(y_pred.float(), y.float())
+
+                        # Add psnr
+                        psnr.update(y_pred, y)
+                        metrics_dict["psnr"] = psnr.compute().item()
 
                         for name, value in metrics_dict.items():
                             value = torch.Tensor([value]).cuda(
@@ -650,7 +659,10 @@ class Trainer(BaseTrainer):
                                     value, dist.ReduceOp.AVG, async_op=False
                                 )
 
-                            results_dict[f"valid_{name}"].append(value[0].item())
+                            if name == "psnr":
+                                results_dict[f"valid_{name}"] = value[0].item()
+                            else:
+                                results_dict[f"valid_{name}"].append(value[0].item())
 
                         assert stop_forecast
                         break  # stop after X steps
@@ -693,11 +705,12 @@ class Trainer(BaseTrainer):
                 stop_forecast = False
 
                 # print to tqdm
-                to_print = "Epoch: {} valid_loss: {:.6f} valid_acc: {:.6f} valid_mae: {:.6f}".format(
+                to_print = "Epoch: {} valid_loss: {:.6f} valid_acc: {:.6f} valid_mae: {:.6f} valid_psnr: {:.6f}".format(
                     epoch,
                     np.mean(results_dict["valid_loss"]),
                     np.mean(results_dict["valid_acc"]),
                     np.mean(results_dict["valid_mae"]),
+                    np.mean(results_dict["valid_psnr"])
                 )
                 ensemble_size = conf["trainer"].get("ensemble_size", 0)
                 if ensemble_size > 1:

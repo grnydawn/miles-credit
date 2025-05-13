@@ -59,6 +59,30 @@ def linear_beta_schedule(timesteps):
     return torch.linspace(beta_start, beta_end, timesteps, dtype=torch.float64)
 
 
+def log_uniform_beta_schedule(timesteps, sigma_min=0.02, sigma_max=200.0):
+    """
+    Log-uniform noise schedule as proposed in [Your Reference].
+
+    The distribution is uniform in log(σ), with:
+        p(σ) ∝ σ⁻¹,  σ ∈ [σmin, σmax]
+
+    This schedule is more robust to mean shifts compared to the log-normal distribution,
+    and covers a wide dynamic range across multiple variables.
+
+    Args:
+        timesteps (int): Number of diffusion timesteps.
+        sigma_min (float): Minimum noise scale.
+        sigma_max (float): Maximum noise scale.
+
+    Returns:
+        torch.Tensor: Schedule of sigmas over timesteps.
+    """
+    log_sigma_min = math.log(sigma_min)
+    log_sigma_max = math.log(sigma_max)
+    log_sigmas = torch.linspace(log_sigma_min, log_sigma_max, timesteps, dtype=torch.float64)
+    return log_sigmas.exp()
+
+
 def cosine_beta_schedule(timesteps, s=0.008):
     """
     cosine schedule
@@ -135,6 +159,8 @@ class GaussianDiffusion(Module):
             beta_schedule_fn = cosine_beta_schedule
         elif beta_schedule == "sigmoid":
             beta_schedule_fn = sigmoid_beta_schedule
+        elif beta_schedule == "log-uniform":
+            beta_schedule_fn = log_uniform_beta_schedule
         else:
             raise ValueError(f"unknown beta schedule {beta_schedule}")
 
@@ -284,7 +310,6 @@ class GaussianDiffusion(Module):
     def p_mean_variance(self, x, t, x_self_cond=None, x_cond=None, clip_denoised=True):
         preds = self.model_predictions(x, t, x_self_cond, x_cond)
         x_start = preds.pred_x_start
-
         if clip_denoised:
             x_start.clamp_(-1.0, 1.0)
 
@@ -305,15 +330,12 @@ class GaussianDiffusion(Module):
     @torch.inference_mode()
     def p_sample_loop(self, shape, x_cond, return_all_timesteps=False):
         batch, device = shape[0], self.device
-
         img = torch.randn(shape, device=device)
         imgs = [img]
 
         x_start = None
-
         for t in tqdm(reversed(range(0, self.num_timesteps)), desc="sampling loop time step", total=self.num_timesteps):
             self_cond = x_start if self.self_condition else None
-
             img, x_start = self.p_sample(img, t, self_cond, x_cond)
             imgs.append(img)
 
@@ -323,7 +345,7 @@ class GaussianDiffusion(Module):
         return ret
 
     @torch.inference_mode()
-    def ddim_sample(self, shape, x_cond, return_all_timesteps=False):
+    def ddim_sample(self, shape, x_cond, return_all_timesteps=False, disable_tqdm=True):
         batch, device, total_timesteps, sampling_timesteps, eta, objective = (
             shape[0],
             self.device,
@@ -344,7 +366,7 @@ class GaussianDiffusion(Module):
 
         x_start = None
 
-        for time, time_next in tqdm(time_pairs, desc="sampling loop time step"):
+        for time, time_next in tqdm(time_pairs, desc="sampling loop time step", disable=disable_tqdm):
             time_cond = torch.full((batch,), time, device=device, dtype=torch.long)
             self_cond = x_start if self.self_condition else None
             pred_noise, x_start, *_ = self.model_predictions(
@@ -388,9 +410,9 @@ class GaussianDiffusion(Module):
 
     @torch.inference_mode()
     def sample(self, x_cond, batch_size=16, return_all_timesteps=False):
-        (h, w), channels = self.image_size, self.channels
+        (h, w), channels, f = self.image_size, self.model.output_channels, self.model.frames
         sample_fn = self.p_sample_loop if not self.is_ddim_sampling else self.ddim_sample
-        return sample_fn((batch_size, channels, h, w), x_cond, return_all_timesteps=return_all_timesteps)
+        return sample_fn((batch_size, channels, f, h, w), x_cond, return_all_timesteps=return_all_timesteps)
 
     @torch.inference_mode()
     def interpolate(self, x1, x2, t=None, lam=0.5):
@@ -421,17 +443,11 @@ class GaussianDiffusion(Module):
 
     @autocast("cuda", enabled=False)
     def q_sample(self, x_start, t, noise=None):
-        # print("x start shape 1", x_start.shape)
-        # print("noise shape start 0", noise.shape)
         noise = default(noise, lambda: torch.randn_like(x_start))
-        # print("noise shape start 1", noise.shape)
 
         if self.immiscible:
             assign = self.noise_assignment(x_start, noise)
             noise = noise[assign]
-        # print(t.shape)
-        # print("x start shape 2", x_start.shape)
-        # print("noise shape", noise.shape)
         return (
             extract(self.sqrt_alphas_cumprod, t, x_start.shape) * x_start
             + extract(self.sqrt_one_minus_alphas_cumprod, t, x_start.shape) * noise
@@ -451,7 +467,6 @@ class GaussianDiffusion(Module):
             noise += offset_noise_strength * rearrange(offset_noise, "b c -> b c 1 1")
 
         # noise sample
-        # print("crashing here 0")
         x = self.q_sample(x_start=x_start, t=t, noise=noise)
 
         # if doing self-conditioning, 50% of the time, predict x_start from current set of times
@@ -497,7 +512,7 @@ class GaussianDiffusion(Module):
         assert h == img_size[0] and w == img_size[1], f"height and width of image must be {img_size}"
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
 
-        # img = self.normalize(img)
+        img = self.normalize(img)
         return self.p_losses(img, t, x_cond, *args, **kwargs)
 
 
@@ -527,7 +542,7 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
 
         # Normalize the image before passing it through the model
-        # img = self.normalize(img)
+        img = self.normalize(img)
 
         # Call the model's loss function (or whatever other method you want to use)
         return self.p_losses(img, t, x_cond, *args, **kwargs)
@@ -540,8 +555,7 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
             b, c, f, h, w = x_start.shape
         else:
             raise ValueError(f"Unsupported tensor shape {x_start.shape}")
-
-        # print("noise p_losses", noise.shape)
+        
         # Default to random noise if not provided
         noise = default(noise, lambda: torch.randn_like(x_start))
 
@@ -553,7 +567,6 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
             noise += offset_noise_strength * rearrange(offset_noise, "b c -> b c 1 1")
 
         # Noise sample
-        # print("crashing here 1", x_start.shape, t.shape, noise.shape)
         x = self.q_sample(x_start=x_start, t=t, noise=noise)
 
         # Self-conditioning logic
@@ -577,9 +590,6 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
         else:
             raise ValueError(f"Unknown objective {self.objective}")
 
-        _, C, _, _, _ = model_out.shape  # Get the correct channel size from model output
-        target = target[:, :C]  # Slice target to match model output
-
         # Calculate loss
         loss = F.mse_loss(model_out, target, reduction="none")
         loss = reduce(loss, "b ... -> b", "mean")
@@ -598,17 +608,6 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
     ):
         model_output = self.model(x, t, x_self_cond, x_cond)
         maybe_clip = partial(torch.clamp, min=-1.0, max=1.0) if clip_x_start else identity
-
-        # Here we have the mismatch between input and output sizes
-        # Concat on the statics to the model output
-        C1 = model_output.shape[1]
-        C2 = x.shape[1]
-
-        # Slice the missing channels from x_input
-        missing_part = x[:, C1:, :, :, :]  # Slice the extra channels from x_input
-
-        # Concatenate along the channel dimension (dim=1)
-        model_output = torch.cat((model_output, missing_part), dim=1)
 
         if self.objective == "pred_noise":
             pred_noise = model_output
