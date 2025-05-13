@@ -4,18 +4,12 @@ from credit.diffusion import ModifiedGaussianDiffusion
 from credit.models.base_model import BaseModel
 from credit.postblock import PostBlock
 from credit.boundary_padding import TensorPadding
-from credit.models.crossformer import CrossFormer, Attention, FeedForward, CrossEmbedLayer, CubeEmbedding, apply_spectral_norm
+from credit.models.crossformer import Attention, FeedForward, CrossEmbedLayer, CubeEmbedding, apply_spectral_norm
 
-from credit.diffusion import *
+from credit.diffusion import cast_tuple
 import torch.nn.functional as F
-from math import sqrt
-import random
-from einops import rearrange, reduce
-from tqdm.auto import tqdm
-from functools import partial
 from collections import namedtuple
 import logging
-import sys
 
 
 logger = logging.getLogger(__name__)
@@ -50,18 +44,6 @@ ModelPrediction = namedtuple("ModelPrediction", ["pred_noise", "pred_x_start"])
 
 # mp fourier embeds
 
-class MPFourierEmbedding(Module):
-    def __init__(self, dim):
-        super().__init__()
-        assert divisible_by(dim, 2)
-        half_dim = dim // 2
-        self.weights = nn.Parameter(torch.randn(half_dim), requires_grad = False)
-
-    def forward(self, x):
-        x = rearrange(x, 'b -> b 1')
-        freqs = x * rearrange(self.weights, 'd -> 1 d') * 2 * math.pi
-        return torch.cat((freqs.sin(), freqs.cos()), dim = -1) * sqrt(2)
-
 
 class UpBlock(nn.Module):
     def __init__(self, in_chans, out_chans, num_groups, num_residuals=2, emb_dim=None):
@@ -79,10 +61,7 @@ class UpBlock(nn.Module):
         # Optional embedding projection
         self.to_emb = None
         if emb_dim is not None:
-            self.to_emb = nn.Sequential(
-                nn.Linear(emb_dim, out_chans),
-                nn.SiLU()
-            )
+            self.to_emb = nn.Sequential(nn.Linear(emb_dim, out_chans), nn.SiLU())
 
     def forward(self, x, emb=None):
         x = self.conv(x)
@@ -95,7 +74,7 @@ class UpBlock(nn.Module):
             x = x * scale[:, :, None, None]  # reshape for broadcasting
 
         return x + shortcut
-    
+
 
 class Transformer(nn.Module):
     def __init__(
@@ -155,7 +134,7 @@ class Transformer(nn.Module):
 class CrossFormerDiffusion(BaseModel):
     def __init__(
         self,
-        self_condition: bool = False, 
+        self_condition: bool = False,
         condition: bool = True,
         image_height: int = 640,
         patch_height: int = 1,
@@ -238,7 +217,6 @@ class CrossFormerDiffusion(BaseModel):
         if post_conf is None:
             post_conf = {"activate": False}
         self.use_post_block = post_conf["activate"]
-            
 
         # input channels
         self.input_only_channels = input_only_channels
@@ -248,10 +226,10 @@ class CrossFormerDiffusion(BaseModel):
         # output channels
         output_channels = channels * levels + surface_channels + output_only_channels
         self.output_channels = output_channels
-       
+
         self.total_input_channels = self.input_channels
-        if kwargs.get('diffusion'):
-            #do stuff
+        if kwargs.get("diffusion"):
+            # do stuff
             self.total_input_channels = self.input_channels + self.output_channels
 
         dim = cast_tuple(dim, 4)
@@ -323,17 +301,8 @@ class CrossFormerDiffusion(BaseModel):
         )
 
         time_emb_dim = dim[0]
-        self.time_to_emb = nn.Sequential(
-            nn.Linear(1, time_emb_dim),
-            nn.SiLU(),
-            nn.Linear(time_emb_dim, time_emb_dim)
-        )
-        self.time_emb_proj = nn.ModuleList([
-            nn.Sequential(
-                nn.SiLU(),
-                nn.Linear(time_emb_dim, d)
-            ) for d in dim
-        ])
+        self.time_to_emb = nn.Sequential(nn.Linear(1, time_emb_dim), nn.SiLU(), nn.Linear(time_emb_dim, time_emb_dim))
+        self.time_emb_proj = nn.ModuleList([nn.Sequential(nn.SiLU(), nn.Linear(time_emb_dim, d)) for d in dim])
 
         # =================================================================================== #
 
@@ -367,12 +336,12 @@ class CrossFormerDiffusion(BaseModel):
             # input_channels = self.output_channels
             x_self_cond = default(
                 x_self_cond,
-                torch.zeros(x.shape[0], self.output_channels, x.shape[2], x.shape[3], x.shape[4], device=x.device)
+                torch.zeros(x.shape[0], self.output_channels, x.shape[2], x.shape[3], x.shape[4], device=x.device),
             )
-            x = torch.cat((x_self_cond[:, :self.output_channels], x), dim=1)
+            x = torch.cat((x_self_cond[:, : self.output_channels], x), dim=1)
 
         if self.condition:
-            x = torch.cat([x, x_cond], dim = 1)
+            x = torch.cat([x, x_cond], dim=1)
 
         if self.use_post_block:
             x_copy = x.clone().detach()
@@ -395,17 +364,19 @@ class CrossFormerDiffusion(BaseModel):
             x = x.squeeze(2)
 
         # Time embedding
-        t = t[:, None]                      # [B] -> [B, 1]
-        t_emb = self.time_to_emb(t)        # [B, model_dim]
+        t = t[:, None]  # [B] -> [B, 1]
+        t_emb = self.time_to_emb(t)  # [B, model_dim]
 
         encodings = []
         for (cross_embed_layer, transformer_layer), t_emb_proj in zip(self.layers, t_emb_levels):
-        # Apply cross embedding layer (convolution)
+            # Apply cross embedding layer (convolution)
             x = cross_embed_layer(x)  # Shape: [B, dim_out, H', W']
-            
+
             # Add time embedding to the transformer
             # The time embedding is added to the transformer layers (through the cross attention mechanism)
-            x = transformer_layer(x) + t_emb_proj.unsqueeze(-1).unsqueeze(-1)  # Broadcast time embedding over spatial dimensions
+            x = transformer_layer(x) + t_emb_proj.unsqueeze(-1).unsqueeze(
+                -1
+            )  # Broadcast time embedding over spatial dimensions
             encodings.append(x)
 
         # Decoder (Upsampling blocks + skip connections), all with t_emb
@@ -589,7 +560,6 @@ if __name__ == "__main__":
     }
 
     crossformer_config["diffusion"] = diffusion_config
-
 
     model = create_model(crossformer_config).to("cuda")
     diffusion = create_diffusion(model, diffusion_config).to("cuda")

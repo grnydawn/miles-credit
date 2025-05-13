@@ -1,44 +1,17 @@
 import math
-import copy
-from pathlib import Path
 from random import random
 from functools import partial
-from functools import lru_cache
-import time
-import os
-import subprocess
-
 from collections import namedtuple
-from multiprocessing import cpu_count
-import glob
-import pickle
-import xarray as xr
-import numpy as np
-import matplotlib.pyplot as plt
 
 import torch
-from torch import nn, einsum
 import torch.nn.functional as F
-from torch.nn import Module, ModuleList
+from torch.nn import Module
 from torch.amp import autocast
-from torch.utils.data import Dataset, DataLoader
-import wandb
-
-from torch.optim import Adam
-
-from torchvision import transforms as T, utils
-
-from einops import rearrange, reduce, repeat
-from einops.layers.torch import Rearrange
+from einops import rearrange, reduce
 
 from scipy.optimize import linear_sum_assignment
-
-from PIL import Image
 from tqdm.auto import tqdm
-from ema_pytorch import EMA
-
-from multiprocessing import cpu_count
-from credit.diffusion_utils import *  # Import all utility functions
+from credit.diffusion_utils import default, identity, normalize_to_neg_one_to_one, unnormalize_to_zero_to_one
 
 ModelPrediction = namedtuple("ModelPrediction", ["pred_noise", "pred_x_start"])
 
@@ -142,16 +115,16 @@ class GaussianDiffusion(Module):
 
         if isinstance(image_size, int):
             image_size = (image_size, image_size)
-        assert (
-            isinstance(image_size, (tuple, list)) and len(image_size) == 2
-        ), "image size must be a integer or a tuple/list of two integers"
+        assert isinstance(image_size, (tuple, list)) and len(image_size) == 2, (
+            "image size must be a integer or a tuple/list of two integers"
+        )
         self.image_size = image_size
 
         self.objective = objective
 
-        assert (
-            objective in {"pred_noise", "pred_x0", "pred_v"}
-        ), "objective must be either pred_noise (predict noise) or pred_x0 (predict image start) or pred_v (predict v [v-parameterization as defined in appendix D of progressive distillation paper, used in imagen-video successfully])"
+        assert objective in {"pred_noise", "pred_x0", "pred_v"}, (
+            "objective must be either pred_noise (predict noise) or pred_x0 (predict image start) or pred_v (predict v [v-parameterization as defined in appendix D of progressive distillation paper, used in imagen-video successfully])"
+        )
 
         if beta_schedule == "linear":
             beta_schedule_fn = linear_beta_schedule
@@ -329,7 +302,7 @@ class GaussianDiffusion(Module):
 
     @torch.inference_mode()
     def p_sample_loop(self, shape, x_cond, return_all_timesteps=False):
-        batch, device = shape[0], self.device
+        _, device = shape[0], self.device
         img = torch.randn(shape, device=device)
         imgs = [img]
 
@@ -415,7 +388,7 @@ class GaussianDiffusion(Module):
         return sample_fn((batch_size, channels, f, h, w), x_cond, return_all_timesteps=return_all_timesteps)
 
     @torch.inference_mode()
-    def interpolate(self, x1, x2, t=None, lam=0.5):
+    def interpolate(self, x1, x2, x_cond=None, t=None, lam=0.5):
         b, *_, device = *x1.shape, x1.device
         t = default(t, self.num_timesteps - 1)
 
@@ -503,7 +476,7 @@ class GaussianDiffusion(Module):
     def forward(self, img, x_cond, *args, **kwargs):
         (
             b,
-            c,
+            _,
             h,
             w,
             device,
@@ -525,18 +498,18 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
     def forward(self, img, x_cond=None, *args, **kwargs):
         # Unpack the tensor shape
         if img.dim() == 4:  # b, c, h, w
-            b, c, h, w = img.shape
+            b, _, h, w = img.shape
             device = img.device
         elif img.dim() == 5:  # b, c, f, h, w (e.g., video or multi-frame)
-            b, c, f, h, w = img.shape
+            b, _, _, h, w = img.shape
             device = img.device
         else:
             raise ValueError(f"Unsupported tensor shape {img.shape}")
 
         # Ensure the height and width match the expected image size
-        assert (
-            h == self.image_size[0] and w == self.image_size[1]
-        ), f"height and width of image must be {self.image_size}"
+        assert h == self.image_size[0] and w == self.image_size[1], (
+            f"height and width of image must be {self.image_size}"
+        )
 
         # Randomly sample timesteps for diffusion
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
@@ -555,7 +528,7 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
             b, c, f, h, w = x_start.shape
         else:
             raise ValueError(f"Unsupported tensor shape {x_start.shape}")
-        
+
         # Default to random noise if not provided
         noise = default(noise, lambda: torch.randn_like(x_start))
 
