@@ -326,7 +326,7 @@ def predict(rank, world_size, conf, p):
                 input_dict = opt_energy(input_dict)
                 y_pred = input_dict["y_pred"]
             y_pred_trans = state_transformer.inverse_transform(y_pred.cpu())
-
+            print("processing")
             result = p.apply_async(
                 process_forecast,
                 (

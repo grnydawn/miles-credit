@@ -2,7 +2,8 @@ import numpy as np
 import pandas as pd
 from os.path import join
 import xarray as xr
-import fsspec
+
+# import fsspec
 from credit.interp import geopotential_from_model_vars, create_pressure_grid
 from credit.physics_constants import GRAVITY
 import datetime
@@ -24,8 +25,6 @@ gfs_map = {
     "spfh": "Q",
     "pressfc": "SP",
     "tmp2m": "t2m",
-    "hgtsfc": "Z_GDS4_SFC",
-    "land": "LSM",
 }
 level_map = {"T500": "T", "U500": "U", "V500": "V", "Q500": "Q", "Z500": "Z"}
 upper_air = ["T", "U", "V", "Q", "Z"]
@@ -61,6 +60,7 @@ def build_GFS_init(
     gfs_variables = list(
         set([k for k, v in gfs_map.items() if v in variables]).union(required_variables)
     )
+    print(gfs_variables)
     atm_full_path = build_file_path(date, gdas_base_path, file_type="atm")
     sfc_full_path = build_file_path(date, gdas_base_path, file_type="sfc")
     print("Download GFS atmospheric data")
@@ -136,10 +136,11 @@ def load_gfs_data(full_file_path, variables):
     Returns:
         xr.Dataset
     """
-    if full_file_path[:5] == "https":
-        ds = xr.open_dataset(fsspec.open(full_file_path).open())
-    else:
-        ds = xr.open_dataset(full_file_path, engine="h5netcdf")
+    # if full_file_path[:5] == "https":
+    #     ds = xr.open_dataset(fsspec.open(full_file_path).open())
+    # else:
+    print(full_file_path)
+    ds = xr.open_dataset(full_file_path, engine="h5netcdf")
     available_vars = ds.data_vars
     vars = [v for v in variables if v in available_vars]
     ds = ds[vars].rename({"grid_xt": "longitude", "grid_yt": "latitude"}).load()
