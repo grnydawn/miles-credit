@@ -54,6 +54,9 @@ class Trainer(BaseTrainer):
         # Add any additional initialization if needed
         logger.info("Loading a multi-step trainer class")
 
+        # For UNET with FLASH attention, determinism needs to be turned off
+        torch.use_deterministic_algorithms(False)
+
     # Training function.
     def train_one_epoch(self, epoch, conf, trainloader, optimizer, criterion, scaler, scheduler, metrics):
         """
@@ -165,6 +168,12 @@ class Trainer(BaseTrainer):
 
         self.model.train()
 
+        # Put the loss in the model to enable using criterion
+        if conf["trainer"]["mode"] == "ddp":
+            self.model.module.load_loss(criterion)
+        else:
+            self.model.load_loss(criterion)
+
         dl = cycle(trainloader)
         results_dict = defaultdict(list)
         for steps in range(batches_per_epoch):
@@ -263,7 +272,7 @@ class Trainer(BaseTrainer):
                 if forecast_step in backprop_on_timestep:  # steps go from 1 to n
                     with autocast(enabled=amp):
                         # y is the noise tensor x is the conditional input
-                        y_pred, loss = self.model(y, x.float())
+                        y_pred, y, loss = self.model(y, x.float())
 
                 accum_log(logs, {"loss": loss.item()})
 

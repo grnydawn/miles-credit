@@ -22,6 +22,59 @@ def extract(a, t, x_shape):
     return out.reshape(b, *((1,) * (len(x_shape) - 1)))
 
 
+def standard_normal_noise(shape=None, tensor=None, device=None):
+    """
+    Generate standard normal noise (mean=0, std=1), either using a shape or a reference tensor.
+
+    Args:
+        shape (tuple, optional): Shape for the output tensor.
+        tensor (torch.Tensor, optional): Reference tensor to match shape and device.
+        device (torch.device or str, optional): Device for output. Optional if tensor is provided.
+
+    Returns:
+        torch.Tensor: Noise sampled from N(0, 1).
+    """
+    if tensor is not None:
+        return torch.randn_like(tensor)
+    elif shape is not None:
+        return torch.randn(shape, device=device or "cpu")
+    else:
+        raise ValueError("Either `shape` or `tensor` must be provided.")
+
+
+def log_uniform_noise(shape=None, tensor=None, sigma_min=0.02, sigma_max=200.0, device=None):
+    """
+    Sample noise from a log-uniform distribution over standard deviations.
+
+    Args:
+        shape (tuple, optional): Shape of the output noise tensor. Required if `tensor` is not provided.
+        tensor (torch.Tensor, optional): Reference tensor to match shape. Used if `shape` is not provided.
+        sigma_min (float): Minimum standard deviation.
+        sigma_max (float): Maximum standard deviation.
+        device (torch.device or str, optional): Device for the output. If None, inferred from `tensor` or defaults to 'cpu'.
+
+    Returns:
+        torch.Tensor: Noise tensor sampled from N(0, σ^2), with σ ~ log-uniform.
+    """
+    if tensor is not None:
+        shape = tensor.shape
+        device = tensor.device if device is None else device
+    elif shape is not None:
+        device = device or "cpu"
+    else:
+        raise ValueError("Either `shape` or `tensor` must be provided.")
+
+    # Sample log σ uniformly
+    log_sigma_min = math.log(sigma_min)
+    log_sigma_max = math.log(sigma_max)
+    log_sigma = torch.empty(shape, device=device).uniform_(log_sigma_min, log_sigma_max)
+    sigma = log_sigma.exp()
+
+    # Sample noise: N(0, σ^2)
+    noise = torch.randn(shape, device=device) * sigma
+    return noise
+
+
 def linear_beta_schedule(timesteps):
     """
     linear schedule, proposed in original ddpm paper
@@ -30,30 +83,6 @@ def linear_beta_schedule(timesteps):
     beta_start = scale * 0.0001
     beta_end = scale * 0.02
     return torch.linspace(beta_start, beta_end, timesteps, dtype=torch.float64)
-
-
-def log_uniform_beta_schedule(timesteps, sigma_min=0.02, sigma_max=200.0):
-    """
-    Log-uniform noise schedule as proposed in [Your Reference].
-
-    The distribution is uniform in log(σ), with:
-        p(σ) ∝ σ⁻¹,  σ ∈ [σmin, σmax]
-
-    This schedule is more robust to mean shifts compared to the log-normal distribution,
-    and covers a wide dynamic range across multiple variables.
-
-    Args:
-        timesteps (int): Number of diffusion timesteps.
-        sigma_min (float): Minimum noise scale.
-        sigma_max (float): Maximum noise scale.
-
-    Returns:
-        torch.Tensor: Schedule of sigmas over timesteps.
-    """
-    log_sigma_min = math.log(sigma_min)
-    log_sigma_max = math.log(sigma_max)
-    log_sigmas = torch.linspace(log_sigma_min, log_sigma_max, timesteps, dtype=torch.float64)
-    return log_sigmas.exp()
 
 
 def cosine_beta_schedule(timesteps, s=0.008):
@@ -95,6 +124,7 @@ class GaussianDiffusion(Module):
         sampling_timesteps=None,
         objective="pred_v",
         beta_schedule="sigmoid",
+        noise_type="normal",
         schedule_fn_kwargs=dict(),
         ddim_sampling_eta=0.0,
         auto_normalize=True,
@@ -126,14 +156,19 @@ class GaussianDiffusion(Module):
             "objective must be either pred_noise (predict noise) or pred_x0 (predict image start) or pred_v (predict v [v-parameterization as defined in appendix D of progressive distillation paper, used in imagen-video successfully])"
         )
 
+        if noise_type == "normal":
+            self.randn_like_fn = standard_normal_noise
+        elif noise_type == "log-uniform":
+            self.randn_like_fn = log_uniform_noise
+        else:
+            raise ValueError(f"unknown noise type {noise_type}")
+
         if beta_schedule == "linear":
             beta_schedule_fn = linear_beta_schedule
         elif beta_schedule == "cosine":
             beta_schedule_fn = cosine_beta_schedule
         elif beta_schedule == "sigmoid":
             beta_schedule_fn = sigmoid_beta_schedule
-        elif beta_schedule == "log-uniform":
-            beta_schedule_fn = log_uniform_beta_schedule
         else:
             raise ValueError(f"unknown beta schedule {beta_schedule}")
 
@@ -296,14 +331,14 @@ class GaussianDiffusion(Module):
         model_mean, _, model_log_variance, x_start = self.p_mean_variance(
             x=x, t=batched_times, x_self_cond=x_self_cond, x_cond=x_cond, clip_denoised=True
         )
-        noise = torch.randn_like(x) if t > 0 else 0.0  # no noise if t == 0
+        noise = self.randn_like_fn(tensor=x) if t > 0 else 0.0  # no noise if t == 0
         pred_img = model_mean + (0.5 * model_log_variance).exp() * noise
         return pred_img, x_start
 
     @torch.inference_mode()
     def p_sample_loop(self, shape, x_cond, return_all_timesteps=False):
         _, device = shape[0], self.device
-        img = torch.randn(shape, device=device)
+        img = self.randn_like_fn(shape=shape, device=device)
         imgs = [img]
 
         x_start = None
@@ -319,7 +354,7 @@ class GaussianDiffusion(Module):
 
     @torch.inference_mode()
     def ddim_sample(self, shape, x_cond, return_all_timesteps=False, disable_tqdm=True):
-        batch, device, total_timesteps, sampling_timesteps, eta, objective = (
+        batch, device, total_timesteps, sampling_timesteps, eta, _ = (
             shape[0],
             self.device,
             self.num_timesteps,
@@ -334,11 +369,10 @@ class GaussianDiffusion(Module):
         times = list(reversed(times.int().tolist()))
         time_pairs = list(zip(times[:-1], times[1:]))  # [(T-1, T-2), (T-2, T-3), ..., (1, 0), (0, -1)]
 
-        img = torch.randn(shape, device=device)
+        img = self.randn_like_fn(shape=shape, device=device)
         imgs = [img]
 
         x_start = None
-
         for time, time_next in tqdm(time_pairs, desc="sampling loop time step", disable=disable_tqdm):
             time_cond = torch.full((batch,), time, device=device, dtype=torch.long)
             self_cond = x_start if self.self_condition else None
@@ -357,7 +391,7 @@ class GaussianDiffusion(Module):
             sigma = eta * ((1 - alpha / alpha_next) * (1 - alpha_next) / (1 - alpha)).sqrt()
             c = (1 - alpha_next - sigma**2).sqrt()
 
-            noise = torch.randn_like(img)
+            noise = self.randn_like_fn(tensor=img)
 
             img = x_start * alpha_next.sqrt() + c * pred_noise + sigma * noise
 
@@ -416,7 +450,7 @@ class GaussianDiffusion(Module):
 
     @autocast("cuda", enabled=False)
     def q_sample(self, x_start, t, noise=None):
-        noise = default(noise, lambda: torch.randn_like(x_start))
+        noise = default(noise, lambda: self.randn_like_fn(tensor=x_start))
 
         if self.immiscible:
             assign = self.noise_assignment(x_start, noise)
@@ -429,7 +463,7 @@ class GaussianDiffusion(Module):
     def p_losses(self, x_start, t, x_cond, noise=None, offset_noise_strength=None):
         b, c, h, w = x_start.shape
 
-        noise = default(noise, lambda: torch.randn_like(x_start))
+        noise = default(noise, lambda: self.randn_like_fn(tensor=x_start))
 
         # offset noise - https://www.crosslabs.org/blog/diffusion-with-offset-noise
 
@@ -494,6 +528,10 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
         super().__init__(*args, **kwargs)
         self.channels = self.model.input_channels
         self.history_len = self.model.frames
+        self.criterion = None
+
+    def load_loss(self, criterion):
+        self.criterion = criterion
 
     def forward(self, img, x_cond=None, *args, **kwargs):
         # Unpack the tensor shape
@@ -530,7 +568,7 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
             raise ValueError(f"Unsupported tensor shape {x_start.shape}")
 
         # Default to random noise if not provided
-        noise = default(noise, lambda: torch.randn_like(x_start))
+        noise = default(noise, lambda: self.randn_like_fn(tensor=x_start))
 
         # Offset noise - https://www.crosslabs.org/blog/diffusion-with-offset-noise
         offset_noise_strength = default(offset_noise_strength, self.offset_noise_strength)
@@ -564,11 +602,38 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
             raise ValueError(f"Unknown objective {self.objective}")
 
         # Calculate loss
-        loss = F.mse_loss(model_out, target, reduction="none")
-        loss = reduce(loss, "b ... -> b", "mean")
-        loss = loss * extract(self.loss_weight, t, loss.shape)
+        if self.criterion:
+            # 1. Compute user-defined loss (per variable, per lat point)
+            raw_loss = self.criterion.loss_fn(target, model_out)  # shape: [B, V, L]
+            _, _, _, H, W = raw_loss.shape
 
-        return model_out, loss.mean()
+            # 2. Apply latitude weights
+            if self.criterion.lat_weights is not None:
+                lat_weights = self.criterion.lat_weights.to(raw_loss.device).view(1, 1, 1, H, 1)
+                raw_loss = raw_loss * lat_weights
+
+            # 3. Apply variable weights
+            if self.criterion.var_weights is not None:
+                var_weights = self.criterion.var_weights.to(raw_loss.device).view(1, 1, 1, H, 1)
+                raw_loss = raw_loss * var_weights
+
+            # 4. Reduce per-sample: mean over V and L
+            loss_per_sample = raw_loss.mean(dim=[1, 2])  # shape: [B]
+
+            # 5. Apply DDPM timestep weighting
+            loss_weight = extract(self.loss_weight, t, loss_per_sample.shape)
+            weighted_loss = loss_per_sample * loss_weight  # shape: [B]
+
+            # 6. Final loss
+            loss = weighted_loss.mean()
+
+        else:
+            loss = F.mse_loss(model_out, target, reduction="none")
+            loss = reduce(loss, "b ... -> b", "mean")
+            loss = loss * extract(self.loss_weight, t, loss.shape)
+            loss = loss.mean()
+
+        return model_out, target, loss
 
     def model_predictions(
         self,
