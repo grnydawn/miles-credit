@@ -13,6 +13,8 @@ from credit.models.graph import GraphResTransfGRU
 from credit.models.debugger_model import DebuggerModel
 from credit.models.crossformer_ensemble import CrossFormerWithNoise
 from credit.models.crossformer_diffusion import CrossFormerDiffusion
+from credit.models.unet_diffusion import UnetDiffusion
+
 from credit.diffusion import ModifiedGaussianDiffusion
 
 
@@ -27,6 +29,10 @@ model_types = {
     "crossformer-diffusion": (
         CrossFormerDiffusion,
         "Loading A DDPM model with CrossFormer Backbone ....",
+    ),
+    "unet-diffusion": (
+        UnetDiffusion,
+        "Loading A DDPM model with UNET Backbone ....",
     ),
     "crossformer-style": (
         CrossFormerWithNoise,
@@ -58,7 +64,20 @@ def load_fsdp_or_checkpoint_policy(conf):
             FeedForward,
             CrossEmbedLayer,
         }
+    elif "unet" in conf["model"]["type"]:
+        from credit.models.crossformer import (
+            Attention,
+            DynamicPositionBias,
+            FeedForward,
+            CrossEmbedLayer,
+        )
 
+        transformer_layers_cls = {
+            Attention,
+            DynamicPositionBias,
+            FeedForward,
+            CrossEmbedLayer,
+        }
     # FuXi
     # FuXi supports "spectral_norm = True" only
     elif "fuxi" in conf["model"]["type"]:
@@ -134,6 +153,26 @@ def load_model(conf, load_weights=False, model_name=False):
         return model(**model_conf)
 
     if model_type in ("crossformer-diffusion"):
+        model, message = model_types[model_type]
+        logger.info(message)
+        diffusion_config = conf.get("model", {}).get("diffusion")
+        if diffusion_config is not None:
+            diffusion_config = diffusion_config.copy()
+            self_condition = diffusion_config.pop("self_condition", False)
+            condition = diffusion_config.pop("condition", True)
+        else:
+            logger.warning(f"The diffusion details were not specified as model:diffusion, exiting")
+            sys.exit(0)
+
+        if load_weights:
+            if model_name:
+                return model.load_model_name(conf, model_name=model_name)
+            else:
+                return model.load_model(conf)
+            
+        return ModifiedGaussianDiffusion(model(**model_conf, self_condition=self_condition, condition=condition), **diffusion_config)
+
+    if model_type in ("unet-diffusion"):
         model, message = model_types[model_type]
         logger.info(message)
         diffusion_config = conf.get("model", {}).get("diffusion")
