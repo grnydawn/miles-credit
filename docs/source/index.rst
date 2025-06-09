@@ -43,6 +43,7 @@ If you encounter issues or have suggestions, please open an issue on our GitHub 
    Training a Model <Training.md>
    Running Inference <Inference.md>
    Evaluation and Metrics <Evaluation.md>
+   Deterministic vs ensemble model training  <Ensembles.md> and inference  <EnsemblesInference.md>
 
 .. toctree::
    :maxdepth: 2
