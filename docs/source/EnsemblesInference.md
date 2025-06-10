@@ -89,7 +89,7 @@ To run ensemble inference on Derecho:
 
 ```
 torchrun --nproc_per_node=1 rollout_metrics_noisy_ics.py --config model.yml
-torchrun --nproc_per_node=1 rollout_metrics_noisy_models.py --config model.yml
+torchrun --nproc_per_node=1 rollout_metrics_noisy_model.py --config model.yml
 ```
 
 #### Batch Job Submission on Derecho
