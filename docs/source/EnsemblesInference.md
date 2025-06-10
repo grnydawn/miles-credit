@@ -1,17 +1,11 @@
-Okay, I understand completely. You want the text in **raw Markdown**, but specifically, any YAML or Bash code blocks should **not be rendered** as code blocks. This means I need to present their content as plain text, without the triple backticks or language specifiers.
-
-Here's the content formatted exactly as you requested:
-
----
-
 ## CREDIT Ensemble Inference
-
-**Note:** The inference scripts (`rollout_metrics_noisy_ics.py`, `rollout_metrics_noisy_models.py`) compute and save **ensemble metrics only**. To **save forecast outputs to NetCDF**, set the `ensemble_size` in the `predict` block of the config file and run `rollout_metrics.py` instead.
 
 CREDIT supports ensemble inference for generating probabilistic forecasts using pre-trained models. The framework provides two distinct approaches for creating ensemble diversity:
 
 1.  Perturbing initial conditions with deterministic models
 2.  Utilizing stochastic models with identical initial conditions
+
+The inference scripts (`rollout_metrics_noisy_ics.py`, `rollout_metrics_noisy_models.py`) will compute and save **ensemble metrics only**. To **save forecast outputs to NetCDF**, set the `ensemble_size` in the `predict` block of the config file and run `rollout_to_netcdf.py` instead. It natively supports usage of `ensemble_size`. The two scripts presented here compute the CRPS score for each variable and keep track of the ensemble member scores, means and standard deviations.
 
 ---
 
@@ -75,7 +69,7 @@ This method uses pre-trained deterministic models with perturbed initial conditi
         * `bred_time_lag` = 480 (hours)
     * Uses `generate_bred_vectors_cycle()` function with full model integration.
 
-#### Noisy Models (`rollout_metrics_noisy_models.py`)
+#### Noisy Models (`rollout_metrics_noisy_model.py`)
 
 This method uses stochastic models with identical initial conditions. Ensemble spread arises from internal noise mechanisms during model inference.
 
