@@ -91,7 +91,8 @@ class UpBlock(nn.Module):
         self.b = nn.Sequential(*blk)
 
     def forward(self, x):
-        x = self.upsample(x)
+        if self.upsample_v_conv:
+            x = self.upsample(x)
         x = self.conv(x)
 
         shortcut = x
