@@ -69,9 +69,11 @@ class CubeEmbedding(nn.Module):
 class UpBlock(nn.Module):
     def __init__(self, in_chans, out_chans, num_groups, num_residuals=2):
         super().__init__()
-        self.conv = nn.ConvTranspose2d(in_chans, out_chans, kernel_size=2, stride=2)
-        self.output_channels = out_chans
+        self.upsample = nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False)
+        self.conv = nn.Conv2d(in_chans, out_chans, kernel_size=3, stride=1, padding=1)
 
+        self.output_channels = out_chans
+        
         blk = []
         for i in range(num_residuals):
             blk.append(nn.Conv2d(out_chans, out_chans, kernel_size=3, stride=1, padding=1))
@@ -81,6 +83,7 @@ class UpBlock(nn.Module):
         self.b = nn.Sequential(*blk)
 
     def forward(self, x):
+        x = self.upsample(x)
         x = self.conv(x)
 
         shortcut = x
@@ -500,7 +503,10 @@ class CrossFormer(BaseModel):
         self.up_block1 = UpBlock(1 * last_dim, last_dim // 2, dim[0])
         self.up_block2 = UpBlock(2 * (last_dim // 2), last_dim // 4, dim[0])
         self.up_block3 = UpBlock(2 * (last_dim // 4), last_dim // 8, dim[0])
-        self.up_block4 = nn.ConvTranspose2d(2 * (last_dim // 8), output_channels, kernel_size=4, stride=2, padding=1)
+        self.up_block4 = nn.Sequential(
+            nn.Upsample(scale_factor=2, mode="bilinear", align_corners=False),
+            nn.Conv2d(2 * (last_dim // 8), output_channels, kernel_size=3, stride=1, padding=1),
+        )
 
         if self.use_spectral_norm:
             logger.info("Adding spectral norm to all conv and linear layers")
