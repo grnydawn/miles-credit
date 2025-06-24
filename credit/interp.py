@@ -3,7 +3,6 @@
 import numpy as np
 from numba import njit
 import xarray as xr
-from tqdm import tqdm
 from .physics_constants import RDGAS, GRAVITY
 import os
 
@@ -30,6 +29,8 @@ def full_state_pressure_interpolation(
     verbose: int = 1,
     a_model_name: str = "a_model",
     b_model_name: str = "b_model",
+    a_half_name: str = "a_half",
+    b_half_name: str = "b_half",
 ) -> xr.Dataset:
     """Interpolate the full state of the model to pressure and height coordinates.
 
@@ -71,8 +72,10 @@ def full_state_pressure_interpolation(
         height_var (str): height coordinate
         model_level_file (str): relative path to file containing model levels.
         verbose (int): verbosity level. If verbose > 0, print progress.
-        a_model_name (str): Name of A weight in sigma coordinate formula. 'a_model' by default.
-        b_model_name (str): Name of B weight in sigma coordinate formula. 'b_model' by default.
+        a_model_name (str): Name of A weight at level midpoints in sigma coordinate formula. 'a_model' by default.
+        b_model_name (str): Name of B weight at level midpoints in sigma coordinate formula. 'b_model' by default.
+        a_half_name (str): Name of A weight at level interfaces in sigma coordinate formula. 'a_half' by default.
+        b_half_name (str): Name of B weight at level interfaces in sigma coordinate formula. 'b_half' by default.
 
     Returns:
         pressure_ds (xr.Dataset): Dataset containing pressure interpolated variables.
@@ -80,9 +83,16 @@ def full_state_pressure_interpolation(
     """
     path_to_file = os.path.abspath(os.path.dirname(__file__))
     model_level_file = os.path.join(path_to_file, model_level_file)
+    pressure_levels = np.array(pressure_levels)
     with xr.open_dataset(model_level_file) as mod_lev_ds:
-        a_model = mod_lev_ds[a_model_name].values
-        b_model = mod_lev_ds[b_model_name].values
+        valid_levels = np.isin(
+            mod_lev_ds[level_var].values, state_dataset[level_var].values
+        )
+        a_model = mod_lev_ds[a_model_name].values[valid_levels]
+        b_model = mod_lev_ds[b_model_name].values[valid_levels]
+        a_half_full = mod_lev_ds[a_half_name].values
+        b_half_full = mod_lev_ds[b_half_name].values
+
     pres_dims = (time_var, pres_var, lat_var, lon_var)
     surface_dims = (time_var, lat_var, lon_var)
     coords = {
@@ -109,6 +119,16 @@ def full_state_pressure_interpolation(
         },
         coords=coords,
     )
+    pressure_ds[geopotential_var] = xr.DataArray(
+        coords=state_dataset[temperature_var].coords,
+        dims=state_dataset[temperature_var].dims,
+        name=geopotential_var,
+    )
+    pressure_ds["P"] = xr.DataArray(
+        coords=state_dataset[temperature_var].coords,
+        dims=state_dataset[temperature_var].dims,
+        name="P",
+    )
     pressure_ds[geopotential_var + pres_ending] = xr.DataArray(
         coords=coords, dims=pres_dims, name=geopotential_var + pres_ending
     )
@@ -116,6 +136,7 @@ def full_state_pressure_interpolation(
         coords=coords_surface, dims=surface_dims, name="mean_sea_level_" + pres_var
     )
     if height_levels is not None:
+        height_levels = np.array(height_levels)
         coords_height = {
             time_var: state_dataset[time_var],
             height_var: height_levels,
@@ -123,74 +144,111 @@ def full_state_pressure_interpolation(
             lon_var: state_dataset[lon_var],
         }
         height_dims = (time_var, height_var, lat_var, lon_var)
+        height_shape = (
+            coords_height[time_var].size,
+            coords_height[height_var].size,
+            coords_height[lat_var].size,
+            coords_height[lon_var].size,
+        )
         for var in interp_fields:
             pressure_ds[var + height_ending] = xr.DataArray(
-                coords=coords_height, dims=height_dims, name=var + height_ending
+                data=np.zeros(height_shape, dtype=np.float32),
+                coords=coords_height,
+                dims=height_dims,
+                name=var + height_ending,
             )
-    disable = False
-    if verbose == 0:
-        disable = True
-    sub_half_levels = np.concatenate([state_dataset[level_var].values, [138]])
-    sub_levels = state_dataset[level_var].values
-    for t, time in tqdm(enumerate(state_dataset[time_var]), disable=disable):
+        pressure_ds["P" + height_ending] = xr.DataArray(
+            data=np.zeros(height_shape, dtype=np.float32),
+            coords=coords_height,
+            dims=height_dims,
+            name=var + height_ending,
+        )
+
+    for t, time in enumerate(state_dataset[time_var]):
+        interp_full_data = {}
+        surface_pressure_data = state_dataset[surface_pressure_var][t].values.astype(
+            np.float64
+        )
+
         pressure_grid, half_pressure_grid = create_reduced_pressure_grid(
-            state_dataset[surface_pressure_var][t].values.astype(np.float64),
-            a_model,
-            b_model,
+            surface_pressure_data, a_model, b_model
         )
-        pressure_sub_grid = pressure_grid[sub_levels - 1]
-        half_pressure_sub_grid = half_pressure_grid[sub_half_levels - 1]
-        geopotential_grid = geopotential_from_model_vars(
-            surface_geopotential.astype(np.float64),
-            state_dataset[surface_pressure_var][t].values.astype(np.float64),
+
+        interp_full_data["P"], full_half_pressure_grid = create_pressure_grid(
+            surface_pressure_data, a_half_full, b_half_full
+        )
+
+        interp_full_data[temperature_var] = interp_hybrid_to_hybrid_levels(
             state_dataset[temperature_var][t].values.astype(np.float64),
-            state_dataset[q_var][t].values.astype(np.float64),
-            half_pressure_sub_grid,
+            pressure_grid,
+            interp_full_data["P"],
         )
+        interp_full_data[q_var] = interp_hybrid_to_hybrid_levels(
+            state_dataset[q_var][t].values.astype(np.float64),
+            pressure_grid,
+            interp_full_data["P"],
+        )
+        for interp_field in interp_fields:
+            if interp_field not in interp_full_data.keys():
+                interp_full_data[interp_field] = interp_hybrid_to_hybrid_levels(
+                    state_dataset[interp_field][t].values.astype(np.float64),
+                    pressure_grid,
+                    interp_full_data["P"],
+                )
+
+        geopotential_full_grid = geopotential_from_model_vars(
+            surface_geopotential.astype(np.float64),
+            surface_pressure_data,
+            interp_full_data[temperature_var],
+            interp_full_data[q_var],
+            full_half_pressure_grid,
+        )
+        pressure_ds["P"][t] = pressure_grid
+        pressure_ds[geopotential_var][t] = geopotential_full_grid[valid_levels]
         for interp_field in interp_fields:
             if interp_field == temperature_var:
                 pressure_ds[interp_field + pres_ending][t] = (
                     interp_temperature_to_pressure_levels(
-                        state_dataset[interp_field][t].values,
-                        pressure_sub_grid / 100.0,
+                        interp_full_data[interp_field],
+                        interp_full_data["P"] / 100.0,
                         pressure_levels,
                         state_dataset[surface_pressure_var][t].values / 100.0,
                         surface_geopotential,
-                        geopotential_grid,
+                        geopotential_full_grid,
                     )
                 )
             else:
                 pressure_ds[interp_field + pres_ending][t] = (
                     interp_hybrid_to_pressure_levels(
-                        state_dataset[interp_field][t].values,
-                        pressure_sub_grid / 100.0,
+                        interp_full_data[interp_field],
+                        interp_full_data["P"] / 100.0,
                         pressure_levels,
                     )
                 )
         pressure_ds[geopotential_var + pres_ending][t] = (
             interp_geopotential_to_pressure_levels(
-                geopotential_grid,
-                pressure_sub_grid / 100.0,
+                geopotential_full_grid,
+                interp_full_data["P"] / 100.0,
                 pressure_levels,
                 state_dataset[surface_pressure_var][t].values / 100.0,
                 surface_geopotential,
-                state_dataset[temperature_var][t].values,
+                interp_full_data[temperature_var],
             )
         )
         pressure_ds["mean_sea_level_" + pres_var][t] = mean_sea_level_pressure(
             state_dataset[surface_pressure_var][t].values,
-            state_dataset[temperature_var][t].values,
-            pressure_sub_grid,
+            interp_full_data[temperature_var],
+            interp_full_data["P"],
             surface_geopotential,
-            geopotential_grid,
+            geopotential_full_grid,
         )
         if height_levels is not None:
-            for interp_field in interp_fields:
+            for interp_field in interp_full_data.keys():
                 height_var = interp_field + height_ending
                 pressure_ds[height_var][t] = interp_hybrid_to_height_agl(
-                    state_dataset[interp_field][t].values,
+                    interp_full_data[interp_field],
                     height_levels,
-                    geopotential_grid,
+                    geopotential_full_grid,
                     surface_geopotential,
                 )
     return pressure_ds
@@ -442,6 +500,32 @@ def interp_pressure_to_hybrid_levels(
 
 
 @njit
+def interp_hybrid_to_hybrid_levels(hybrid_var, hybrid_pressure, target_pressure):
+    """
+    Interpolate fields on hybrid levels to hybrid levels via pressure.
+
+    Interpolate data from hybrid sigma-pressure vertical coordinates to other hybrid levels.
+
+    Args:
+        hybrid_var (np.ndarray): 3D field on hybrid sigma-pressure levels with shape (levels, y, x).
+        hybrid_pressure (np.double): pressure levels for interpolation in units Pa or hPa.
+        target_pressure (np.ndarray): 3D target pressure fields with shape (levels, y, x) in units Pa or hPa
+
+    Returns:
+        model_var (np.ndarray): 3D field on hybrid sigma-pressure levels with shape (target_pressure.shape[0], y, x).
+
+    """
+    model_var = np.zeros(target_pressure.shape, dtype=target_pressure.dtype)
+    for (i, j), v in np.ndenumerate(hybrid_var[0]):
+        model_var[:, i, j] = np.interp(
+            np.log(target_pressure[:, i, j]),
+            np.log(hybrid_pressure[:, i, j]),
+            hybrid_var[:, i, j],
+        )
+    return model_var
+
+
+@njit
 def interp_geopotential_to_pressure_levels(
     geopotential,
     model_pressure,
@@ -463,7 +547,7 @@ def interp_geopotential_to_pressure_levels(
         interp_pressures (np.ndarray): pressure levels for interpolation in units Pa or hPa.
         surface_pressure (np.ndarray): pressure at the surface in units Pa or hPa.
         surface_geopotential (np.ndarray): geopotential at the surface in units m^2/s^2.
-        temperaure_k (np.ndarray): temperature  in units K.
+        temperature_k (np.ndarray): temperature  in units K.
         temp_height (float): height above ground of nearest vertical grid cell.
 
     Returns:

@@ -16,12 +16,12 @@ from argparse import ArgumentParser
 from echo.src.base_objective import BaseObjective
 
 import torch
-from torch.cuda.amp import GradScaler
+from torch.amp import GradScaler
 from torch.distributed.fsdp.sharded_grad_scaler import ShardedGradScaler
 from credit.distributed import distributed_model_wrapper, setup, get_rank_info
 
 from credit.seed import seed_everything
-from credit.loss import VariableTotalLoss2D
+from credit.losses import load_loss
 
 from credit.scheduler import load_scheduler
 from credit.trainers import load_trainer
@@ -100,9 +100,7 @@ def load_model_states_and_optimizer(conf, model, device):
         )
         # FSDP checkpoint settings
         if conf["trainer"]["mode"] == "fsdp":
-            logging.info(
-                f"Loading FSDP model state only from {save_loc}"
-            )
+            logging.info(f"Loading FSDP model state only from {save_loc}")
             optimizer = torch.optim.AdamW(
                 filter(lambda p: p.requires_grad, model.parameters()),
                 lr=learning_rate,
@@ -117,32 +115,24 @@ def load_model_states_and_optimizer(conf, model, device):
             ckpt = os.path.join(save_loc, "checkpoint.pt")
             checkpoint = torch.load(ckpt, map_location=device)
             if conf["trainer"]["mode"] == "ddp":
-                logging.info(
-                    f"Loading DDP model state only from {save_loc}"
-                )
+                logging.info(f"Loading DDP model state only from {save_loc}")
                 load_msg = model.module.load_state_dict(checkpoint["model_state_dict"], strict=False)
                 load_state_dict_error_handler(load_msg)
             else:
-                logging.info(
-                    f"Loading model state only from {save_loc}"
-                )
+                logging.info(f"Loading model state only from {save_loc}")
                 load_msg = model.load_state_dict(checkpoint["model_state_dict"], strict=False)
                 load_state_dict_error_handler(load_msg)
 
         # Load the learning rate scheduler and mixed precision grad scaler
         scheduler = load_scheduler(optimizer, conf)
-        scaler = (
-            ShardedGradScaler(enabled=amp)
-            if conf["trainer"]["mode"] == "fsdp"
-            else GradScaler(enabled=amp)
-        )
+        scaler = ShardedGradScaler(enabled=amp) if conf["trainer"]["mode"] == "fsdp" else GradScaler(enabled=amp)
         # Update the config file to the current epoch based on the checkpoint
-        if ("reload_epoch" in conf["trainer"] 
+        if (
+            "reload_epoch" in conf["trainer"]
             and conf["trainer"]["reload_epoch"]
-            and os.path.exists(os.path.join(save_loc, "training_log.csv"))):
-            
+            and os.path.exists(os.path.join(save_loc, "training_log.csv"))
+        ):
             conf["trainer"]["start_epoch"] = checkpoint["epoch"] + 1
-
 
     # load optimizer and grad scaler states
     else:
@@ -240,10 +230,6 @@ def main(rank, world_size, conf, backend=None, trial=False):
     )
     torch.cuda.set_device(rank % torch.cuda.device_count())
 
-    # Config settings
-    seed = conf["seed"]
-    seed_everything(seed)
-
     # Load the dataset using the provided dataset_type
     train_dataset = load_dataset(conf, rank=rank, world_size=world_size, is_train=True)
     valid_dataset = load_dataset(conf, rank=rank, world_size=world_size, is_train=False)
@@ -251,6 +237,9 @@ def main(rank, world_size, conf, backend=None, trial=False):
     # Load the dataloader
     train_loader = load_dataloader(conf, train_dataset, rank=rank, world_size=world_size, is_train=True)
     valid_loader = load_dataloader(conf, valid_dataset, rank=rank, world_size=world_size, is_train=False)
+
+    seed = conf["seed"] + rank
+    seed_everything(seed)
 
     # model
     m = load_model(conf)
@@ -272,8 +261,8 @@ def main(rank, world_size, conf, backend=None, trial=False):
     conf, model, optimizer, scheduler, scaler = load_model_states_and_optimizer(conf, model, device)
 
     # Train and validation losses
-    train_criterion = VariableTotalLoss2D(conf)
-    valid_criterion = VariableTotalLoss2D(conf, validation=True)
+    train_criterion = load_loss(conf)
+    valid_criterion = load_loss(conf, validation=True)
 
     # Set up some metrics
     metrics = LatWeightedMetrics(conf)
@@ -350,7 +339,9 @@ class Objective(BaseObjective):
 
 
 if __name__ == "__main__":
-    description = "Train an AI model for Numerical Weather Prediction (NWP) using a specified dataset and configuration."
+    description = (
+        "Train an AI model for Numerical Weather Prediction (NWP) using a specified dataset and configuration."
+    )
     parser = ArgumentParser(description=description)
     parser.add_argument(
         "-c",
@@ -397,7 +388,7 @@ if __name__ == "__main__":
     # Stream output to stdout
     ch = logging.StreamHandler()
     # see if we are in debug mode to set logging level
-    gettrace = getattr(sys, 'gettrace', None)
+    gettrace = getattr(sys, "gettrace", None)
     debug = gettrace()
     if debug:
         ch.setLevel(logging.DEBUG)
@@ -406,7 +397,6 @@ if __name__ == "__main__":
     ch.setFormatter(formatter)
     root.addHandler(ch)
     logging.debug("logging set to DEBUG level")
-
 
     # Load the configuration and get the relevant variables
     with open(config) as cf:
@@ -436,9 +426,6 @@ if __name__ == "__main__":
             logging.info("Launching to PBS on Derecho")
             launch_script_mpi(config, script_path)
         sys.exit()
-
-    seed = conf["seed"]
-    seed_everything(seed)
 
     local_rank, world_rank, world_size = get_rank_info(conf["trainer"]["mode"])
     main(world_rank, world_size, conf, backend)

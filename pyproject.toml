@@ -17,6 +17,7 @@ dependencies = [
     "scikit-learn",
     "pyarrow",
     "pytest",
+    "pysteps",
     "xarray",
     "netcdf4",
     "torch",
@@ -41,6 +42,8 @@ dependencies = [
     "sphinx-autoapi",
     "myst_parser",
     "sphinx-book-theme",
+    "fsspec",
+    "gcsfs"
    ]
 
 [tool.setuptools]

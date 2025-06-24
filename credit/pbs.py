@@ -121,9 +121,9 @@ def launch_script_mpi(config_file, script_path, launch=True, backend="nccl"):
 
     # Load modules
     module purge
-    module load ncarenv/23.09
+    module load ncarenv/24.12
     module reset
-    module load gcc craype cray-mpich cuda cudnn/8.8.1.3-12 conda
+    module load gcc craype cray-mpich cuda cudnn/8.9.7.29-12 conda
     conda activate {pbs_options.get('conda', 'credit')}
 
     # Export environment variables
@@ -201,6 +201,18 @@ def launch_script_mpi(config_file, script_path, launch=True, backend="nccl"):
             logger.info(f"Generated the new script at {destination_path}")
         except shutil.SameFileError:
             pass
+
+def get_num_cpus():
+    if "glade" in os.getcwd():
+        num_cpus = subprocess.run(
+            "qstat -f $PBS_JOBID | grep Resource_List.ncpus",
+            shell=True,
+            capture_output=True,
+            encoding="utf-8",
+        ).stdout.split()[-1]
+    else:
+        num_cpus = os.cpu_count()
+    return int(num_cpus)
 
 
 if __name__ == "__main__":

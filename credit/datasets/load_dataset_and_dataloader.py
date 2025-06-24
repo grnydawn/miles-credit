@@ -109,13 +109,9 @@ class BatchForecastLenDataLoader:
             int: The total number of samples or iterations.
         """
         if hasattr(self.dataset, "batches_per_epoch"):
-            return (
-                self.dataset.batches_per_epoch() * self.forecast_len
-            )  # Use the dataset's method if available
+            return self.dataset.batches_per_epoch() * self.forecast_len  # Use the dataset's method if available
         else:
-            return (
-                len(self.dataset) * self.forecast_len
-            )  # Otherwise, fall back to the dataset's length
+            return len(self.dataset) * self.forecast_len  # Otherwise, fall back to the dataset's length
 
 
 def collate_fn(batch):
@@ -154,9 +150,7 @@ def load_dataset(conf, rank=0, world_size=1, is_train=True):
     try:
         data_config = setup_data_loading(conf)
     except KeyError:
-        logging.warning(
-            "You must run credit.parser.credit_main_parser(conf) before loading data. Exiting."
-        )
+        logging.warning("You must run credit.parser.credit_main_parser(conf) before loading data. Exiting.")
         sys.exit()
     seed = conf["seed"]
     shuffle = is_train
@@ -166,26 +160,30 @@ def load_dataset(conf, rank=0, world_size=1, is_train=True):
     )
     batch_size = conf["trainer"][f"{training_type}_batch_size"]
     shuffle = is_train
-    num_workers = (
-        conf["trainer"]["thread_workers"]
-        if is_train
-        else conf["trainer"]["valid_thread_workers"]
-    )
+    num_workers = conf["trainer"]["thread_workers"] if is_train else conf["trainer"]["valid_thread_workers"]
     prefetch_factor = conf["trainer"].get(
         "prefetch_factor",
     )
-    history_len = (
-        data_config["history_len"] if is_train else data_config["valid_history_len"]
-    )
-    forecast_len = (
-        data_config["forecast_len"] if is_train else data_config["valid_forecast_len"]
-    )
+    history_len = data_config["history_len"] if is_train else data_config["valid_history_len"]
+    forecast_len = data_config["forecast_len"] if is_train else data_config["valid_forecast_len"]
     if prefetch_factor is None:
         logging.warning(
             "prefetch_factor not found in config under 'trainer'. Using default value of 4. "
             "Please specify prefetch_factor in the 'trainer' section of your config."
         )
         prefetch_factor = 4
+
+    # If loss is CRPS, we need all samplers-dataloaders to return the same (x, y)
+    # pair as the CDF is computed across GPUs. Randomness is handled by adding noise
+    # to the input x to create different samples. There are many other ways to do this
+    # but using the same rank and world_size is the fastest as far as communication.
+    if conf["loss"]["training_loss"] == "KCRPS":
+        rank = 0
+        world_size = 1
+        logging.info(
+            "For CRPS loss, we maintain identical rank and world size across all "
+            "GPUs to ensure proper CDF calculation during synchronous distributed processing."
+        )
 
     # Instantiate the dataset based on the provided class name
     if dataset_type == "ERA5_and_Forcing_SingleStep":  # forecast-len = 0 dataset
@@ -321,9 +319,7 @@ def load_dataset(conf, rank=0, world_size=1, is_train=True):
 
     train_flag = "training" if is_train else "validation"
 
-    logging.info(
-        f"Loaded a {train_flag} {dataset_type} dataset (forecast length = {data_config['forecast_len'] + 1})"
-    )
+    logging.info(f"Loaded a {train_flag} {dataset_type} dataset (forecast length = {data_config['forecast_len'] + 1})")
 
     return dataset
 
@@ -347,14 +343,8 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
     training_type = "train" if is_train else "valid"
     batch_size = conf["trainer"][f"{training_type}_batch_size"]
     shuffle = is_train
-    num_workers = (
-        conf["trainer"]["thread_workers"]
-        if is_train
-        else conf["trainer"]["valid_thread_workers"]
-    )
-    forecast_len = (
-        conf["data"]["forecast_len"] if is_train else conf["data"]["valid_forecast_len"]
-    )
+    num_workers = conf["trainer"]["thread_workers"] if is_train else conf["trainer"]["valid_thread_workers"]
+    forecast_len = conf["data"]["forecast_len"] if is_train else conf["data"]["valid_forecast_len"]
     prefetch_factor = conf["trainer"].get("prefetch_factor")
     if prefetch_factor is None:
         logging.warning(
@@ -362,6 +352,18 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
             "Please specify prefetch_factor in the 'trainer' section of your config."
         )
         prefetch_factor = 4
+
+    # If loss is CRPS, we need all samplers-dataloaders to return the same (x, y)
+    # pair as the CDF is computed across GPUs. Randomness is handled by adding noise
+    # to the input x to create different samples. There are many other ways to do this
+    # but using the same rank and world_size is the fastest as far as communication.
+    if conf["loss"]["training_loss"] == "KCRPS" and conf["trainer"]["type"] == "era5-ensemble":
+        rank = 0
+        world_size = 1
+        logging.info(
+            "For CRPS loss, we maintain identical rank and world size across all "
+            "GPUs to ensure proper CDF calculation during synchronous distributed processing."
+        )
 
     if type(dataset) is ERA5_and_Forcing_SingleStep:
         # This is the single-step dataset, original version
@@ -375,9 +377,7 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
                     collated_batch[key] = torch.stack(items)
                 elif isinstance(items[0], (int, float, bool)):
                     collated_batch[key] = torch.tensor(
-                        [items[0]]
-                        if key in ["forecast_step", "stop_forecast"]
-                        else items
+                        [items[0]] if key in ["forecast_step", "stop_forecast"] else items
                     )
                 else:
                     collated_batch[key] = items
@@ -468,9 +468,7 @@ if __name__ == "__main__":
     with open("../../config/example-v2025.2.0.yml") as cf:
         conf = yaml.load(cf, Loader=yaml.FullLoader)
 
-    conf = credit_main_parser(
-        conf, parse_training=True, parse_predict=False, print_summary=False
-    )
+    conf = credit_main_parser(conf, parse_training=True, parse_predict=False, print_summary=False)
     training_data_check(conf, print_summary=False)
 
     # options
