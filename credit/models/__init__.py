@@ -139,7 +139,9 @@ def load_model(conf, load_weights=False, model_name=False):
                     ckpt = os.path.join(save_loc, "checkpoint.pt")
 
             if not os.path.isfile(ckpt):
-                raise ValueError("No saved checkpoint exists. You must train a model first. Exiting.")
+                raise ValueError(
+                    "No saved checkpoint exists. You must train a model first. Exiting."
+                )
 
             logging.info(f"Loading a model with pre-trained weights from path {ckpt}")
 
@@ -152,7 +154,7 @@ def load_model(conf, load_weights=False, model_name=False):
 
         return model(**model_conf)
 
-    if model_type in ("crossformer-diffusion"):
+    elif model_type in ("crossformer-diffusion"):
         model, message = model_types[model_type]
         logger.info(message)
         diffusion_config = conf.get("model", {}).get("diffusion")
@@ -161,7 +163,9 @@ def load_model(conf, load_weights=False, model_name=False):
             self_condition = diffusion_config.pop("self_condition", False)
             condition = diffusion_config.pop("condition", True)
         else:
-            logger.warning(f"The diffusion details were not specified as model:diffusion, exiting")
+            logger.warning(
+                "The diffusion details were not specified as model:diffusion, exiting"
+            )
             sys.exit(0)
 
         if load_weights:
@@ -169,10 +173,13 @@ def load_model(conf, load_weights=False, model_name=False):
                 return model.load_model_name(conf, model_name=model_name)
             else:
                 return model.load_model(conf)
-            
-        return ModifiedGaussianDiffusion(model(**model_conf, self_condition=self_condition, condition=condition), **diffusion_config)
 
-    if model_type in ("unet-diffusion"):
+        return ModifiedGaussianDiffusion(
+            model(**model_conf, self_condition=self_condition, condition=condition),
+            **diffusion_config,
+        )
+
+    elif model_type in ("unet-diffusion"):
         model, message = model_types[model_type]
         logger.info(message)
         diffusion_config = conf.get("model", {}).get("diffusion")
@@ -181,7 +188,9 @@ def load_model(conf, load_weights=False, model_name=False):
             self_condition = diffusion_config.pop("self_condition", False)
             condition = diffusion_config.pop("condition", True)
         else:
-            logger.warning(f"The diffusion details were not specified as model:diffusion, exiting")
+            logger.warning(
+                "The diffusion details were not specified as model:diffusion, exiting"
+            )
             sys.exit(0)
 
         if load_weights:
@@ -189,9 +198,20 @@ def load_model(conf, load_weights=False, model_name=False):
                 return model.load_model_name(conf, model_name=model_name)
             else:
                 return model.load_model(conf)
-            
-        return ModifiedGaussianDiffusion(model(**model_conf, self_condition=self_condition, condition=condition), **diffusion_config)
 
+        return ModifiedGaussianDiffusion(
+            model(**model_conf, self_condition=self_condition, condition=condition),
+            **diffusion_config,
+        )
+    elif model_type in model_types:
+        model, message = model_types[model_type]
+        logger.info(message)
+        if load_weights:
+            if model_name:
+                return model.load_model_name(conf, model_name=model_name)
+            else:
+                return model.load_model(conf)
+        return model(**model_conf)
     else:
         msg = f"Model type {model_type} not supported. Exiting."
         logger.warning(msg)
