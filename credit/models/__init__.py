@@ -154,7 +154,7 @@ def load_model(conf, load_weights=False, model_name=False):
 
         return model(**model_conf)
 
-    elif model_type in ("crossformer-diffusion"):
+    elif model_type == "crossformer-diffusion":
         model, message = model_types[model_type]
         logger.info(message)
         diffusion_config = conf.get("model", {}).get("diffusion")
@@ -179,7 +179,7 @@ def load_model(conf, load_weights=False, model_name=False):
             **diffusion_config,
         )
 
-    elif model_type in ("unet-diffusion"):
+    elif model_type == "unet-diffusion":
         model, message = model_types[model_type]
         logger.info(message)
         diffusion_config = conf.get("model", {}).get("diffusion")
