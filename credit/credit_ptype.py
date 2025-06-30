@@ -37,6 +37,7 @@ class CreditPostProcessor:
         dpt_shape = self.data.Q_HEIGHT.shape
         dpt_values = np.empty(dpt_shape, dtype=np.float32)  
         time_values = self.data.time.values
+        
         for t_idx in range(len(time_values)):
             q_3d = self.data.Q_HEIGHT.isel(time=t_idx).values
             pressure_3d = self.data.P_HEIGHT.isel(time=t_idx).values
