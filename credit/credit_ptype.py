@@ -12,7 +12,7 @@ from metpy.calc import dewpoint_from_specific_humidity
 from metpy.units import units
 import logging
 class CreditPostProcessor:
-    def __init__(self,dataset: xr.Dataset)-> xr.Dataset:
+    def __init__(self)-> xr.Dataset:
         self.save_vars = [
                         'ML_u',
                          'ML_rain_ale',
@@ -31,16 +31,15 @@ class CreditPostProcessor:
                          'ML_cicep',
                          'ML_frzr',
                          'ML_cfrzr']
-        self.data = dataset
 
-    def dewpoint_temp(self):
-        dpt_shape = self.data.Q_HEIGHT.shape
+    def dewpoint_temp(self,dataset: xr.Dataset):
+        dpt_shape = dataset.Q_HEIGHT.shape
         dpt_values = np.empty(dpt_shape, dtype=np.float32)  
-        time_values = self.data.time.values
+        time_values = dataset.time.values
         
         for t_idx in range(len(time_values)):
-            q_3d = self.data.Q_HEIGHT.isel(time=t_idx).values
-            pressure_3d = self.data.P_HEIGHT.isel(time=t_idx).values
+            q_3d = dataset.Q_HEIGHT.isel(time=t_idx).values
+            pressure_3d = dataset.P_HEIGHT.isel(time=t_idx).values
             
             
             dew_point_3d = dewpoint_from_specific_humidity(
@@ -50,9 +49,9 @@ class CreditPostProcessor:
             
             dpt_values[t_idx, ...] = dew_point_3d
             
-        self.data['DPT_HEIGHT'] = xr.DataArray(
+        dataset['DPT_HEIGHT'] = xr.DataArray(
             dpt_values,
-            dims=self.data.Q_HEIGHT.dims,
+            dims=dataset.Q_HEIGHT.dims,
             attrs={
                 'long_name': 'Dew point temperature',
                 'units': 'C',
@@ -60,9 +59,9 @@ class CreditPostProcessor:
             }
         )
 
-        self.data['T_HEIGHT'] -= 273.15
-        self.data['T_HEIGHT'].attrs['units'] = 'C' 
-        return self.data
+        dataset['T_HEIGHT'] -= 273.15
+        dataset['T_HEIGHT'].attrs['units'] = 'C' 
+        return dataset
 
     def convert_longitude(self,lon):
         """ Convert longitude from -180-180 to 0-360"""
@@ -203,7 +202,7 @@ class CreditPostProcessor:
         return data
 
     def ptype_classification(self, dataset):
-        return dataset[self.save_vars]
+        return dataset[self.save_vars].expand_dims({'time': dataset.time.values})
     
     def write_to_netcdf(self,dataset,nc_filename, forecast_hour,conf):
         """Saves the processed data to a NetCDF file."""
