@@ -48,11 +48,12 @@ GFS initial timesteps on model levels are also available on
 The `gfs_init.py` program regrids the data onto the appropriate CREDIT grid and interpolates in
 the vertical from the GFS to selected CREDIT ERA5 hybrid sigma-pressure levels. 
 
-> [!IMPORTANT]                                                                          
-> `gfs_init.py` requires xesmf, which depends on the [ESMF](https://github.com/esmf-org/esmf) suite 
-> and cannot be installed from PyPI. The easist way to install xesmf without messing up your CREDIT
-> environment is to run `conda install -c conda-forge esmf esmpy` then `pip install xesmf` after building
-> your CREDIT environment first. 
+:::{important}                                                                          
+`gfs_init.py` requires xesmf, which depends on the [ESMF](https://github.com/esmf-org/esmf) suite 
+and cannot be installed from PyPI. The easist way to install xesmf without messing up your CREDIT
+environment is to run `conda install -c conda-forge esmf esmpy` then `pip install xesmf` after building
+your CREDIT environment first. 
+:::
 
 Realtime rollouts are handled by `applications/rollout_realtime.py`. Update the paths in the 
 data section of the config file to point to the GFS initial conditions zarr file. `rollout_realtime.py`
