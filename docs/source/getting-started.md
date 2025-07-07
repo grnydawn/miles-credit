@@ -31,11 +31,13 @@ git clone git@github.com:NCAR/miles-credit.git
 cd miles-credit
 ./create_derecho_env.sh
 ```
-> [!IMPORTANT] 
-> The credit conda environment requires multiple gigabytes of space. Use the `gladequota` command
-> to verify that you have sufficient space in your home or work directories before installing.
-> You can specify where to install your conda environments in a `.condarc` file with the section
-> `envs_dirs`. 
+
+:::{important}
+The credit conda environment requires multiple gigabytes of space. Use the `gladequota` command
+to verify that you have sufficient space in your home or work directories before installing.
+You can specify where to install your conda environments in a `.condarc` file with the section
+`envs_dirs`. 
+:::
 
 ## Installation from Scratch
 See <project:installation.md> for detailed instructions on building CREDIT and its 
