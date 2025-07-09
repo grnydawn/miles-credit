@@ -39,9 +39,9 @@ You can specify where to install your conda environments in a `.condarc` file wi
 `envs_dirs`. 
 :::
 
-## Installation from Scratch
+## Installation from source
 See <project:installation.md> for detailed instructions on building CREDIT and its 
-dependencies from scratch or for building CREDIT on the Derecho supercomputer.
+dependencies from source or for building CREDIT on the Derecho supercomputer.
 
 ## Running a pretrained model
 See <project:Inference.md> for more details on how to run one of the pretrained CREDIT models.
