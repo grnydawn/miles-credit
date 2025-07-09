@@ -24,7 +24,7 @@ pip install -e .
 ```
 
 :::{important}
-macOS users will need to ensure that the required compilers are present and properly configured before installing mile-credit.  See this [note in the pySTEPS documentation](https://pysteps.readthedocs.io/en/latest/user_guide/install_pysteps.html#osx-users-gcc-compiler) for details.
+macOS users will need to ensure that the required compilers are present and properly configured before installing mile-credit for versions requiring pySTEPS (miles-credit > 2025.2.0).  See this [note in the pySTEPS documentation](https://pysteps.readthedocs.io/en/latest/user_guide/install_pysteps.html#osx-users-gcc-compiler) for details.
 :::
 
 ## Installation on Derecho
