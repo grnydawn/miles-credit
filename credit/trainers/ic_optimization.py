@@ -282,6 +282,7 @@ class Trainer(BaseTrainer):
         distributed = True if conf["trainer"]["mode"] in ["fsdp", "ddp"] else False
         forecast_length = conf["data"]["forecast_len"]
         ensemble_size = conf["trainer"].get("ensemble_size", 1)
+        precision = conf["trainer"].get("precision", "float32")
         conf["save_loc"] = save_loc = os.path.expandvars(conf["save_loc"])
         if ensemble_size > 1:
             logger.info(f"ensemble training with ensemble_size {ensemble_size}")
@@ -368,6 +369,8 @@ class Trainer(BaseTrainer):
             )
 
         # batch_group_generator = tqdm.tqdm(range(batches_per_epoch), total=batches_per_epoch, leave=True)
+        if precision == "float64":
+            self.model = self.model.double()
 
         # Set model to evaluation mode and freeze its parameters
         self.model.eval()
@@ -375,7 +378,6 @@ class Trainer(BaseTrainer):
             param.requires_grad = False
 
         dl = TimeStepper(trainloader.dataset)
-        # results_dict = defaultdict(list)
 
         for idx in range(batches_per_epoch):
             # idx = random.randint(0, len(trainloader.dataset) - conf["data"]["forecast_len"] + 1)
@@ -389,7 +391,10 @@ class Trainer(BaseTrainer):
             else:
                 x0 = reshape_only(batch["x"]).to(self.device)
 
-            x0 = x0.double().requires_grad_(True)
+            if precision == "float64":
+                x0 = x0.double()
+
+            x0 = x0.requires_grad_(True)
 
             # Create optimizer for x0 (this is what we're optimizing)
             optimizer = torch.optim.AdamW(
@@ -401,7 +406,7 @@ class Trainer(BaseTrainer):
 
             # Progressive window optimization
             current_window_size = conf["trainer"]["starting_window_size"]  # Start with 2 days as per paper
-            max_window_size = conf["data"]["forecast_len"]
+            max_window_size = conf["data"]["forecast_len"] + 1
             batch_iterations = conf["trainer"]["batch_iterations"]
             window_size = conf["trainer"]["window_size"]
             num_windows = (max_window_size - current_window_size) // window_size + 1
@@ -410,7 +415,7 @@ class Trainer(BaseTrainer):
             scheduler = CosineAnnealingLR(
                 optimizer,
                 T_max=num_windows * batch_iterations - 1,
-                eta_min=1e-6 * conf["trainer"]["learning_rate"],
+                eta_min=1e-4 * conf["trainer"]["learning_rate"],
             )
             # scheduler = CosineAnnealingWarmRestarts(
             #     optimizer,
@@ -456,6 +461,8 @@ class Trainer(BaseTrainer):
                             x_forcing_batch = batch["x_forcing_static"].to(self.device).permute(0, 2, 1, 3, 4)
                             if ensemble_size > 1:
                                 x_forcing_batch = torch.repeat_interleave(x_forcing_batch, ensemble_size, 0)
+                            if precision == "float64":
+                                x_forcing_batch = x_forcing_batch.double()
                             x = torch.cat((x, x_forcing_batch), dim=1)
 
                         # Clamp if needed
@@ -463,7 +470,6 @@ class Trainer(BaseTrainer):
                             x = torch.clamp(x, min=clamp_min, max=clamp_max)
 
                         # Predict with the model
-                        x = x.float()
                         with torch.autocast(device_type="cuda", enabled=amp):
                             y_pred = (
                                 self.model(x, forecast_step=forecast_step - 1)
@@ -505,10 +511,18 @@ class Trainer(BaseTrainer):
                                 y = torch.clamp(y, min=clamp_min, max=clamp_max)
 
                             with torch.autocast(enabled=amp, device_type="cuda"):
-                                loss = criterion(y.double(), y_pred.double()).mean()
+                                if precision == "float64":
+                                    y = y.double()
+                                loss = criterion(y, y_pred).mean()
                                 total_loss += loss
 
-                            # print(forecast_step, current_window_size, loss.item())
+                            # print(
+                            #     forecast_step,
+                            #     current_window_size,
+                            #     max_window_size,
+                            #     loss.item(),
+                            #     current_window_size <= (max_window_size + 1),
+                            # )
 
                             accum_log(logs, {"loss": loss.item()})
 
@@ -521,15 +535,15 @@ class Trainer(BaseTrainer):
                         if x.shape[2] == 1:
                             # Single timestep input
                             if "y_diag" in batch:
-                                x = y_pred[:, :-varnum_diag, ...].detach()
+                                x = y_pred[:, :-varnum_diag, ...]  # .detach()
                             else:
-                                x = y_pred.detach()
+                                x = y_pred  # .detach()
                         else:
                             # Multi-timestep input
                             if static_dim_size == 0:
-                                x_detach = x[:, :, 1:, ...].detach()
+                                x_detach = x[:, :, 1:, ...]  # .detach()
                             else:
-                                x_detach = x[:, :-static_dim_size, 1:, ...].detach()
+                                x_detach = x[:, :-static_dim_size, 1:, ...]  # .detach()
 
                             if "y_diag" in batch:
                                 x = torch.cat([x_detach, y_pred[:, :-varnum_diag, ...]], dim=2)
@@ -593,13 +607,7 @@ class Trainer(BaseTrainer):
                     # agg the results
                     df = pd.DataFrame.from_dict(results_dict).reset_index()
                     cond = df["train_forecast_len"] == current_window_size
-                    # to_print = "Epoch: {} IC: {} train_loss: {:.12f} forecast_len: {:.1f}".format(
-                    #     epoch,
-                    #     idx,
-                    #     np.mean(df["train_loss"][cond]),
-                    #     int(current_window_size),
-                    # )
-                    to_print = "Epoch: {} IC {}: train_loss: {:.6f} train_acc: {:.6f} train_mae: {:.6f} forecast_len: {:.1f}".format(
+                    to_print = "Epoch: {} IC {}: train_loss: {:.12f} train_acc: {:.12f} train_mae: {:.12f} forecast_len: {:.1f}".format(
                         epoch,
                         idx,
                         np.mean(df["train_loss"][cond]),
@@ -617,18 +625,17 @@ class Trainer(BaseTrainer):
                     # anneal the learning rate
                     scheduler.step()
 
+                    # Save the metrics df
+                    df.to_csv(os.path.join(f"{save_loc}", f"training_log_{datetime[0].item()}.csv"), index=False)
+
                 # Expand window size (following paper's X-day (3-day) increments)
                 current_window_size += window_size
-                current_window_size = min(current_window_size, max_window_size + 1)
+                # current_window_size = min(current_window_size, max_window_size)
 
                 # Optionally reduce learning rate for longer windows (14 days at 6 hour resolution)
                 if current_window_size > 14 * 4:
                     for param_group in optimizer.param_groups:
                         param_group["lr"] *= 0.5  # Reduce learning rate as in paper
-
-            # Save the metrics df
-            df = pd.DataFrame.from_dict(results_dict).reset_index()
-            df.to_csv(os.path.join(f"{save_loc}", f"training_log_{datetime[0].item()}.csv"), index=False)
 
             # Save x optimized first
             _ = result_processor.process(x0.detach().cpu(), datetime[0], save_datetimes, "optimized")
