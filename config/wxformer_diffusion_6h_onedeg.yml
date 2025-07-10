@@ -140,7 +140,7 @@ trainer:
     update_learning_rate: False
     
     # learning rate
-    learning_rate: 1.0e-04
+    learning_rate: 1.0e-03
 
     # L2 regularization on trained weights
     # weight_decay: 0 --> turn-off L2 reg
@@ -152,8 +152,8 @@ trainer:
     valid_batch_size: 16
 
     # number of batches per epoch for training and validation
-    batches_per_epoch: 100 # Set to 0 to use len(dataloader)
-    valid_batches_per_epoch: 10
+    batches_per_epoch: 0 # Set to 0 to use len(dataloader)
+    valid_batches_per_epoch: 50
     # early stopping
     stopping_patience: 5000 
     # True: do not validate, always save weights
@@ -163,7 +163,7 @@ trainer:
     start_epoch: 0
     # the trainer will stop after iterating a given number of epochs
     # this works for any start_epoch and reload_epoch: True
-    num_epoch: 10
+    num_epoch: 1
     # epcoh is saved in the checkpot.pt, this option reads the last epoch 
     # of the previous job and continue from there
     # useful for epoch-dependent schedulers

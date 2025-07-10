@@ -349,7 +349,7 @@ class GaussianDiffusion(Module):
 
         ret = img if not return_all_timesteps else torch.stack(imgs, dim=1)
 
-        ret = self.unnormalize(ret)
+        # ret = self.unnormalize(ret)
         return ret
 
     @torch.inference_mode()
@@ -412,7 +412,7 @@ class GaussianDiffusion(Module):
             # Slice the array with the selected timesteps
             ret = ret[:, timesteps, :, :]
 
-        ret = self.unnormalize(ret)
+        # ret = self.unnormalize(ret)
         return ret
 
     @torch.inference_mode()
@@ -519,7 +519,7 @@ class GaussianDiffusion(Module):
         assert h == img_size[0] and w == img_size[1], f"height and width of image must be {img_size}"
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
 
-        img = self.normalize(img)
+        # img = self.normalize(img)
         return self.p_losses(img, t, x_cond, *args, **kwargs)
 
 
@@ -553,7 +553,7 @@ class ModifiedGaussianDiffusion(GaussianDiffusion):
         t = torch.randint(0, self.num_timesteps, (b,), device=device).long()
 
         # Normalize the image before passing it through the model
-        img = self.normalize(img)
+        # img = self.normalize(img)
 
         # Call the model's loss function (or whatever other method you want to use)
         return self.p_losses(img, t, x_cond, *args, **kwargs)
