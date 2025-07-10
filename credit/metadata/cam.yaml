@@ -86,7 +86,7 @@ PRECT:
     long_name: "Total precipitation rate"
     standard_name: "precipitation_rate"
     short_name: "prect"
-    units: "m**-2 s**-1"
+    units: "m s**-1"
     _FillValue: 9.999e+20
 
 CLDHGH:
