@@ -605,10 +605,13 @@ class CrossFormer(BaseModel):
 
         x = self.up_block1(x)
         x = torch.cat([x, encodings[2]], dim=1)
+
         x = self.up_block2(x)
         x = torch.cat([x, encodings[1]], dim=1)
+
         x = self.up_block3(x)
         x = torch.cat([x, encodings[0]], dim=1)
+
         x = self.up_block4(x)
 
         if self.use_padding:
