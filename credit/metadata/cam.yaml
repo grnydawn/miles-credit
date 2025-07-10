@@ -48,14 +48,14 @@ SST:
     _FillValue: 9.999e+20
 
 TS:
-    long_name: "Surface skin temperature"
+    long_name: "Surface temperature (radiative)"
     standard_name: "surface_temperature"
     short_name: "ts"
     units: "K"
     _FillValue: 9.999e+20
 
 SOILWATER_10CM:
-    long_name: "Soil moisture (top 10 cm)"
+    long_name: "Soil liquid water + ice in top 10cm of soil (veg land units only)"
     standard_name: "volumetric_soil_moisture_content"
     short_name: "soilw_10cm"
     units: "m3 m**-3"
@@ -84,9 +84,9 @@ co2vmr_3d:
 
 PRECT:
     long_name: "Total precipitation rate"
-    standard_name: "precipitation_flux"
+    standard_name: "precipitation_rate"
     short_name: "prect"
-    units: "kg m**-2 s**-1"
+    units: "m**-2 s**-1"
     _FillValue: 9.999e+20
 
 CLDHGH:
