@@ -23,6 +23,10 @@ cd miles-credit
 pip install -e .
 ```
 
+:::{important}
+macOS users will need to ensure that the required compilers are present and properly configured before installing mile-credit for versions requiring pySTEPS (miles-credit > 2025.2.0).  See this [note in the pySTEPS documentation](https://pysteps.readthedocs.io/en/latest/user_guide/install_pysteps.html#osx-users-gcc-compiler) for details.
+:::
+
 ## Installation on Derecho
 If you want to build a conda environment and install a Derecho-compatible version of PyTorch, run
 the `create_derecho_env.sh` script. 
@@ -39,9 +43,9 @@ You can specify where to install your conda environments in a `.condarc` file wi
 `envs_dirs`. 
 :::
 
-## Installation from Scratch
+## Installation from source
 See <project:installation.md> for detailed instructions on building CREDIT and its 
-dependencies from scratch or for building CREDIT on the Derecho supercomputer.
+dependencies from source or for building CREDIT on the Derecho supercomputer.
 
 ## Running a pretrained model
 See <project:Inference.md> for more details on how to run one of the pretrained CREDIT models.
