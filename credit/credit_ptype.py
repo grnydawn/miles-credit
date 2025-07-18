@@ -1,5 +1,6 @@
 import numpy as np
 import os
+os.environ["KERAS_BACKEND"] = "torch"
 from numba import njit
 import xarray as xr
 from tqdm import tqdm
@@ -12,7 +13,6 @@ from mlguess.keras.losses import evidential_cat_loss
 from metpy.calc import dewpoint_from_specific_humidity
 from metpy.units import units
 import logging
-os.environ["KERAS_BACKEND"] = "torch"
 class CreditPostProcessor:
     def __init__(self)-> xr.Dataset:
         self.save_vars = [
