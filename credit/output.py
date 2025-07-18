@@ -204,7 +204,7 @@ def save_netcdf_increment(
                 ds_output = credit_processor.dewpoint_temp(pressure_interp)
                 subset_array = credit_processor.extract_variable_levels(ds_output)
                 
-                scaler, input_features = credit_processor.load_scalar(conf['ptype']["input_scaler_file"])
+                scaler, input_features = credit_processor.load_scaler(conf['ptype']["input_scaler_file"])
                 transformed_data = credit_processor.transform_data(subset_array, scaler, input_features)
                 ptype_model = credit_processor.load_model(conf['ptype']['ML_model_path'])
                 

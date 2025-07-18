@@ -1,4 +1,6 @@
 import numpy as np
+import os
+os.environ["KERAS_BACKEND"] = "torch"
 from numba import njit
 import xarray as xr
 from tqdm import tqdm
@@ -120,7 +122,7 @@ class CreditPostProcessor:
         return data_array.reshape(n_vars, -1).T
         
         
-    def load_scalar(self,scaler_path):
+    def load_scaler(self,scaler_path):
         """
         Load bridgescaler object.
         Args:
