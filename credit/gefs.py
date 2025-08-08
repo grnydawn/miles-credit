@@ -53,28 +53,64 @@ def load_member_tiles(path: str, init_date_str: str, member: str, variables: str
         "v_s",
     ]
     all_surface_variables = [
-        "ps",
-        "w",
-        "zh",
-        "t",
-        "delp",
-        "sphum",
-        "liq_wat",
-        "o3mr",
-        "ice_wat",
-        "rainwat",
-        "snowwat",
-        "graupel",
-        "u_w",
-        "v_w",
-        "u_s",
-        "v_s",
+        "slmsk",
+        "tsea",
+        "sheleg",
+        "tg3",
+        "zorl",
+        "alvsf",
+        "alvwf",
+        "alnsf",
+        "alnwf",
+        "facsf",
+        "facwf",
+        "vfrac",
+        "canopy",
+        "f10m",
+        "t2m",
+        "q2m",
+        "vtype",
+        "stype",
+        "uustar",
+        "ffmm",
+        "ffhh",
+        "hice",
+        "fice",
+        "tisfc",
+        "tprcp",
+        "srflag",
+        "snwdph",
+        "shdmin",
+        "shdmax",
+        "slope",
+        "snoalb",
+        "stc",
+        "smc",
+        "slc",
+        "tref",
+        "z_c",
+        "c_0",
+        "c_d",
+        "w_0",
+        "w_d",
+        "xt",
+        "xs",
+        "xu",
+        "xv",
+        "xz",
+        "zm",
+        "xtts",
+        "xzts",
+        "d_conv",
+        "ifd",
+        "dt_cool",
+        "qrain",
     ]
     select_ua_variables = np.intersect1d(all_ua_variables, variables)
     select_surface_variables = np.intersect1d(all_surface_variables, variables)
     for t in range(1, num_tiles + 1):
-        tile_ua_file = join(out_member_path, f"gfs_data.tile{t:02d}.nc")
-        tile_sfc_file = join(out_member_path, f"sfc_data.tile{t:02d}.nc")
+        tile_ua_file = join(out_member_path, f"gfs_data.tile{t:d}.nc")
+        tile_sfc_file = join(out_member_path, f"sfc_data.tile{t:d}.nc")
         if len(select_ua_variables) > 0:
             with xr.open_dataset(tile_ua_file) as ua_ds:
                 member_tiles.append(ua_ds[select_ua_variables].load())
@@ -273,10 +309,13 @@ def process_member(
     if "u_s" in variables and "v_w" in variables:
         for t in range(len(member_tiles)):
             member_tiles[t] = unstagger_winds(member_tiles[t])
+    print(member + ": Regrid")
     regrid_ds = regrid_member(member_tiles, weight_file)
     regrid_ds = combine_microphysics_terms(regrid_ds)
+    print(member + ": Interpolate vertical levels")
     interp_ds = interpolate_vertical_levels(regrid_ds, member_path, vertical_level_file)
     interp_ds = rename_variables(interp_ds, rename_dict_file, meta_file)
     out_file = f"gefs_cam_grid_{member}.nc"
+    print(member + ": Save to netcdf")
     interp_ds.to_netcdf(join(out_path, out_file))
     return

@@ -76,8 +76,8 @@ def main():
     rename_dict_file = args.rename_dict_file
     meta_file = args.meta_file
     variables = args.variables.split(",")
-    download_gefs_run(init_date_str, out_path, n_pert_members)
-    member_names = ["c0"] + [f"p{m:02d}" for m in range(n_pert_members)]
+    download_gefs_run(init_date_str, download_path, n_pert_members)
+    member_names = ["c00"] + [f"p{m:02d}" for m in range(1, n_pert_members + 1)]
     init_date_path = init_date.strftime("gefs.%Y%m%d/%H")
     full_out_path = join(out_path, init_date_path)
     if not exists(full_out_path):
