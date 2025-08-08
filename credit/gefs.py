@@ -6,6 +6,8 @@ import pandas as pd
 from os.path import join
 from scipy.sparse import csr_matrix
 import logging
+import yaml
+from credit.interp import create_pressure_grid, interp_hybrid_to_hybrid_levels
 
 
 def download_gefs_run(init_date_str, out_path, n_pert_members=30):
@@ -118,6 +120,7 @@ def unstagger_winds(ds, u_var="u_s", v_var="v_w", out_u="u_a", out_v="v_a"):
         ),
         dims=("lev", "y", "x"),
     )
+    ds = ds.drop_vars([u_var, v_var])
     return ds
 
 
@@ -165,18 +168,115 @@ def regrid_member(member_tiles, regrid_weights_file):
     return regrid_ds
 
 
+def interpolate_vertical_levels(
+    regrid_ds,
+    member_path,
+    vertical_level_file,
+    surface_pressure_var="sp",
+    a_name="hyai",
+    b_name="hybi",
+    vert_dim="lev",
+):
+    """
+
+    Args:
+        regrid_ds:
+        member_path:
+        vertical_level_file:
+        surface_pressure_var:
+        a_name:
+        b_name:
+        vert_dim:
+
+    Returns:
+
+    """
+    gefs_vertical_level_file = join(member_path, "gfs_ctrl.nc")
+
+    with xr.open_dataset(gefs_vertical_level_file) as gefs_vert_ds:
+        gefs_a = gefs_vert_ds["vcoord"][0].values
+        gefs_b = gefs_vert_ds["vcoord"][1].values
+    with xr.open_dataset(vertical_level_file) as dest_vert_ds:
+        dest_a = dest_vert_ds[a_name]
+        dest_b = dest_vert_ds[b_name]
+    gefs_pressure_grid, gefs_pressure_half_grid = create_pressure_grid(
+        regrid_ds[surface_pressure_var].values, gefs_a, gefs_b
+    )
+    dest_pressure_grid, dest_pressure_half_grid = create_pressure_grid(
+        regrid_ds[a_name].values, dest_a, dest_b
+    )
+    interp_ds = xr.Dataset(
+        coords=dict(
+            levels=np.arange(dest_pressure_grid.shape[0]),
+            lat=regrid_ds["lat"],
+            lon=regrid_ds["lon"],
+        )
+    )
+    for variable in regrid_ds.data_vars:
+        if vert_dim in regrid_ds[variable].dims:
+            interp_ds[variable] = xr.DataArray(
+                interp_hybrid_to_hybrid_levels(
+                    regrid_ds[variable].values, gefs_pressure_grid, dest_pressure_grid
+                ),
+                dims=("levels", "lat", "lon"),
+                name=variable,
+            )
+        else:
+            interp_ds[variable] = regrid_ds[variable]
+    return interp_ds
+
+
+def combine_microphysics_terms(
+    regrid_ds,
+    microphysics_vars=("sphum", "liq_wat", "ice_wat", "rainwat", "snowwat", "graupel"),
+    total_var="Qtot",
+):
+    regrid_ds[total_var] = xr.DataArray(
+        regrid_ds[microphysics_vars[0]].values,
+        dims=regrid_ds[microphysics_vars[0]].dims,
+    )
+    for mpv in microphysics_vars[1:]:
+        regrid_ds[total_var][:] += regrid_ds[mpv].values
+    return regrid_ds
+
+
+def rename_variables(ds, name_dict_file, meta_file):
+    if name_dict_file != "":
+        with open(name_dict_file, "r") as name_dict_obj:
+            name_dict = yaml.safe_load(name_dict_obj)
+    else:
+        name_dict = {}
+    new_ds = ds.rename(name_dict)
+    if meta_file != "":
+        with open(meta_file, "r") as meta_file_obj:
+            meta_dict = yaml.safe_load(meta_file_obj)
+    else:
+        meta_dict = {}
+    for var in new_ds.data_vars:
+        if var in meta_dict.keys():
+            new_ds[var].attrs = meta_dict[var]
+    return new_ds
+
+
 def process_member(
     member,
     member_path=None,
     out_path=None,
     init_date_str=None,
     variables=None,
-    weight_file=None,
+    weight_file="",
+    vertical_level_file="",
+    rename_dict_file="",
+    meta_file="",
 ):
     member_tiles = load_member_tiles(member_path, init_date_str, member, variables)
     if "u_s" in variables and "v_w" in variables:
         for t in range(len(member_tiles)):
             member_tiles[t] = unstagger_winds(member_tiles[t])
-    regrid_member(member_tiles, weight_file)
-
+    regrid_ds = regrid_member(member_tiles, weight_file)
+    regrid_ds = combine_microphysics_terms(regrid_ds)
+    interp_ds = interpolate_vertical_levels(regrid_ds, member_path, vertical_level_file)
+    interp_ds = rename_variables(interp_ds, rename_dict_file, meta_file)
+    out_file = f"gefs_cam_grid_{member}.nc"
+    interp_ds.to_netcdf(join(out_path, out_file))
     return
