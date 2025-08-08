@@ -116,12 +116,21 @@ def load_member_tiles(path: str, init_date_str: str, member: str, variables: str
                 member_tiles.append(ua_ds[select_ua_variables].load())
             if len(select_surface_variables) > 0:
                 with xr.open_dataset(tile_sfc_file) as sfc_ds:
-                    member_tiles[-1] = xr.merge(
-                        [member_tiles[-1], sfc_ds[select_surface_variables].load()]
-                    )
+                    for sfc_var in select_surface_variables:
+                        member_tiles[-1][sfc_var] = (
+                            sfc_ds[sfc_var][0]
+                            .rename_dims({"yaxis_1": "lat", "xaxis_1": "lon"})
+                            .load()
+                        )
+
         elif len(select_surface_variables) > 0:
             with xr.open_dataset(tile_sfc_file) as sfc_ds:
-                member_tiles.append(sfc_ds[select_surface_variables].load())
+                member_tiles.append(
+                    sfc_ds[select_surface_variables]
+                    .sel(Time=1)
+                    .rename_dims({"yaxis_1": "lat", "xaxis_1": "lon"})
+                    .load()
+                )
         else:
             raise ValueError("You did not request any valid GEFS variables.")
     return member_tiles
