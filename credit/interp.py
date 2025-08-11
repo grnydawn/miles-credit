@@ -94,6 +94,7 @@ def full_state_pressure_interpolation(
             a_half_full = mod_lev_ds[a_half_name].values * P0
         else:
             a_model = mod_lev_ds[a_model_name].values[valid_levels]
+            a_half_full = mod_lev_ds[a_half_name].values
         a_model = mod_lev_ds[a_model_name].values[valid_levels]
         b_model = mod_lev_ds[b_model_name].values[valid_levels]
         b_half_full = mod_lev_ds[b_half_name].values
@@ -166,7 +167,7 @@ def full_state_pressure_interpolation(
             data=np.zeros(height_shape, dtype=np.float32),
             coords=coords_height,
             dims=height_dims,
-            name=var + height_ending,
+            name="P" + height_ending,
         )
 
     for t, time in enumerate(state_dataset[time_var]):
