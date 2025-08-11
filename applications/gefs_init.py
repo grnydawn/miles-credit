@@ -49,7 +49,7 @@ def main():
         "-v",
         "--variables",
         type=str,
-        default="ps,t,sphum,liq_wat,ice_wat,rain_wat,snowwat,graupel,u_s,v_w,slmsk,tsea,fice,t2m,q2m",
+        default="ps,t,sphum,liq_wat,ice_wat,rainwat,snowwat,graupel,u_s,v_w,slmsk,tsea,fice,t2m,q2m",
         help="Variables to use separated by commas.",
     )
     parser.add_argument(
@@ -66,6 +66,14 @@ def main():
         default="",
         help="YAML file containing metadata for regridded variables.",
     )
+    parser.add_argument(
+        "-u",
+        "--vertical",
+        type=str,
+        default="",
+        help="netCDF file containing vertical.",
+    )
+
     args = parser.parse_args()
     init_date_str = args.date
     init_date = pd.Timestamp(init_date_str)
@@ -74,6 +82,7 @@ def main():
     weight_file = args.weights
     n_pert_members = args.members
     rename_dict_file = args.rename_dict_file
+    vertical_file = args.vertical
     meta_file = args.meta_file
     variables = args.variables.split(",")
     download_gefs_run(init_date_str, download_path, n_pert_members)
@@ -93,6 +102,7 @@ def main():
                 weight_file=weight_file,
                 rename_dict_file=rename_dict_file,
                 meta_file=meta_file,
+                vertical_level_file=vertical_file,
             ),
             member_names,
         )

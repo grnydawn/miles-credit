@@ -119,7 +119,7 @@ def load_member_tiles(path: str, init_date_str: str, member: str, variables: str
                     for sfc_var in select_surface_variables:
                         member_tiles[-1][sfc_var] = (
                             sfc_ds[sfc_var][0]
-                            .rename_dims({"yaxis_1": "lat", "xaxis_1": "lon"})
+                            .rename({"yaxis_1": "lat", "xaxis_1": "lon"})
                             .load()
                         )
 
@@ -128,7 +128,7 @@ def load_member_tiles(path: str, init_date_str: str, member: str, variables: str
                 member_tiles.append(
                     sfc_ds[select_surface_variables]
                     .sel(Time=1)
-                    .rename_dims({"yaxis_1": "lat", "xaxis_1": "lon"})
+                    .rename({"yaxis_1": "lat", "xaxis_1": "lon"})
                     .load()
                 )
         else:
@@ -137,39 +137,39 @@ def load_member_tiles(path: str, init_date_str: str, member: str, variables: str
 
 
 def unstagger_winds(ds, u_var="u_s", v_var="v_w", out_u="u_a", out_v="v_a"):
-    ds["lev"] = np.arange(ds.sizes["lev"]).astype(np.float32)
+    ds["lev"] = np.arange(ds.sizes["lev"])
     ds["lev"].attrs["axis"] = "Z"
-    ds["x"] = np.arange(ds.sizes["lon"])
-    ds["y"] = np.arange(ds.sizes["lon"])
-    ds["x"].attrs["axis"] = "X"
-    ds["y"].attrs["axis"] = "Y"
+    ds["lon"].attrs["axis"] = "X"
+    ds["lat"].attrs["axis"] = "Y"
     ds[out_u] = xr.DataArray(
         0.5 * ds[u_var][:, :-1, :].values + ds[u_var][:, 1:, :].values,
         coords=dict(
             lev=ds["lev"],
-            y=ds["y"],
-            x=ds["x"],
-            lat=(("y", "x"), ds["geolat"].values),
-            lon=(("y", "x"), ds["geolon"].values),
+            lat=ds["lat"],
+            lon=ds["lon"],
+            geolat=(("lat", "lon"), ds["geolat"].values),
+            geolon=(("lat", "lon"), ds["geolon"].values),
         ),
-        dims=("lev", "y", "x"),
+        dims=("lev", "lat", "lon"),
     )
     ds[out_v] = xr.DataArray(
         0.5 * ds[v_var][:, :, :-1].values + ds[v_var][:, :, 1:].values,
         coords=dict(
             lev=ds["lev"],
-            y=ds["y"],
-            x=ds["x"],
-            lat=(("y", "x"), ds["geolat"].values),
-            lon=(("y", "x"), ds["geolon"].values),
+            y=ds["lat"],
+            x=ds["lon"],
+            lat=(("lat", "lon"), ds["geolat"].values),
+            lon=(("lat", "lon"), ds["geolon"].values),
         ),
-        dims=("lev", "y", "x"),
+        dims=("lev", "lat", "lon"),
     )
     ds = ds.drop_vars([u_var, v_var])
     return ds
 
 
-def combine_tiles(member_tiles, flatten_dim="tile_y_x", coord_dims=("tile", "y", "x")):
+def combine_tiles(
+    member_tiles, flatten_dim="tile_lat_lon", coord_dims=("tile", "lat", "lon")
+):
     tiles_combined = xr.concat(member_tiles, dim="tile")
     tiles_stacked = tiles_combined.stack(**{flatten_dim: coord_dims})
     return tiles_stacked
@@ -180,10 +180,13 @@ def regrid_member(member_tiles, regrid_weights_file):
     with xr.open_dataset(regrid_weights_file) as regrid_ds:
         # Description of weight file at https://earthsystemmodeling.org/docs/release/latest/ESMF_refdoc/node3.html#SECTION03029300000000000000
         regrid_weights = csr_matrix(
-            (regrid_ds["S"].values, (regrid_ds["row"].values, regrid_ds["col"].values)),
-            shape=(regrid_ds.sizes["n_a"], regrid_ds.sizes["n_b"]),
+            (
+                regrid_ds["S"].values,
+                (regrid_ds["row"].values - 1, regrid_ds["col"].values - 1),
+            ),
+            shape=(regrid_ds.sizes["n_b"], regrid_ds.sizes["n_a"]),
         )
-        dst_dims = regrid_ds["dst_grid_dims"][::-1]
+        dst_dims = regrid_ds["dst_grid_dims"][::-1].values
         lon = regrid_ds["xc_b"].values.reshape(dst_dims)[0]
         lat = regrid_ds["yc_b"].values.reshape(dst_dims)[:, 0]
         lev = tiles_combined["lev"]
@@ -216,8 +219,10 @@ def regrid_member(member_tiles, regrid_weights_file):
 def interpolate_vertical_levels(
     regrid_ds,
     member_path,
+    init_date_str,
+    member,
     vertical_level_file,
-    surface_pressure_var="sp",
+    surface_pressure_var="ps",
     a_name="hyai",
     b_name="hybi",
     vert_dim="lev",
@@ -236,7 +241,11 @@ def interpolate_vertical_levels(
     Returns:
 
     """
-    gefs_vertical_level_file = join(member_path, "gfs_ctrl.nc")
+    init_date = pd.Timestamp(init_date_str)
+    init_date_path = init_date.strftime("gefs.%Y%m%d/%H")
+    out_member_path = join(member_path, init_date_path, member)
+
+    gefs_vertical_level_file = join(out_member_path, "gfs_ctrl.nc")
 
     with xr.open_dataset(gefs_vertical_level_file) as gefs_vert_ds:
         gefs_a = gefs_vert_ds["vcoord"][0].values
@@ -251,7 +260,7 @@ def interpolate_vertical_levels(
         regrid_ds[surface_pressure_var].values, gefs_a, gefs_b
     )
     dest_pressure_grid, dest_pressure_half_grid = create_pressure_grid(
-        regrid_ds[a_name].values, dest_a, dest_b
+        regrid_ds[surface_pressure_var].values, dest_a, dest_b
     )
     interp_ds = xr.Dataset(
         coords=dict(
@@ -325,7 +334,9 @@ def process_member(
     regrid_ds = regrid_member(member_tiles, weight_file)
     regrid_ds = combine_microphysics_terms(regrid_ds)
     print(member + ": Interpolate vertical levels")
-    interp_ds = interpolate_vertical_levels(regrid_ds, member_path, vertical_level_file)
+    interp_ds = interpolate_vertical_levels(
+        regrid_ds, member_path, init_date_str, member, vertical_level_file
+    )
     interp_ds = rename_variables(interp_ds, rename_dict_file, meta_file)
     out_file = f"gefs_cam_grid_{member}.nc"
     print(member + ": Save to netcdf")
