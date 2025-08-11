@@ -1,8 +1,11 @@
 u_a: U
 v_a: V
 t: T
-sp: PS
+ps: PS
 t2m: TREFHT
 tsea: TS
-slmask: LANDFRAC
+slmsk: LANDFRAC
 fice: ICEFRAC
+lat: latitude
+lon: longitude
+levels: level
