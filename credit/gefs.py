@@ -297,7 +297,7 @@ def combine_microphysics_terms(
     return regrid_ds
 
 
-def rename_variables(ds, name_dict_file, meta_file):
+def rename_variables(ds, name_dict_file, meta_file, init_date_str):
     if name_dict_file != "":
         with open(name_dict_file, "r") as name_dict_obj:
             name_dict = yaml.safe_load(name_dict_obj)
@@ -312,6 +312,9 @@ def rename_variables(ds, name_dict_file, meta_file):
     for var in new_ds.data_vars:
         if var in meta_dict.keys():
             new_ds[var].attrs = meta_dict[var]
+    init_date = pd.Timestamp(init_date_str)
+    new_ds["time"] = init_date
+    new_ds = new_ds.set_coords("time").expand_dims("time")
     return new_ds
 
 
@@ -337,7 +340,7 @@ def process_member(
     interp_ds = interpolate_vertical_levels(
         regrid_ds, member_path, init_date_str, member, vertical_level_file
     )
-    interp_ds = rename_variables(interp_ds, rename_dict_file, meta_file)
+    interp_ds = rename_variables(interp_ds, rename_dict_file, meta_file, init_date_str)
     out_file = f"gefs_cam_grid_{member}.nc"
     print(member + ": Save to netcdf")
     interp_ds.to_netcdf(join(out_path, out_file))
