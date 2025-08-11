@@ -84,13 +84,18 @@ def full_state_pressure_interpolation(
     path_to_file = os.path.abspath(os.path.dirname(__file__))
     model_level_file = os.path.join(path_to_file, model_level_file)
     pressure_levels = np.array(pressure_levels)
+    P0 = 100000
     with xr.open_dataset(model_level_file) as mod_lev_ds:
         valid_levels = np.isin(
             mod_lev_ds[level_var].values, state_dataset[level_var].values
         )
+        if a_model_name == "hyam":
+            a_model = mod_lev_ds[a_model_name].values[valid_levels] * P0
+            a_half_full = mod_lev_ds[a_half_name].values * P0
+        else:
+            a_model = mod_lev_ds[a_model_name].values[valid_levels]
         a_model = mod_lev_ds[a_model_name].values[valid_levels]
         b_model = mod_lev_ds[b_model_name].values[valid_levels]
-        a_half_full = mod_lev_ds[a_half_name].values
         b_half_full = mod_lev_ds[b_half_name].values
 
     pres_dims = (time_var, pres_var, lat_var, lon_var)
