@@ -31,6 +31,7 @@ def full_state_pressure_interpolation(
     b_model_name: str = "b_model",
     a_half_name: str = "a_half",
     b_half_name: str = "b_half",
+    P0: float = 1.0,
 ) -> xr.Dataset:
     """Interpolate the full state of the model to pressure and height coordinates.
 
@@ -76,7 +77,7 @@ def full_state_pressure_interpolation(
         b_model_name (str): Name of B weight at level midpoints in sigma coordinate formula. 'b_model' by default.
         a_half_name (str): Name of A weight at level interfaces in sigma coordinate formula. 'a_half' by default.
         b_half_name (str): Name of B weight at level interfaces in sigma coordinate formula. 'b_half' by default.
-
+        P0 (float): reference pressure if pressure needs to be scaled.
     Returns:
         pressure_ds (xr.Dataset): Dataset containing pressure interpolated variables.
 
@@ -84,7 +85,6 @@ def full_state_pressure_interpolation(
     path_to_file = os.path.abspath(os.path.dirname(__file__))
     model_level_file = os.path.join(path_to_file, model_level_file)
     pressure_levels = np.array(pressure_levels)
-    P0 = 100000
     with xr.open_dataset(model_level_file) as mod_lev_ds:
         valid_levels = np.isin(
             mod_lev_ds[level_var].values, state_dataset[level_var].values

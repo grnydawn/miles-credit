@@ -193,7 +193,6 @@ def regrid_member(member_tiles, regrid_weights_file):
         regrid_ds = xr.Dataset(coords=dict(lev=lev, lat=lat, lon=lon))
         ua_var_dim = (regrid_ds["lev"].size, regrid_ds["lat"].size, regrid_ds.lon.size)
         sfc_var_dim = (regrid_ds["lat"].size, regrid_ds["lon"].size)
-
         for variable in tiles_combined.data_vars:
             if "lev" in member_tiles[0][variable].dims:
                 regrid_ds[variable] = xr.DataArray(
@@ -201,7 +200,7 @@ def regrid_member(member_tiles, regrid_weights_file):
                     coords=dict(lev=lev, lat=lat, lon=lon),
                     name=variable,
                 )
-                for lev_index in tiles_combined["lev"]:
+                for lev_index in np.arange(tiles_combined["lev"].size):
                     regrid_ds[variable][lev_index] = (
                         regrid_weights @ tiles_combined[variable][lev_index].values
                     ).reshape(sfc_var_dim)
@@ -251,10 +250,7 @@ def interpolate_vertical_levels(
         gefs_a = gefs_vert_ds["vcoord"][0].values
         gefs_b = gefs_vert_ds["vcoord"][1].values
     with xr.open_dataset(vertical_level_file) as dest_vert_ds:
-        if a_name == "hyai":
-            dest_a = dest_vert_ds[a_name].values * 100000
-        else:
-            dest_a = dest_vert_ds[a_name].values
+        dest_a = dest_vert_ds[a_name].values
         dest_b = dest_vert_ds[b_name].values
     gefs_pressure_grid, gefs_pressure_half_grid = create_pressure_grid(
         regrid_ds[surface_pressure_var].values, gefs_a, gefs_b
@@ -268,6 +264,12 @@ def interpolate_vertical_levels(
             lat=regrid_ds["lat"],
             lon=regrid_ds["lon"],
         )
+    )
+    interp_ds["P"] = xr.DataArray(
+        dest_pressure_grid,
+        coords=dict(
+            levels=interp_ds["levels"], lat=interp_ds["lat"], lon=interp_ds["lon"]
+        ),
     )
     for variable in regrid_ds.data_vars:
         if vert_dim in regrid_ds[variable].dims:
