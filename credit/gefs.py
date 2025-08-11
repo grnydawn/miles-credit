@@ -242,7 +242,10 @@ def interpolate_vertical_levels(
         gefs_a = gefs_vert_ds["vcoord"][0].values
         gefs_b = gefs_vert_ds["vcoord"][1].values
     with xr.open_dataset(vertical_level_file) as dest_vert_ds:
-        dest_a = dest_vert_ds[a_name]
+        if a_name == "hyai":
+            dest_a = dest_vert_ds[a_name] * 100000
+        else:
+            dest_a = dest_vert_ds[a_name]
         dest_b = dest_vert_ds[b_name]
     gefs_pressure_grid, gefs_pressure_half_grid = create_pressure_grid(
         regrid_ds[surface_pressure_var].values, gefs_a, gefs_b
