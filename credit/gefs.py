@@ -252,10 +252,10 @@ def interpolate_vertical_levels(
         gefs_b = gefs_vert_ds["vcoord"][1].values
     with xr.open_dataset(vertical_level_file) as dest_vert_ds:
         if a_name == "hyai":
-            dest_a = dest_vert_ds[a_name] * 100000
+            dest_a = dest_vert_ds[a_name].values * 100000
         else:
-            dest_a = dest_vert_ds[a_name]
-        dest_b = dest_vert_ds[b_name]
+            dest_a = dest_vert_ds[a_name].values
+        dest_b = dest_vert_ds[b_name].values
     gefs_pressure_grid, gefs_pressure_half_grid = create_pressure_grid(
         regrid_ds[surface_pressure_var].values, gefs_a, gefs_b
     )
@@ -309,12 +309,14 @@ def rename_variables(ds, name_dict_file, meta_file, init_date_str):
             meta_dict = yaml.safe_load(meta_file_obj)
     else:
         meta_dict = {}
-    for var in new_ds.data_vars:
-        if var in meta_dict.keys():
-            new_ds[var].attrs = meta_dict[var]
     init_date = pd.Timestamp(init_date_str)
     new_ds["time"] = init_date
     new_ds = new_ds.set_coords("time").expand_dims("time")
+    new_ds = new_ds.drop_vars(["Time"])
+    for var in new_ds.variables:
+        if var in meta_dict.keys():
+            new_ds[var].attrs = meta_dict[var]
+    new_ds.attrs["Conventions"] = "CF-1.7"
     return new_ds
 
 
