@@ -46,7 +46,8 @@ dependencies = [
     "fsspec",
     "gcsfs",
     "miles-guess",
-    "keras"
+    "keras",
+    "metpy"
    ]
 
 [tool.setuptools]
