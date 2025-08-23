@@ -4,6 +4,7 @@ from collections import defaultdict
 
 import numpy as np
 import torch
+import torch.profiler
 import torch.distributed as dist
 import torch.fft
 import tqdm
@@ -176,243 +177,269 @@ class Trainer(BaseTrainer):
 
         dl = cycle(trainloader)
         results_dict = defaultdict(list)
-        for steps in range(batches_per_epoch):
-            logs = {}
-            loss = 0
-            stop_forecast = False
-            y_pred = None  # Place holder that gets updated after first roll-out
-            while not stop_forecast:
-                batch = next(dl)
-                forecast_step = batch["forecast_step"].item()
-                if forecast_step == 1:
-                    # Initialize x and x_surf with the first time step
-                    if "x_surf" in batch:
-                        # combine x and x_surf
-                        # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon)
-                        # output: (batch_num, var, time, lat, lon), 'x' first and then 'x_surf'
-                        x = concat_and_reshape(batch["x"], batch["x_surf"]).to(
-                            self.device
-                        )  # .float()
-                    else:
-                        # no x_surf
-                        x = reshape_only(batch["x"]).to(self.device)  # .float()
 
-                    # --------------------------------------------- #
-                    # ensemble x and x_surf on initialization
-                    # copies each sample in the batch ensemble_size number of times.
-                    # if samples in the batch are ordered (x,y,z) then the result tensor is (x, x, ..., y, y, ..., z,z ...)
-                    # WARNING: needs to be used with a loss that can handle x with b * ensemble_size samples and y with b samples
-                    if ensemble_size > 1:
-                        x = torch.repeat_interleave(x, ensemble_size, 0)
+        debug_count = 0
+        DEBUG_MAX = 5
 
-                # add forcing and static variables (regardless of fcst hours)
-                if "x_forcing_static" in batch:
-                    # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
-                    x_forcing_batch = (
-                        batch["x_forcing_static"].to(self.device).permute(0, 2, 1, 3, 4)
-                    )  # .float()
-                    # ---------------- ensemble ----------------- #
-                    # ensemble x_forcing_batch for concat. see above for explanation of code
-                    if ensemble_size > 1:
-                        x_forcing_batch = torch.repeat_interleave(
-                            x_forcing_batch, ensemble_size, 0
-                        )
-                    # --------------------------------------------- #
-
-                    # concat on var dimension
-                    x = torch.cat((x, x_forcing_batch), dim=1)
-
-                # --------------------------------------------- #
-                # clamp
-                if flag_clamp:
-                    x = torch.clamp(x, min=clamp_min, max=clamp_max)
-
-                # predict with the model
-                x = x.float()
-                with torch.autocast(device_type="cuda", enabled=amp):
-                    y_pred = self.model(x)
-
-                # ============================================= #
-                # postblock opts outside of model
-
-                # backup init state
-                if flag_mass_conserve:
+        # Create the profiler
+        with torch.profiler.profile(
+            activities=[
+                torch.profiler.ProfilerActivity.CPU,
+                torch.profiler.ProfilerActivity.CUDA,
+            ],
+            record_shapes=True,
+            profile_memory=True,
+            with_stack=True,
+        ) as prof:
+            for steps in range(batches_per_epoch):
+                logs = {}
+                loss = 0
+                stop_forecast = False
+                y_pred = None  # Place holder that gets updated after first roll-out
+                while not stop_forecast:
+                    batch = next(dl)
+                    forecast_step = batch["forecast_step"].item()
                     if forecast_step == 1:
-                        x_init = x.clone()
+                        # Initialize x and x_surf with the first time step
+                        if "x_surf" in batch:
+                            # combine x and x_surf
+                            # input: (batch_num, time, var, level, lat, lon), (batch_num, time, var, lat, lon)
+                            # output: (batch_num, var, time, lat, lon), 'x' first and then 'x_surf'
+                            x = concat_and_reshape(batch["x"], batch["x_surf"]).to(
+                                self.device
+                            )  # .float()
+                        else:
+                            # no x_surf
+                            x = reshape_only(batch["x"]).to(self.device)  # .float()
 
-                # mass conserve using initialization as reference
-                if flag_mass_conserve:
-                    input_dict = {"y_pred": y_pred, "x": x_init}
-                    input_dict = opt_mass(input_dict)
-                    y_pred = input_dict["y_pred"]
+                        # --------------------------------------------- #
+                        # ensemble x and x_surf on initialization
+                        # copies each sample in the batch ensemble_size number of times.
+                        # if samples in the batch are ordered (x,y,z) then the result tensor is (x, x, ..., y, y, ..., z,z ...)
+                        # WARNING: needs to be used with a loss that can handle x with b * ensemble_size samples and y with b samples
+                        if ensemble_size > 1:
+                            x = torch.repeat_interleave(x, ensemble_size, 0)
 
-                # water conserve use previous step output as reference
-                if flag_water_conserve:
-                    input_dict = {"y_pred": y_pred, "x": x}
-                    input_dict = opt_water(input_dict)
-                    y_pred = input_dict["y_pred"]
-
-                # energy conserve use previous step output as reference
-                if flag_energy_conserve:
-                    input_dict = {"y_pred": y_pred, "x": x}
-                    input_dict = opt_energy(input_dict)
-                    y_pred = input_dict["y_pred"]
-                # ============================================= #
-
-                # only load y-truth data if we intend to backprop (default is every step gets grads computed
-                if forecast_step in backprop_on_timestep: #steps go from 1 to n
-                    # calculate rolling loss
-                    if "y_surf" in batch:
-                        y = concat_and_reshape(batch["y"], batch["y_surf"]).to(
-                            self.device
-                        )
-                    else:
-                        y = reshape_only(batch["y"]).to(self.device)
-
-                    if "y_diag" in batch:
+                    # add forcing and static variables (regardless of fcst hours)
+                    if "x_forcing_static" in batch:
                         # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
-                        y_diag_batch = (
-                            batch["y_diag"].to(self.device).permute(0, 2, 1, 3, 4)
+                        x_forcing_batch = (
+                            batch["x_forcing_static"].to(self.device).permute(0, 2, 1, 3, 4)
                         )  # .float()
+                        # ---------------- ensemble ----------------- #
+                        # ensemble x_forcing_batch for concat. see above for explanation of code
+                        if ensemble_size > 1:
+                            x_forcing_batch = torch.repeat_interleave(
+                                x_forcing_batch, ensemble_size, 0
+                            )
+                        # --------------------------------------------- #
 
                         # concat on var dimension
-                        y = torch.cat((y, y_diag_batch), dim=1)
+                        x = torch.cat((x, x_forcing_batch), dim=1)
 
                     # --------------------------------------------- #
                     # clamp
                     if flag_clamp:
-                        y = torch.clamp(y, min=clamp_min, max=clamp_max)
+                        x = torch.clamp(x, min=clamp_min, max=clamp_max)
 
-                    with torch.autocast(enabled=amp, device_type="cuda"):
-                        loss = criterion(y.to(y_pred.dtype), y_pred).mean()
+                    # predict with the model
+                    x = x.float()
+                    with torch.autocast(device_type="cuda", enabled=amp):
+                        y_pred = self.model(x)
 
-                    # track the loss
-                    accum_log(logs, {"loss": loss.item()})
+                    # ============================================= #
+                    # postblock opts outside of model
 
-                    # compute gradients
-                    scaler.scale(loss).backward(retain_graph=retain_graph)
+                    # backup init state
+                    if flag_mass_conserve:
+                        if forecast_step == 1:
+                            x_init = x.clone()
+
+                    # mass conserve using initialization as reference
+                    if flag_mass_conserve:
+                        input_dict = {"y_pred": y_pred, "x": x_init}
+                        input_dict = opt_mass(input_dict)
+                        y_pred = input_dict["y_pred"]
+
+                    # water conserve use previous step output as reference
+                    if flag_water_conserve:
+                        input_dict = {"y_pred": y_pred, "x": x}
+                        input_dict = opt_water(input_dict)
+                        y_pred = input_dict["y_pred"]
+
+                    # energy conserve use previous step output as reference
+                    if flag_energy_conserve:
+                        input_dict = {"y_pred": y_pred, "x": x}
+                        input_dict = opt_energy(input_dict)
+                        y_pred = input_dict["y_pred"]
+                    # ============================================= #
+
+                    # only load y-truth data if we intend to backprop (default is every step gets grads computed
+                    if forecast_step in backprop_on_timestep: #steps go from 1 to n
+                        # calculate rolling loss
+                        if "y_surf" in batch:
+                            y = concat_and_reshape(batch["y"], batch["y_surf"]).to(
+                                self.device
+                            )
+                        else:
+                            y = reshape_only(batch["y"]).to(self.device)
+
+                        if "y_diag" in batch:
+                            # (batch_num, time, var, lat, lon) --> (batch_num, var, time, lat, lon)
+                            y_diag_batch = (
+                                batch["y_diag"].to(self.device).permute(0, 2, 1, 3, 4)
+                            )  # .float()
+
+                            # concat on var dimension
+                            y = torch.cat((y, y_diag_batch), dim=1)
+
+                        # --------------------------------------------- #
+                        # clamp
+                        if flag_clamp:
+                            y = torch.clamp(y, min=clamp_min, max=clamp_max)
+
+                        with torch.autocast(enabled=amp, device_type="cuda"):
+                            loss = criterion(y.to(y_pred.dtype), y_pred).mean()
+
+                        # track the loss
+                        accum_log(logs, {"loss": loss.item()})
+
+                        # compute gradients
+                        scaler.scale(loss).backward(retain_graph=retain_graph)
+
+                    if distributed:
+                        torch.distributed.barrier()
+
+                    # stop after X steps
+                    stop_forecast = batch["stop_forecast"].item()
+                    if stop_forecast:
+                        break
+
+                    # Discard current computational graph, which still 
+                    # exists (through y_pred reference) if `forecast_step` not in `backprop_on_timestep`
+                    if not retain_graph:
+                        y_pred = y_pred.detach()
+                    
+                    # single timestep input
+                    if x.shape[2] == 1:
+                        # cut diagnostic vars from y_pred, they are not inputs
+                        if "y_diag" in batch:
+                            x = y_pred[:, :-varnum_diag, ...]
+                        else:
+                            x = y_pred
+
+                    # multi-timestep input
+                    else:
+                        # static channels will get updated on next pass
+
+                        if static_dim_size == 0:
+                            x_detach = x[:, :, 1:, ...].detach()
+                        else:
+                            x_detach = x[:, :-static_dim_size, 1:, ...].detach()
+
+                        # cut diagnostic vars from y_pred, they are not inputs
+                        if "y_diag" in batch:
+                            x = torch.cat(
+                                [x_detach, y_pred[:, :-varnum_diag, ...]],
+                                dim=2,
+                            )
+                        else:
+                            x = torch.cat([x_detach, y_pred], dim=2)
 
                 if distributed:
                     torch.distributed.barrier()
 
-                # stop after X steps
-                stop_forecast = batch["stop_forecast"].item()
-                if stop_forecast:
+                # Grad norm clipping
+                scaler.unscale_(optimizer)
+                if grad_max_norm == "dynamic":
+                    # Compute local L2 norm
+                    local_norm = torch.norm(
+                        torch.stack(
+                            [
+                                p.grad.detach().norm(2)
+                                for p in self.model.parameters()
+                                if p.grad is not None
+                            ]
+                        )
+                    )
+
+                    # All-reduce to get global norm across ranks
+                    if distributed:
+                        dist.all_reduce(local_norm, op=dist.ReduceOp.SUM)
+                    global_norm = local_norm.sqrt()  # Compute total global norm
+
+                    # Clip gradients using the global norm
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), max_norm=global_norm
+                    )
+                elif grad_max_norm > 0.0:
+                    torch.nn.utils.clip_grad_norm_(
+                        self.model.parameters(), max_norm=grad_max_norm
+                    )
+
+                # Step optimizer
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
+
+                # Metrics
+                metrics_dict = metrics(y_pred, y)
+                for name, value in metrics_dict.items():
+                    value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
+                    if distributed:
+                        dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
+                    results_dict[f"train_{name}"].append(value[0].item())
+
+                batch_loss = torch.Tensor([logs["loss"]]).cuda(self.device)
+                if distributed:
+                    dist.all_reduce(batch_loss, dist.ReduceOp.AVG, async_op=False)
+                results_dict["train_loss"].append(batch_loss[0].item())
+                results_dict["train_forecast_len"].append(forecast_length + 1)
+
+                if not np.isfinite(np.mean(results_dict["train_loss"])):
+                    print(
+                        results_dict["train_loss"],
+                        batch["x"].shape,
+                        batch["y"].shape,
+                        batch["index"],
+                    )
+                    try:
+                        raise optuna.TrialPruned()
+                    except Exception as E:
+                        raise E
+
+                # agg the results
+                to_print = "Epoch: {} train_loss: {:.6f} train_acc: {:.6f} train_mae: {:.6f} forecast_len: {:.6f}".format(
+                    epoch,
+                    np.mean(results_dict["train_loss"]),
+                    np.mean(results_dict["train_acc"]),
+                    np.mean(results_dict["train_mae"]),
+                    forecast_length + 1,
+                )
+                if ensemble_size > 1:
+                    to_print += f" std: {np.mean(results_dict['train_std']):.6f}"
+                to_print += " lr: {:.12f}".format(optimizer.param_groups[0]["lr"])
+                if self.rank == 0:
+                    batch_group_generator.update(1)
+                    batch_group_generator.set_description(to_print)
+
+                if (
+                    conf["trainer"]["use_scheduler"]
+                    and conf["trainer"]["scheduler"]["scheduler_type"] in update_on_batch
+                ):
+                    scheduler.step()
+
+                # YSK Testing
+                debug_count += 1
+                if debug_count >= DEBUG_MAX:
                     break
 
-                # Discard current computational graph, which still 
-                # exists (through y_pred reference) if `forecast_step` not in `backprop_on_timestep`
-                if not retain_graph:
-                    y_pred = y_pred.detach()
-                
-                # single timestep input
-                if x.shape[2] == 1:
-                    # cut diagnostic vars from y_pred, they are not inputs
-                    if "y_diag" in batch:
-                        x = y_pred[:, :-varnum_diag, ...]
-                    else:
-                        x = y_pred
-
-                # multi-timestep input
-                else:
-                    # static channels will get updated on next pass
-
-                    if static_dim_size == 0:
-                        x_detach = x[:, :, 1:, ...].detach()
-                    else:
-                        x_detach = x[:, :-static_dim_size, 1:, ...].detach()
-
-                    # cut diagnostic vars from y_pred, they are not inputs
-                    if "y_diag" in batch:
-                        x = torch.cat(
-                            [x_detach, y_pred[:, :-varnum_diag, ...]],
-                            dim=2,
-                        )
-                    else:
-                        x = torch.cat([x_detach, y_pred], dim=2)
-
-            if distributed:
-                torch.distributed.barrier()
-
-            # Grad norm clipping
-            scaler.unscale_(optimizer)
-            if grad_max_norm == "dynamic":
-                # Compute local L2 norm
-                local_norm = torch.norm(
-                    torch.stack(
-                        [
-                            p.grad.detach().norm(2)
-                            for p in self.model.parameters()
-                            if p.grad is not None
-                        ]
-                    )
-                )
-
-                # All-reduce to get global norm across ranks
-                if distributed:
-                    dist.all_reduce(local_norm, op=dist.ReduceOp.SUM)
-                global_norm = local_norm.sqrt()  # Compute total global norm
-
-                # Clip gradients using the global norm
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), max_norm=global_norm
-                )
-            elif grad_max_norm > 0.0:
-                torch.nn.utils.clip_grad_norm_(
-                    self.model.parameters(), max_norm=grad_max_norm
-                )
-
-            # Step optimizer
-            scaler.step(optimizer)
-            scaler.update()
-            optimizer.zero_grad()
-
-            # Metrics
-            metrics_dict = metrics(y_pred, y)
-            for name, value in metrics_dict.items():
-                value = torch.Tensor([value]).cuda(self.device, non_blocking=True)
-                if distributed:
-                    dist.all_reduce(value, dist.ReduceOp.AVG, async_op=False)
-                results_dict[f"train_{name}"].append(value[0].item())
-
-            batch_loss = torch.Tensor([logs["loss"]]).cuda(self.device)
-            if distributed:
-                dist.all_reduce(batch_loss, dist.ReduceOp.AVG, async_op=False)
-            results_dict["train_loss"].append(batch_loss[0].item())
-            results_dict["train_forecast_len"].append(forecast_length + 1)
-
-            if not np.isfinite(np.mean(results_dict["train_loss"])):
-                print(
-                    results_dict["train_loss"],
-                    batch["x"].shape,
-                    batch["y"].shape,
-                    batch["index"],
-                )
-                try:
-                    raise optuna.TrialPruned()
-                except Exception as E:
-                    raise E
-
-            # agg the results
-            to_print = "Epoch: {} train_loss: {:.6f} train_acc: {:.6f} train_mae: {:.6f} forecast_len: {:.6f}".format(
-                epoch,
-                np.mean(results_dict["train_loss"]),
-                np.mean(results_dict["train_acc"]),
-                np.mean(results_dict["train_mae"]),
-                forecast_length + 1,
-            )
-            if ensemble_size > 1:
-                to_print += f" std: {np.mean(results_dict['train_std']):.6f}"
-            to_print += " lr: {:.12f}".format(optimizer.param_groups[0]["lr"])
-            if self.rank == 0:
-                batch_group_generator.update(1)
-                batch_group_generator.set_description(to_print)
-
-            if (
-                conf["trainer"]["use_scheduler"]
-                and conf["trainer"]["scheduler"]["scheduler_type"] in update_on_batch
-            ):
-                scheduler.step()
+        # After the loop, save the profiling results in Chrome Tracer format
+        model_type = conf['model']['type']
+        prof.export_chrome_trace(f"trace_{model_type}.json")
+        #prof.export_memory_timeline(f"memtime_{model_type}.json")
+        prof.export_memory_timeline(f"memtime_{model_type}.html")
+        #prof.export_stacks(f"stack_{model_type}.json") # no output
 
         #  Shutdown the progbar
         batch_group_generator.close()
