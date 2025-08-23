@@ -9,6 +9,8 @@ xarray
 netcdf4
 torch
 torchvision
+torchmetrics
+metpy
 pyyaml
 dask
 distributed
