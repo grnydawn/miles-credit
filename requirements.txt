@@ -7,8 +7,11 @@ pyarrow
 pytest
 xarray
 netcdf4
+<<<<<<< Updated upstream
 torch
 torchvision
+=======
+>>>>>>> Stashed changes
 pyyaml
 dask
 distributed
