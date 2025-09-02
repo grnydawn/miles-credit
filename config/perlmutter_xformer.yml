@@ -154,7 +154,7 @@ trainer:
     # early stopping
     stopping_patience: 50 
     # True: do not validate, always save weights
-    skip_validation: False
+    skip_validation: True
     
     # total number of epochs
     start_epoch: 0

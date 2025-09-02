@@ -176,6 +176,10 @@ class Trainer(BaseTrainer):
 
         dl = cycle(trainloader)
         results_dict = defaultdict(list)
+
+        debug_count = 0
+        DEBUG_MAX = 5
+
         for steps in range(batches_per_epoch):
             logs = {}
             loss = 0
@@ -413,6 +417,11 @@ class Trainer(BaseTrainer):
                 and conf["trainer"]["scheduler"]["scheduler_type"] in update_on_batch
             ):
                 scheduler.step()
+
+            # YSK Testing
+            debug_count += 1
+            if debug_count >= DEBUG_MAX:
+                break
 
         #  Shutdown the progbar
         batch_group_generator.close()
