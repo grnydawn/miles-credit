@@ -1,5 +1,8 @@
 # useful commands
 
+MITMPDIR := /tmp/grnydawn_tmp
+PRERUN := export NCCL_SOCKET_IFNAME=hsn && export NCCL_DEBUG=info && export MIOPEN_DISABLE_CACHE=1 && export NCCL_PROTO=Simple && export MIOPEN_USER_DB_PATH=${MITMPDIR} && mkdir -p ${MITMPDIR}
+
 venv:
 	module load cray-python && \
 	python3 -m venv venv
@@ -21,4 +24,5 @@ train_fuxi:
 train_xformer:
 	source ./venv/bin/activate && \
 	module load rocm/6.4.1 && \
+    ${PRERUN} && \
 	python applications/train.py -c ./config/frontier_xformer.yml

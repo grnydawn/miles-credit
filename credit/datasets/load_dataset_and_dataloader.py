@@ -18,6 +18,21 @@ import torch
 import sys
 import re
 
+def custom_collate_fn(batch):
+    # Only return length 1 tensors for forecast_step and stop_forecast
+    keys = batch[0].keys()
+    collated_batch = {}
+    for key in keys:
+        items = [item[key] for item in batch]
+        if torch.is_tensor(items[0]):
+            collated_batch[key] = torch.stack(items)
+        elif isinstance(items[0], (int, float, bool)):
+            collated_batch[key] = torch.tensor(
+                [items[0]] if key in ["forecast_step", "stop_forecast"] else items
+            )
+        else:
+            collated_batch[key] = items
+    return collated_batch
 
 class BatchForecastLenSampler:
     def __init__(self, dataset):
@@ -367,21 +382,21 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
 
     if type(dataset) is ERA5_and_Forcing_SingleStep:
         # This is the single-step dataset, original version
-        def custom_collate_fn(batch):
-            # Only return length 1 tensors for forecast_step and stop_forecast
-            keys = batch[0].keys()
-            collated_batch = {}
-            for key in keys:
-                items = [item[key] for item in batch]
-                if torch.is_tensor(items[0]):
-                    collated_batch[key] = torch.stack(items)
-                elif isinstance(items[0], (int, float, bool)):
-                    collated_batch[key] = torch.tensor(
-                        [items[0]] if key in ["forecast_step", "stop_forecast"] else items
-                    )
-                else:
-                    collated_batch[key] = items
-            return collated_batch
+#        def custom_collate_fn(batch):
+#            # Only return length 1 tensors for forecast_step and stop_forecast
+#            keys = batch[0].keys()
+#            collated_batch = {}
+#            for key in keys:
+#                items = [item[key] for item in batch]
+#                if torch.is_tensor(items[0]):
+#                    collated_batch[key] = torch.stack(items)
+#                elif isinstance(items[0], (int, float, bool)):
+#                    collated_batch[key] = torch.tensor(
+#                        [items[0]] if key in ["forecast_step", "stop_forecast"] else items
+#                    )
+#                else:
+#                    collated_batch[key] = items
+#            return collated_batch
 
         sampler = DistributedSampler(
             dataset,
