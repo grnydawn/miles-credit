@@ -25,4 +25,5 @@ train_xformer:
 	source ./venv/bin/activate && \
 	module load rocm/6.4.1 && \
     ${PRERUN} && \
-	python applications/train.py -c ./config/frontier_xformer.yml
+	python applications/train.py -c ./config/frontier_xformer_bias.yml
+	#python applications/train.py -c ./config/frontier_xformer.yml
