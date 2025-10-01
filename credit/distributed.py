@@ -75,6 +75,11 @@ def get_rank_info(trainer_mode):
                 LOCAL_RANK = int(os.environ["OMPI_COMM_WORLD_LOCAL_RANK"])
                 WORLD_SIZE = int(os.environ["OMPI_COMM_WORLD_SIZE"])
                 WORLD_RANK = int(os.environ["OMPI_COMM_WORLD_RANK"])
+            elif "SLURM_LOCALID" in os.environ:
+                # Environment variables set by mpirun
+                LOCAL_RANK = int(os.environ["SLURM_LOCALID"])
+                WORLD_SIZE = int(os.environ["SLURM_NTASKS"])
+                WORLD_RANK = int(os.environ["SLURM_PROCID"])
             elif "PMI_RANK" in os.environ:
                 # Environment variables set by cray-mpich
                 LOCAL_RANK = int(os.environ["PMI_LOCAL_RANK"])

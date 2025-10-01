@@ -92,7 +92,9 @@ trainer:
     # fsdp: fully sharded data parallel
     # ddp: distributed data parallel
     # none: single-GPU training
-    mode: none
+    #mode: none
+    #mode: ddp
+    mode: fsdp
     
     # fsdp-specific GPU optimization
     #
