@@ -3,7 +3,7 @@
 Installation and Example Training
 ===================================
 
-This section provides instructions for downloading, configuring, and running the ML research platform on the Frontier system at Oak Ridge National Laboratory.
+This section provides instructions for downloading, configuring, and running the ML research platform on **the Frontier system at Oak Ridge National Laboratory**.
 
 STEP 1: Downloading the ML Research Platform
 ---------------------------------------------
@@ -30,11 +30,11 @@ Run the following make command in the top-level directory of the repository:
    The make commands are provided for easy installation. Please refer to the **Makefile** for details about the commands.
 
 
-STEP 3: Running an Example Model
----------------------------------
+STEP 3: Training a Model on a Frontier Node
+--------------------------------------------
 
 .. note::
-   This section explains how to run the model on an interactive node rather than in batch mode.
+   This section explains how to run the model on an **interactive Frontier node** rather than in batch mode.
 
 First, obtain an allocation on an interactive Frontier computing node.
 
