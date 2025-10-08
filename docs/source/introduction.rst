@@ -1,6 +1,6 @@
 .. _introduction:
 
-Introduction to ML research under AF
+Introduction to ML Research Platform
 ======================================
 
 T.B.D.

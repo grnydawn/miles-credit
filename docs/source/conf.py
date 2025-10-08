@@ -10,7 +10,7 @@ import datetime
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = "ML research under AF Documentation"
+project = "ML Research Platform Documentation"
 copyright = f'{datetime.datetime.now().year}, T.B.D.'
 author = "T.B.D."
 release = '0.1'

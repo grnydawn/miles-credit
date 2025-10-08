@@ -1,6 +1,6 @@
-.. ML-AF Documentation master file
+.. ML Research Platform Documentation master file
 
-Welcome to ML research under AF Documentation
+Welcome to ML Research Rlatform Documentation
 ====================================================
 
 T.B.D.
@@ -8,22 +8,29 @@ T.B.D.
 .. toctree::
    :maxdepth: 1
    :caption: Getting Started
-   :hidden
+   :hidden:
 
    introduction   
    installation
 
+
 .. toctree::
    :maxdepth: 1
    :caption: Model Training
-   :hidden
+   :hidden:
+
+   config_training   
 
 .. toctree::
    :maxdepth: 1
    :caption: Model Inference
-   :hidden
+   :hidden:
+
+   config_inference   
 
 .. toctree::
    :maxdepth: 1
    :caption: Resources
-   :hidden
+   :hidden:
+
+   resources   
