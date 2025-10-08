@@ -1,3 +1,7 @@
+import os
+import sys
+import datetime
+
 # Configuration file for the Sphinx documentation builder.
 #
 # For the full list of built-in configuration values, see the documentation:
@@ -6,25 +10,38 @@
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
 
-project = "miles-credit"
-copyright = "2024, University Corporation for Atmospheric Research"
-author = "University Corporation for Atmospheric Research"
-release = "2025.2.0"
+project = "ML research under AF Documentation"
+copyright = f'{datetime.datetime.now().year}, T.B.D.'
+author = "T.B.D."
+release = '0.1'
+version = '0.1.0'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
-extensions = ["sphinx.ext.napoleon", "autoapi.extension", "myst_parser"]
+extensions = [
+    'sphinx.ext.autodoc',
+    'sphinx.ext.doctest',
+    'sphinx.ext.intersphinx',
+    'sphinx.ext.todo',
+    'sphinx.ext.coverage',
+    'sphinx.ext.mathjax',
+    'sphinx.ext.ifconfig',
+    'sphinx.ext.viewcode',
+    'sphinx.ext.githubpages',
+    'sphinx_design',
+]
 
 templates_path = ["_templates"]
-exclude_patterns = []
+exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
 myst_enable_extensions = ["colon_fence"]
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
-html_theme = "sphinx_book_theme"
+html_theme = "sphinx_rtd_theme"
 html_static_path = ["_static"]
-autoapi_dirs = ["../../credit", "../../applications"]
-html_logo = "_static/credit_logo.png"
+
+# Define the master document
+master_doc = 'index'

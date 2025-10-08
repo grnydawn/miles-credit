@@ -3,6 +3,8 @@
 MITMPDIR := /tmp/grnydawn_tmp
 PRERUN := export NCCL_SOCKET_IFNAME=hsn && export NCCL_DEBUG=info && export MIOPEN_DISABLE_CACHE=1 && export NCCL_PROTO=Simple && export MIOPEN_USER_DB_PATH=${MITMPDIR} && mkdir -p ${MITMPDIR}
 
+.PHONY: doc clean_doc
+
 venv:
 	module load cray-python && \
 	python3 -m venv venv
@@ -32,3 +34,9 @@ train_xformer_srun:
 	module load rocm/6.4.1 && \
     ${PRERUN} && \
 	srun -n 8 python applications/train.py -c ./config/frontier_xformer.yml
+
+doc:
+	$(MAKE) -C docs doc
+
+clean_doc:
+	$(MAKE) -C docs clean_doc

@@ -1,20 +1,38 @@
-# Minimal makefile for Sphinx documentation
-#
 
-# You can set these variables from the command line, and also
-# from the environment for the first two.
-SPHINXOPTS    ?=
-SPHINXBUILD   ?= sphinx-build
-SOURCEDIR     = source
-BUILDDIR      = build
+# --- Documentation Variables ---
+DOCS_DIR = source
+SPHINX_BUILD_DIR = $(CURDIR)/_build/html
 
-# Put it first so that "make" without argument is like "make help".
-help:
-	@$(SPHINXBUILD) -M help "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+# Python executable for Sphinx (assuming virtual environment in venv)
+# Adjust if your Python setup is different
+PYTHON = $(shell command -v python3 || command -v python)  
+VENV_PYTHON = $(CURDIR)/../venv/bin/python
 
-.PHONY: help Makefile
+# Ensure the virtual environment's python is used if it exists
+ifeq ($(wildcard $(VENV_PYTHON)),)
+    # Virtual environment not found, fall back to system python
+    PYTHON_EXECUTABLE = $(PYTHON)
+else
+    PYTHON_EXECUTABLE = $(VENV_PYTHON)
+endif
 
-# Catch-all target: route all unknown targets to Sphinx using the new
-# "make mode" option.  $(O) is meant as a shortcut for $(SPHINXOPTS).
-%: Makefile
-	@$(SPHINXBUILD) -M $@ "$(SOURCEDIR)" "$(BUILDDIR)" $(SPHINXOPTS) $(O)
+# --- Documentation Targets ---
+
+.PHONY: doc sphinx clean_doc
+
+# Main documentation target: builds Doxygen, then Sphinx
+doc: sphinx
+
+# Sphinx target
+# Depends on the Doxygen XML output to ensure it's up-to-date
+$(SPHINX_BUILD_DIR)/index.html: $(wildcard $(DOCS_DIR)/*.rst $(DOCS_DIR)/**/*.rst $(DOCS_DIR)/*.py)
+	@echo "Generating Sphinx HTML documentation..."
+	mkdir -p $(@D) # Ensure the Sphinx build directory exists
+	$(PYTHON_EXECUTABLE) -m sphinx -b html $(DOCS_DIR) $(SPHINX_BUILD_DIR)
+
+sphinx: $(SPHINX_BUILD_DIR)/index.html
+
+# Clean documentation build artifacts
+clean_doc:
+	@echo "Cleaning documentation build files..."
+	rm -rf $(CURDIR)/_build
