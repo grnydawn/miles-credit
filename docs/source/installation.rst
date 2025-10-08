@@ -55,14 +55,17 @@ Finally, run the following commands to execute the CrossFormer model on the node
     export MASTER_ADDR=<HOSTNAME>
     export MASTER_PORT=29500
 
-    cd <MILES-CREDIT_REPO>
+    cd <CREDIT_REPO>
 
     make train_xformer_srun
 
 
 .. note::
-   **<HOSTNAME>** is the same name displayed when running the **hostname** command above.
-   **<MILES-CREDIT_REPO>** is the top-level directory of the Git repository.
-   The **make** commands are provided for easy execution of training. Please refer to the **Makefile** for details about the commands.
+   * **<HOSTNAME>** is the same name displayed when running the **hostname** command above.
+   * **<CREDIT_REPO>** is the top-level directory of the Git repository.
+   * The **make** commands are provided for easy execution of training. Please refer to the **Makefile** for details about the commands.
+   * The training configurations is specified in **<CREDIT_REPO>/config/frontier_xformer.yml**
+   * The input data files used in the example training are located under **/lustre/orion/cli115/scratch/grnydawn/data/CREDIT**, which is a part of files provided from `https://app.globus.org/file-manager/collections/2fc90d8f-10b7-44e1-a6a5-cf844112822e/overview <https://app.globus.org/file-manager/collections/2fc90d8f-10b7-44e1-a6a5-cf844112822e/overview>`_
 
 Once all the above steps are completed successfully, the training progress will be displayed on the screen with progress bar indicators.
+
