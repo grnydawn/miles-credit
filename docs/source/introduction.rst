@@ -1,6 +1,6 @@
 .. _introduction:
 
-Introduction to ML Research Platform
-======================================
+Introduction
+==========================================
 
 T.B.D.

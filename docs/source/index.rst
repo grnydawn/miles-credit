@@ -1,7 +1,7 @@
-.. ML Research Platform Documentation master file
+.. ORNL Weather ML Research Documentation master file
 
-Welcome to ML Research Rlatform Documentation
-====================================================
+Welcome to ORNL Weather ML Research Documentation
+============================================================
 
 T.B.D.
 
