@@ -68,7 +68,7 @@ Finally, run the following commands to execute the CrossFormer model on the node
 .. note::
    * The training configurations is specified in **<CREDIT_REPO>/config/frontier_xformer.yml**
    * The input data files used in the example training are located under **/lustre/orion/cli115/scratch/grnydawn/data/CREDIT**, which is a part of files provided from `https://app.globus.org/file-manager/collections/2fc90d8f-10b7-44e1-a6a5-cf844112822e/overview <https://app.globus.org/file-manager/collections/2fc90d8f-10b7-44e1-a6a5-cf844112822e/overview>`_
-   * So far, I have not found a suitable location to share the input files on Frontier. If you are interested in downloading the files used for this example training, please download the files listed below and adjust the data file paths in **<CREDIT_REPO>/config/frontier_xformer.yml**.
+   * If you are interested in downloading the files used for this example training, please download the files listed below and adjust the data file paths in **<CREDIT_REPO>/config/frontier_xformer.yml**.
 
       * All_2010_staged.mean.LatLonLev.nc
       * All_2010_staged.std.LatLonLev.nc
