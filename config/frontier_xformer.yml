@@ -14,20 +14,20 @@ data:
     # files must have the listed variable names 
     # upper-air variables will be normalized by the dataloader, users do not need to normalize them
     variables: ['U','V','T','Q']
-    save_loc: '/lustre/orion/cli115/scratch/grnydawn/data/CREDIT/SixHourly_TOTAL_*'
+    save_loc: '/lustre/orion/atm112/world-shared/grnydawn/data/CREDIT/SixHourly_TOTAL_*'
 
     # surface variables, must be YEARLY zarr or nc with (time, latitude, longitude) dims
     # the time dimension MUST be the same as upper-air variables
     # files must have the listed variable names
     # surface variables will be normalized by the dataloader, users do not need to normalize them
     surface_variables: ['SP']
-    save_loc_surface: '/lustre/orion/cli115/scratch/grnydawn/data/CREDIT/SixHourly_TOTAL_*'
+    save_loc_surface: '/lustre/orion/atm112/world-shared/grnydawn/data/CREDIT/SixHourly_TOTAL_*'
     
     # z-score files, they must be zarr or nc with (level,) coords
     # they MUST include all the 
     #     'variables', 'surface_variables', 'dynamic_forcing_variables', 'diagnostic_variables' above
-    mean_path: '/lustre/orion/cli115/scratch/grnydawn/data/CREDIT/All_2010_staged.mean.LatLonLev.nc'
-    std_path: '/lustre/orion/cli115/scratch/grnydawn/data/CREDIT/All_2010_staged.std.LatLonLev.nc'
+    mean_path: '/lustre/orion/atm112/world-shared/grnydawn/data/CREDIT/All_2010_staged.mean.LatLonLev.nc'
+    std_path: '/lustre/orion/atm112/world-shared/grnydawn/data/CREDIT/All_2010_staged.std.LatLonLev.nc'
     
     # years to form the training / validation set [first_year, last_yeat (not covered)]
     train_years: [2017, 2020] # 1979 - 2013
@@ -300,7 +300,7 @@ loss:
     
     # this file is MANDATORY for the "predict" section below (inference stage)
     # the file must be nc and must contain 1D variables named "latitude" and "longitude"
-    latitude_weights: "/lustre/orion/cli115/scratch/grnydawn/data/CREDIT/static_operation_ERA5_zhght.nc"
+    latitude_weights: "/lustre/orion/atm112/world-shared/grnydawn/data/CREDIT/static_operation_ERA5_zhght.nc"
 
 
     # use latitude weighting
