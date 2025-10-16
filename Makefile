@@ -35,6 +35,12 @@ train_xformer_srun:
     ${PRERUN} && \
 	srun -n 8 python applications/train.py -c ./config/frontier_xformer.yml
 
+train_mpas:
+	source ./venv/bin/activate && \
+	module load rocm/6.4.1 && \
+    ${PRERUN} && \
+	python applications/train.py -c ./config/frontier_mpas_xformer.yml
+
 doc:
 	$(MAKE) -C docs doc
 
