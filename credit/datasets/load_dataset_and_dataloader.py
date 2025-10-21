@@ -3,6 +3,7 @@ from credit.datasets.era5_multistep import (
     RepeatingIndexSampler,
 )
 from credit.datasets.era5_singlestep import ERA5_and_Forcing_SingleStep
+from credit.datasets.mpasa_singlestep import MPASA_and_Forcing_SingleStep
 from credit.datasets.era5_multistep_batcher import (
     ERA5_MultiStep_Batcher,
     MultiprocessingBatcher,
@@ -329,6 +330,29 @@ def load_dataset(conf, rank=0, world_size=1, is_train=True):
             num_workers=num_workers,
             prefetch_factor=prefetch_factor,
         )
+    elif dataset_type == "MPASA_and_Forcing_SingleStep":  # forecast-len = 0 dataset
+        dataset = MPASA_and_Forcing_SingleStep(
+            varname_upper_air=conf["data"]["variables"],
+            varname_surface=conf["data"]["surface_variables"],
+#            varname_dyn_forcing=conf["data"]["dynamic_forcing_variables"],
+#            varname_forcing=conf["data"]["forcing_variables"],
+#            varname_static=conf["data"]["static_variables"],
+#            varname_diagnostic=conf["data"]["diagnostic_variables"],
+            filenames=data_config[f"{training_type}_files"],
+            filename_surface=data_config[f"{training_type}_surface_files"],
+#            filename_dyn_forcing=data_config[f"{training_type}_dyn_forcing_files"],
+#            filename_forcing=conf["data"]["save_loc_forcing"],
+#            filename_static=conf["data"]["save_loc_static"],
+#            filename_diagnostic=data_config[f"{training_type}_diagnostic_files"],
+            history_len=history_len,
+            forecast_len=forecast_len,
+#            skip_periods=conf["data"]["skip_periods"],
+            one_shot=conf["data"]["one_shot"],
+#            max_forecast_len=conf["data"]["max_forecast_len"],
+            transform=load_transforms(conf),
+#            sst_forcing=data_config["sst_forcing"],
+        )
+
     else:
         raise ValueError(f"Unsupported dataset type: {dataset_type}")
 
@@ -416,6 +440,31 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
             num_workers=num_workers,
             collate_fn=custom_collate_fn,
         )
+
+        print(f"ERA5 *********** {dataset}")
+    elif type(dataset) is MPASA_and_Forcing_SingleStep:
+
+        sampler = DistributedSampler(
+            dataset,
+            num_replicas=world_size,
+            rank=rank,
+            seed=seed,
+            shuffle=shuffle,
+            drop_last=True,
+        )
+        dataloader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=False,
+            sampler=sampler,
+            pin_memory=True,
+            persistent_workers=True if num_workers > 0 else False,
+            num_workers=num_workers,
+            collate_fn=custom_collate_fn,
+        )
+
+        print(f"MPASA *********** {dataset}")
+
     elif type(dataset) is ERA5_and_Forcing_MultiStep:
         # This is the deprecated dataset
         sampler = RepeatingIndexSampler(

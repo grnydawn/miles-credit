@@ -68,7 +68,8 @@ def setup_data_loading(conf):
     all_ERA_files = sorted(glob.glob(conf["data"]["save_loc"]))
 
     # <------------------------------------------ std_new
-    if conf["data"]["scaler_type"] == "std_new":
+    if (conf["data"]["scaler_type"] == "std_new" or
+       conf["data"]["scaler_type"] == "std_mpasa"):
         # check and glob surface files
         if ("surface_variables" in conf["data"]) and (
             len(conf["data"]["surface_variables"]) > 0
@@ -128,7 +129,8 @@ def setup_data_loading(conf):
     ]
 
     # <----------------------------------- std_new
-    if conf["data"]["scaler_type"] == "std_new":
+    if (conf["data"]["scaler_type"] == "std_new" or
+       conf["data"]["scaler_type"] == "std_mpasa"):
         if surface_files is not None:
             train_surface_files = [
                 file

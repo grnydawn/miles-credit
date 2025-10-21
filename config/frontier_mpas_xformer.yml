@@ -34,7 +34,7 @@ data:
     valid_years: [2021, 2021] # 2014 - 2017
     
     # std_new is the new data workflow that works with z-score
-    scaler_type: 'std_new'
+    scaler_type: 'std_mpasa'
 
     # number of input time frames
     # 2 for Fuxi, 
@@ -92,9 +92,9 @@ trainer:
     # fsdp: fully sharded data parallel
     # ddp: distributed data parallel
     # none: single-GPU training
-    #mode: none
+    mode: none
     #mode: ddp
-    mode: fsdp
+    #mode: fsdp
     
     # fsdp-specific GPU optimization
     #
@@ -109,7 +109,7 @@ trainer:
     #       run train.py for standard 
     # type: multi-step --> full multi-step training (without one-shot)
     #       run train_multistep.py for multi-step
-    type: 'era5'
+    type: 'mpasa'
 
     # (optional) use torch.compile: False. May not be compatible with custom models
     compile: False

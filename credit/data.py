@@ -718,8 +718,245 @@ class ERA5_and_Forcing_Dataset(torch.utils.data.Dataset):
         # assign sample index
         sample["index"] = index
 
+        print(f"IIIIIIIIIN ERA5_and_Forcing_Dataset {sample.keys()}", flush=True)
         return sample
 
+class MPASA_and_Forcing_Dataset(torch.utils.data.Dataset):
+    """A Pytorch Dataset class that works on the following kinds of variables.
+
+    * upper-air variables (time, level, lat, lon)
+    * surface variables (time, lat, lon)
+    * dynamic forcing variables (time, lat, lon)
+    * forcing variables (time, lat, lon)
+    * diagnostic variables (time, lat, lon)
+    * static variables (lat, lon).
+    """
+
+    def __init__(
+        self,
+        varname_upper_air,
+        varname_surface,
+        filenames,
+        filename_surface,
+        history_len=2,
+        forecast_len=0,
+        transform=None,
+        seed=42,
+        one_shot=None,
+    ):
+        """Initialize the MPASA_and_Forcing_Dataset.
+
+        Args:
+            varname_upper_air (list): List of upper air variable names.
+            varname_surface (list): List of surface variable names.
+            varname_dyn_forcing (list): List of dynamic forcing variable names.
+            varname_forcing (list): List of forcing variable names.
+            varname_static (list): List of static variable names.
+            varname_diagnostic (list): List of diagnostic variable names.
+            filenames (list): List of filenames for upper air data.
+            filename_surface (list, optional): List of filenames for surface data.
+            filename_dyn_forcing (list, optional): List of filenames for dynamic forcing data.
+            filename_forcing (str, optional): Filename for forcing data.
+            filename_static (str, optional): Filename for static data.
+            filename_diagnostic (list, optional): List of filenames for diagnostic data.
+            history_len (int, optional): Length of the history sequence. Default is 2.
+            forecast_len (int, optional): Length of the forecast sequence. Default is 0.
+            transform (callable, optional): Transformation function to apply to the data.
+            seed (int, optional): Random seed for reproducibility. Default is 42.
+            skip_periods (int, optional): Number of periods to skip between samples.
+            one_shot(bool, optional): Whether to return all states or just
+                                    the final state of the training target. Default is None
+            max_forecast_len (int, optional): Maximum length of the forecast sequence.
+            shuffle (bool, optional): Whether to shuffle the data. Default is True.
+
+        Returns:
+            sample (dict): A dictionary containing historical_ERA5_images,
+                                                 target_ERA5_images,
+                                                 datetime index, and additional information.
+
+        """
+        self.history_len = history_len
+        self.forecast_len = forecast_len
+        self.transform = transform
+
+        # one shot option
+        self.one_shot = one_shot
+
+        # total number of needed forecast lead times
+        self.total_seq_len = self.history_len + self.forecast_len
+
+        # set random seed
+        self.rng = np.random.default_rng(seed=seed)
+
+        # =================================================================== #
+        # flags to determin if any of the [surface, dyn_forcing, diagnostics]
+        # variable groups share the same file as upper air variables
+        flag_share_surf = False
+
+        all_files = []
+        filenames = sorted(filenames)
+
+        # ------------------------------------------------------------------ #
+        # blocks that can handle no-sharing (each group has it own file)
+        ## surface
+        if filename_surface is not None:
+            surface_files = []
+            filename_surface = sorted(filename_surface)
+
+            if filenames == filename_surface:
+                flag_share_surf = True
+            else:
+                for fn in filename_surface:
+                    # drop variables if they are not in the config
+                    ds = get_forward_data(filename=fn)
+                    ds_surf = drop_var_from_dataset(ds, varname_surface)
+                    surface_files.append(ds_surf)
+
+                self.surface_files = surface_files
+        else:
+            self.surface_files = False
+
+        # ------------------------------------------------------------------ #
+        # blocks that can handle file sharing (share with upper air file)
+        for fn in filenames:
+            # drop variables if they are not in the config
+            ds = get_forward_data(filename=fn)
+            ds_upper = drop_var_from_dataset(ds, varname_upper_air)
+
+            if flag_share_surf:
+                ds_surf = drop_var_from_dataset(ds, varname_surface)
+                surface_files.append(ds_surf)
+
+            all_files.append(ds_upper)
+
+        self.all_files = all_files
+
+        if flag_share_surf:
+            self.surface_files = surface_files
+
+        # -------------------------------------------------------------------------- #
+        # get sample indices from ERA5 upper-air files:
+        ind_start = 0
+        self.MPASA_indices = {}  # <------ change
+        for ind_file, MPASA_xarray in enumerate(self.all_files):
+            # [number of samples, ind_start, ind_end]
+            self.MPASA_indices[str(ind_file)] = [
+                len(MPASA_xarray["time"]),
+                ind_start,
+                ind_start + len(MPASA_xarray["time"]),
+            ]
+            ind_start += len(MPASA_xarray["time"]) + 1
+
+    def __post_init__(self):
+        """Calculate total sequence length after init."""
+        # Total sequence length of each sample.
+        self.total_seq_len = self.history_len + self.forecast_len
+
+    def __len__(self):
+        """Length of Dataset."""
+        # compute the total number of length
+        total_len = 0
+        for MPASA_xarray in self.all_files:
+            total_len += len(MPASA_xarray["time"]) - self.total_seq_len + 1
+        return total_len
+
+    def __getitem__(self, index):
+        """Get single item from the dataset."""
+        # ========================================================================== #
+        # cross-year indices --> the index of the year + indices within that year
+
+        # select the ind_file based on the iter index
+        ind_file = find_key_for_number(index, self.MPASA_indices)
+
+        # get the ind within the current file
+        ind_start = self.MPASA_indices[ind_file][1]
+        ind_start_in_file = index - ind_start
+
+        # handle out-of-bounds
+        ind_largest = len(self.all_files[int(ind_file)]["time"]) - (
+            self.history_len + self.forecast_len + 1
+        )
+        if ind_start_in_file > ind_largest:
+            ind_start_in_file = ind_largest
+
+        # ========================================================================== #
+        # subset xarray on time dimension
+
+        ind_end_in_file = ind_start_in_file + self.history_len + self.forecast_len
+
+        ## MPASA_subset: a xarray dataset that contains training input and target (for the current batch)
+        MPASA_subset = self.all_files[int(ind_file)].isel(
+            time=slice(ind_start_in_file, ind_end_in_file + 1)
+        )  # .load() NOT load into memory
+
+        # ========================================================================== #
+        # merge surface into the dataset
+
+        if self.surface_files:
+            ## subset surface variables
+            surface_subset = self.surface_files[int(ind_file)].isel(
+                time=slice(ind_start_in_file, ind_end_in_file + 1)
+            )  # .load() NOT load into memory
+
+            ## merge upper-air and surface here:
+            MPASA_subset = MPASA_subset.merge(
+                surface_subset
+            )  # <-- lazy merge, MPASA and surface both not loaded
+
+        # ==================================================== #
+        # split MPASA_subset into training inputs and targets
+        #   + merge with dynamic forcing, forcing, and static
+
+        # the ind_end of the MPASA_subset
+        ind_end_time = len(MPASA_subset["time"])
+
+        # datetiem information as int number (used in some normalization methods)
+        datetime_as_number = MPASA_subset.time.values.astype("datetime64[s]").astype(int)
+
+        # ==================================================== #
+        # xarray dataset as input
+        ## historical_MPASA_images: the final input
+
+        historical_MPASA_images = MPASA_subset.isel(
+            #YSK ORG: time=slice(0, self.history_len, self.skip_periods)
+            time=slice(0, self.history_len, 1)
+        ).load()  # <-- load into memory
+
+
+        # ==================================================== #
+        # xarray dataset as target
+        ## target_MPASA_images: the final target
+
+        if self.one_shot is not None:
+            # one_shot is True (on), go straight to the last element
+            target_MPASA_images = MPASA_subset.isel(
+                time=slice(-1, None)
+            ).load()  # <-- load into memory
+
+        else:
+            # one_shot is None (off), get the full target length based on forecast_len
+            target_MPASA_images = MPASA_subset.isel(
+                time=slice(self.history_len, ind_end_time, 1)
+            ).load()  # <-- load into memory
+
+        # pipe xarray datasets to the sampler
+        sample = Sample(
+            historical_MPASA_images=historical_MPASA_images,
+            target_MPASA_images=target_MPASA_images,
+            datetime_index=datetime_as_number,
+        )
+
+        # ==================================== #
+        # data normalization
+        if self.transform:
+            sample = self.transform(sample)
+
+        # assign sample index
+        sample["index"] = index
+
+        print(f"IIIIIIIIIN MPASA_and_Forcing_Dataset {sample.keys()}", flush=True)
+
+        return sample
 
 class ERA5_Dataset_Distributed(torch.utils.data.Dataset):
     """ERA5 Dataset for Distributed training (legacy)."""
