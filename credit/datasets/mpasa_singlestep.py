@@ -49,8 +49,6 @@ class MPASA_and_Forcing_SingleStep(MPASA_and_Forcing_Dataset):
                 surface_subset
             )
 
-        print(f"YYYYYYY {MPASA_subset.keys()}")
-
         # split MPASA_subset into training inputs and targets
         #   + merge with dynamic forcing, forcing, and static
         # the ind_end of the MPASA_subset
@@ -79,8 +77,6 @@ class MPASA_and_Forcing_SingleStep(MPASA_and_Forcing_Dataset):
                 time=slice(self.history_len, ind_end_time, 1)
             ).load()  # <-- load into memory
 
-        print(f"SSSSSample transform  MPASA_and_Forcing_SingleStep {historical_MPASA_images.keys()}", flush=True)
-
         # pipe xarray datasets to the sampler
         sample = Sample(
             historical_MPASA_images=historical_MPASA_images,
@@ -88,7 +84,6 @@ class MPASA_and_Forcing_SingleStep(MPASA_and_Forcing_Dataset):
             datetime_index=datetime_as_number,
         )
 
-        print(f"BBBBBEFORE transform  MPASA_and_Forcing_SingleStep {sample.keys()}", flush=True)
         # data normalization
         if self.transform:
             sample = self.transform(sample)
@@ -111,7 +106,6 @@ class MPASA_and_Forcing_SingleStep(MPASA_and_Forcing_Dataset):
         # Hence stop_forecast is always true
         sample["stop_forecast"] = True
 
-        print(f"IIIIIIIIIN MPASA_and_Forcing_SingleStep {sample.keys()}", flush=True)
         return sample
 
 

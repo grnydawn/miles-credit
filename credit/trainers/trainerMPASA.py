@@ -183,7 +183,6 @@ class Trainer(BaseTrainer):
             y_pred = None  # Place holder that gets updated after first roll-out
             while not stop_forecast:
                 batch = next(dl)
-                print(f"XXXXXX {batch.keys()}")
                 forecast_step = batch["forecast_step"].item()
                 if forecast_step == 1:
                     # Initialize x and x_surf with the first time step

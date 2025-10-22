@@ -441,7 +441,6 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
             collate_fn=custom_collate_fn,
         )
 
-        print(f"ERA5 *********** {dataset}")
     elif type(dataset) is MPASA_and_Forcing_SingleStep:
 
         sampler = DistributedSampler(
@@ -462,8 +461,6 @@ def load_dataloader(conf, dataset, rank=0, world_size=1, is_train=True):
             num_workers=num_workers,
             collate_fn=custom_collate_fn,
         )
-
-        print(f"MPASA *********** {dataset}")
 
     elif type(dataset) is ERA5_and_Forcing_MultiStep:
         # This is the deprecated dataset

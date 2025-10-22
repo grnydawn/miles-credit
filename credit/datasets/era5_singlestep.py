@@ -193,16 +193,12 @@ class ERA5_and_Forcing_SingleStep(ERA5_and_Forcing_Dataset):
             historical_ERA5_images[varname_skt] = input_skt
             target_ERA5_images[varname_skt] = target_skt
 
-        print(f"SSSSSample transform  ERA5_and_Forcing_SingleStep {historical_ERA5_images.keys()}", flush=True)
-
         # pipe xarray datasets to the sampler
         sample = Sample(
             historical_ERA5_images=historical_ERA5_images,
             target_ERA5_images=target_ERA5_images,
             datetime_index=datetime_as_number,
         )
-
-        print(f"BBBBBBBEFORE transform ERA5_and_Forcing_SingleStep {sample.keys()}", flush=True)
 
         # data normalization
         if self.transform:
@@ -226,8 +222,6 @@ class ERA5_and_Forcing_SingleStep(ERA5_and_Forcing_Dataset):
         # Hence stop_forecast is always true
         sample["stop_forecast"] = True
 
-
-        print(f"IIIIIIIIIN ERA5_and_Forcing_SingleStep {sample.keys()}", flush=True)
         return sample
 
 

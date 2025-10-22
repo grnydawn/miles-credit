@@ -82,8 +82,6 @@ def load_transforms(conf, scaler_only=False):
     if scaler_only:
         return transform_scaler
 
-    print(f"SSSSScaler scaler_type = {conf['data']['scaler_type']}")
-
     # ------------------------------------------------------------------- #
     # ToTensor class
     if conf["data"]["scaler_type"] == "quantile-cached":
@@ -1618,7 +1616,6 @@ class ToTensor_MPASA_and_Forcing:
 
         for key, value in sample.items():
 
-            print(f"KKKKKKKKK MPASA:  key = {key} , value = {value}")
             ## if DataArray
             if isinstance(value, xr.DataArray):
                 var_value = value.values
@@ -1751,8 +1748,6 @@ class ToTensor_MPASA_and_Forcing:
 
             if key == "historical_MPASA_images" or key == "x":
 
-                print(f"FFFFFF MPASA {self.flag_surface} and {self.flag_upper_air}")
-
                 if self.flag_surface:
                     return_dict["x_surf"] = x_surf.type(self.output_dtype)
                 if self.flag_upper_air:
@@ -1763,8 +1758,6 @@ class ToTensor_MPASA_and_Forcing:
                     return_dict["y_surf"] = x_surf.type(self.output_dtype)
                 if self.flag_upper_air:
                     return_dict["y"] = x_upper_air.type(self.output_dtype)
-
-        print(f"DDDDDDDict ToTensor_MPASA_and_Forcing {return_dict.keys()}", flush=True)
 
         return return_dict
 
@@ -1877,7 +1870,6 @@ class ToTensor_ERA5_and_Forcing:
 
         for key, value in sample.items():
 
-            print(f"KKKKKKKKK ERA5:  key = {key} , value = {value}")
             ## if DataArray
             if isinstance(value, xr.DataArray):
                 var_value = value.values
@@ -2059,8 +2051,6 @@ class ToTensor_ERA5_and_Forcing:
 
                     return_dict["x_forcing_static"] = x_static.type(self.output_dtype)
 
-                print(f"FFFFFF ERA5 {self.flag_surface} and {self.flag_upper_air}")
-
                 if self.flag_surface:
                     return_dict["x_surf"] = x_surf.type(self.output_dtype)
                 if self.flag_upper_air:
@@ -2098,8 +2088,6 @@ class ToTensor_ERA5_and_Forcing:
                     return_dict["y_surf"] = x_surf.type(self.output_dtype)
                 if self.flag_upper_air:
                     return_dict["y"] = x_upper_air.type(self.output_dtype)
-
-        print(f"DDDDDDDict ToTensor_ERA5_and_Forcing {return_dict.keys()}", flush=True)
 
         return return_dict
 
