@@ -12,9 +12,12 @@ The ML research platform is a Python project managed with Git. To obtain the sou
 
 .. code-block:: bash
 
-	git clone https@github.com:grnydawn/miles-credit.git
+	git clone https://github.com/grnydawn/miles-credit.git
 	cd miles-credit
 	git checkout frontier
+
+.. note::
+   You can also clone the repository using git protocol with **git@github.com:grnydawn/miles-credit.git**. 
 
 STEP 2: Creating a Python Virtual Environment and Installing Packages
 ----------------------------------------------------------------------
