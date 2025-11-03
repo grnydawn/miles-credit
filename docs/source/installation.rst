@@ -39,7 +39,17 @@ STEP 3: Training a Model on a Frontier Node
 .. note::
    This section explains how to run the model on an **interactive Frontier node** rather than in batch mode.
 
-First, obtain an allocation on an interactive Frontier computing node.
+First, update the output path(`save_loc`) to a location where you have write permissions in **frontier_xformer.xml** in the **config** sub-directory, as shown below.
+
+.. code-block:: none
+
+    # the location to save your workspace, it will have 
+    # (1) pbs script, (2) a copy of this config, (3) model weights, (4) training_log.csv
+    # if save_loc does not exist, it will be created automatically
+    save_loc: '/ccs/home/grnydawn/scrfrontier/data/credit-output/example/'
+    seed: 1000 # random seeed
+
+Next, obtain an allocation on an interactive Frontier computing node.
 
 .. code-block:: bash
 
