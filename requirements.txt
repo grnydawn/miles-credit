@@ -31,3 +31,8 @@ metpy
 keras
 miles-guess
 h5py<=3.14.0
+pysteps
+pytest
+segmentation-models-pytorch
+torchmetrics
+mpi4py
