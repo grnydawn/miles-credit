@@ -23,7 +23,7 @@ PRERUN := module load cray-python/3.11.7 cray-mpich && \
 
 train_era5_miller:
 	${PRERUN} && \
-	python applications/train.py -c ./config/miller_era5_xformer.yml
+	srun -n 4 python applications/train.py -c ./config/miller_era5_xformer.yml
 
 train_mpas_miller:
 	${PRERUN} && \
