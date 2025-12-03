@@ -35,4 +35,6 @@ pysteps
 pytest
 segmentation-models-pytorch
 torchmetrics
-mpi4py
+setuptools
+wheel
+Cython
